@@ -23,8 +23,8 @@ function MyAttendance() {
   const a = useApp(); const cfg = a.settings.attendance || {};
   const [month, setMonth] = useState(today().slice(0, 7));
   const { data: ip } = useLoad(() => db.rpc('my_ip'), []);
-  const { data: ev, reload } = useLoad(() => db.from('attendance_events').select('id,kind,at,work_date,ip_ok,status').eq('profile_id', a.me.id).gte('work_date', month + '-01').lte('work_date', monthEnd(month + '-01')).order('at'), [month]);
-  const [cam, setCam] = useState<'in' | 'out' | null>(null);
+  const { data: ev, reload } = useLoad(() => db.from('attendance_events').select('id,kind,at,work_date,ip_ok,status,selfie_path,purged_at').eq('profile_id', a.me.id).gte('work_date', month + '-01').lte('work_date', monthEnd(month + '-01')).order('at'), [month]);
+  const [cam, setCam] = useState<'in' | 'out' | null>(null); const [img, setImg] = useState<string | null>(null);
   if (a.me.work_schedule !== 'office') return <Card>Lịch làm việc của bạn ({a.me.work_schedule === 'warehouse' ? 'Kho' : 'không chấm công'}) không cần chấm công bằng ứng dụng.</Card>;
   const days = new Map<string, any[]>(); ((ev as any[]) || []).forEach(e => days.set(e.work_date, [...(days.get(e.work_date) || []), e]));
   const todayEv = days.get(today()) || [];
@@ -54,10 +54,12 @@ function MyAttendance() {
       <Card title="Lịch sử chấm công" actions={<Input type="month" className="w-40" value={month} onChange={e => setMonth(e.target.value)} />} bodyClass="p-0">
         {!days.size ? <Empty>Chưa có dữ liệu</Empty> : <Table head={['Ngày', 'Vào', 'Ra', 'Muộn', 'Ghi chú']}>{Array.from(days.entries()).reverse().map(([d, l]) => {
           const late = lateOf(d, l); const flagged = l.some(e => e.status === 'flagged');
-          return <tr key={d}><Td>{fmtDate(d)}</Td><Td>{fmtTime(l.find(e => e.kind === 'in')?.at)}</Td><Td>{fmtTime([...l].reverse().find(e => e.kind === 'out')?.at)}</Td>
+          const ein = l.find(e => e.kind === 'in'); const eout = [...l].reverse().find(e => e.kind === 'out');
+          return <tr key={d}><Td>{fmtDate(d)}</Td><Td><span className="inline-flex items-center gap-2">{ein && <SelfieThumb e={ein} onOpen={setImg} />}{fmtTime(ein?.at)}</span></Td><Td><span className="inline-flex items-center gap-2">{eout && <SelfieThumb e={eout} onOpen={setImg} />}{fmtTime(eout?.at)}</span></Td>
             <Td>{late ? <span className="text-amber-700">{late} phút</span> : ''}</Td><Td>{flagged && <Badge color="amber">Ngoài IP</Badge>}{l.some(e => e.status === 'rejected') && <Badge color="red">Bị từ chối</Badge>}</Td></tr>;
         })}</Table>}
       </Card>
+      {img && <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4" onClick={() => setImg(null)}><img src={img} className="max-h-[88vh] max-w-full rounded-2xl shadow-2xl" alt="Ảnh chấm công" /></div>}
       {cam && <Camera kind={cam} onClose={() => setCam(null)} onDone={() => { setCam(null); reload(); a.refreshMe(); }} />}
     </div>
   );
@@ -160,12 +162,31 @@ function TeamAttendance() {
       {loading ? <Loading /> : <Table head={['Nhân sự', 'Vào', 'Ra', 'Lượt chấm', '']}>{staff.filter(p => by.has(p.id) || a.isAdmin || a.canHR || p.manager_id === a.me.id).map(p => {
         const l = by.get(p.id) || [];
         return <tr key={p.id}><Td className="whitespace-nowrap">{p.full_name}</Td><Td>{fmtTime(l.find(e => e.kind === 'in')?.at) || <span className="text-ink-300">—</span>}</Td><Td>{fmtTime([...l].reverse().find(e => e.kind === 'out')?.at)}</Td>
-          <Td><div className="flex flex-wrap gap-1">{l.map(e => <span key={e.id} className="inline-flex items-center gap-1 rounded-md border border-ink-200 px-1.5 py-0.5 text-xs">
-            <button className="text-brand-700" onClick={() => view(e)}>{e.kind === 'in' ? 'Vào' : 'Ra'} {fmtTime(e.at)}</button>
+          <Td><div className="flex flex-wrap gap-1.5">{l.map(e => <span key={e.id} className="inline-flex items-center gap-1.5 rounded-xl border border-ink-200 p-1 pr-2 text-xs">
+            <SelfieThumb e={e} onOpen={u => setImg(u)} />
+            <button className="font-semibold text-brand-700" onClick={() => view(e)}>{e.kind === 'in' ? 'Vào' : 'Ra'} {fmtTime(e.at)}</button>
             {e.status === 'flagged' && <><Badge color="amber">IP {e.ip}</Badge><button className="text-emerald-700" onClick={() => setStatus(e, 'valid')}>✓</button><button className="text-red-600" onClick={() => setStatus(e, 'rejected')}>✕</button></>}
             {e.status === 'rejected' && <Badge color="red">Từ chối</Badge>}</span>)}</div></Td><Td /></tr>;
       })}</Table>}
-      <Modal open={!!img} onClose={() => setImg(null)} title="Ảnh chấm công" size="sm">{img && <img src={img} className="w-full rounded-lg" alt="" />}</Modal>
+      {img && <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4" onClick={() => setImg(null)}>
+        <img src={img} className="max-h-[88vh] max-w-full rounded-2xl shadow-2xl" alt="Ảnh chấm công" />
+        <button className="absolute right-4 top-4 rounded-full bg-white/90 px-3 py-1 text-sm font-semibold" onClick={() => setImg(null)}>Đóng ✕</button></div>}
     </Card>
   );
+}
+
+// Ảnh selfie thu nhỏ, bấm để xem to
+const thumbCache = new Map<string, Promise<string>>();
+function SelfieThumb({ e, onOpen }: { e: any; onOpen: (url: string) => void }) {
+  const [url, setUrl] = useState<string | null>(null); const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!e.selfie_path || e.purged_at || !ref.current) return;
+    const io = new IntersectionObserver(([x]) => { if (!x.isIntersecting) return; io.disconnect();
+      if (!thumbCache.has(e.selfie_path)) thumbCache.set(e.selfie_path, storage.signedUrl('selfies', e.selfie_path, 3600));
+      thumbCache.get(e.selfie_path)!.then(setUrl, () => thumbCache.delete(e.selfie_path)); });
+    io.observe(ref.current); return () => io.disconnect();
+  }, [e.selfie_path]);
+  if (!e.selfie_path || e.purged_at) return <span className="grid h-10 w-10 place-items-center rounded-lg bg-ink-100 text-[9px] text-ink-400" title="Ảnh đã xóa theo thời hạn lưu">—</span>;
+  return <button ref={ref} type="button" onClick={() => url && onOpen(url)} className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-ink-100 ring-1 ring-ink-200 transition hover:ring-2 hover:ring-brand-500" title="Bấm để xem ảnh lớn">
+    {url ? <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" /> : <span className="block h-full w-full animate-pulse bg-ink-200" />}</button>;
 }

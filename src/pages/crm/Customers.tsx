@@ -5,12 +5,14 @@ import { db } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { addDays, daysBetween, fmtDate, fmtDateTime, money, today } from '../../lib/format';
 import { CareModal, DuplicateCheck, dupText, DirectiveModal } from '../../components/CrmModals';
+import { ImportField, ImportWizard } from '../../components/ImportWizard';
+import { writeXlsx } from '../../lib/xlsx';
 
 const EMPTY = {
   contact_name: '', position: '', company_name: '', phone: '', zalo: '', tax_code: '', email: '', facebook: '', province: '', address: '',
   customer_type: '', source: '', industry: '', goods: '', current_provider: '', import_method: '', legal_entity: '', invoice_need: '',
   frequency: '', monthly_value: '', stage: 'moi', temperature: 'lanh', services: [] as string[], goods_traits: [] as string[],
-  next_care_date: today(), birthday: '', note: '', group_root_id: null as string | null,
+  next_care_date: today(), birthday: '', note: '', group_root_id: null as string | null, sys_code: '',
 };
 
 export const STAGE_TONE: Record<string, string> = {
@@ -21,6 +23,25 @@ export const STAGE_BAR: Record<string, string> = {
   moi: 'bg-ink-400', tiep_can: 'bg-sky-500', khai_thac: 'bg-indigo-500', da_bao_gia: 'bg-brand-500', dam_phan: 'bg-pink-500', don_dau: 'bg-teal-500',
   hoat_dong: 'bg-emerald-500', vip: 'bg-amber-500', kho_ngu: 'bg-slate-400', mat_khach: 'bg-red-500', khong_tiem_nang: 'bg-slate-300',
 };
+export function noOrder(c: any) {
+  if (!c.sys_last_order_date) return null; const n = daysBetween(c.sys_last_order_date, today());
+  return <div className={cx('text-[11px] font-semibold', n > 60 ? 'text-red-600' : n > 30 ? 'text-amber-600' : 'text-emerald-600')}>Không đơn {n} ngày</div>;
+}
+const CUSTOMER_IMPORT: ImportField[] = [
+  { key: 'sys_code', label: 'Mã KH hệ thống', aliases: ['mã khách hàng', 'mã kh', 'ma khach', 'customer code', 'mã khách'] },
+  { key: 'phone', label: 'Số điện thoại', aliases: ['sđt', 'điện thoại', 'phone', 'mobile', 'số đt', 'sdt khách'] },
+  { key: 'contact_name', label: 'Người liên hệ', aliases: ['tên khách hàng', 'tên khách', 'khách hàng', 'họ tên', 'tên kh'] },
+  { key: 'company_name', label: 'Công ty / shop', aliases: ['tên công ty', 'công ty', 'shop', 'doanh nghiệp'] },
+  { key: 'days_no_order', label: 'Số ngày không có đơn', type: 'number', aliases: ['số ngày không đơn', 'ngày không có đơn', 'không có đơn', 'so ngay khong co don'] },
+  { key: 'last_order_date', label: 'Ngày đơn cuối', type: 'date', aliases: ['đơn cuối', 'ngày đặt cuối', 'last order'] },
+  { key: 'order_count', label: 'Số đơn', type: 'number', aliases: ['tổng đơn', 'số lượng đơn'] },
+  { key: 'revenue', label: 'Doanh số', type: 'number', aliases: ['doanh thu', 'tổng tiền'] },
+  { key: 'zalo', label: 'Zalo' }, { key: 'tax_code', label: 'Mã số thuế', aliases: ['mst'] }, { key: 'email', label: 'Email' },
+  { key: 'sale', label: 'Nhân viên kinh doanh', aliases: ['sale', 'nvkd', 'nhân viên', 'người phụ trách'], hint: 'tên, email hoặc mã NV' },
+  { key: 'customer_type', label: 'Loại khách' }, { key: 'source', label: 'Nguồn khách', aliases: ['nguồn'] }, { key: 'industry', label: 'Ngành hàng' },
+  { key: 'goods', label: 'Mặt hàng', aliases: ['mặt hàng cụ thể', 'sản phẩm'] }, { key: 'province', label: 'Tỉnh / thành', aliases: ['tỉnh', 'thành phố'] },
+  { key: 'address', label: 'Địa chỉ' }, { key: 'note', label: 'Ghi chú' },
+];
 export function careBadge(d: string | null, t = today()) {
   if (!d) return null;
   const n = daysBetween(d, t);
@@ -40,7 +61,7 @@ export default function Customers() {
   const { data, loading, reload } = useLoad(async () => {
     let qq = db.from('customers').select(CUSTOMER_COLS)
       .is('deleted_at', null).order('next_care_date', { nulls: 'last' }).order('created_at', { asc: false }).limit(300);
-    if (q.trim()) { const s = q.trim().replace(/[(),]/g, ' '); qq = qq.or(`contact_name.ilike.*${s}*,company_name.ilike.*${s}*,phone_norm.ilike.*${s.replace(/\D/g, '') || s}*,code.ilike.*${s}*,tax_code.ilike.*${s}*`); }
+    if (q.trim()) { const s = q.trim().replace(/[(),]/g, ' '); qq = qq.or(`contact_name.ilike.*${s}*,company_name.ilike.*${s}*,phone_norm.ilike.*${s.replace(/\D/g, '') || s}*,code.ilike.*${s}*,sys_code.ilike.*${s}*,tax_code.ilike.*${s}*`); }
     if (stage) qq = qq.eq('stage', stage); if (temp) qq = qq.eq('temperature', temp); if (type) qq = qq.eq('customer_type', type);
     if (owner) qq = qq.eq('owner_id', owner); else if (!a.isLead) qq = qq.eq('owner_id', a.me.id);
     if (due) qq = qq.lte('next_care_date', today()).neq('stage', 'khong_tiem_nang');
@@ -54,10 +75,17 @@ export default function Customers() {
   const close = () => { setCreating(false); go('/crm/customers'); };
   const rows = (data as any[]) || [];
   const [careFor, setCareFor] = useState<any>(null);
+  const [impOpen, setImpOpen] = useState(false); const [createNew, setCreateNew] = useState(false);
+  const canImport = a.isAdmin || a.has('bgd', 'tp_kd');
+  const exportList = () => writeXlsx(`khach-hang-${today()}`, [['Mã KH', 'Mã KH hệ thống', 'Người liên hệ', 'Công ty / shop', 'SĐT', 'Zalo', 'MST', 'Loại khách', 'Ngành', 'Hình thức NK', 'Giai đoạn', 'Mức độ', 'Hẹn chăm', 'Lần chăm', 'Báo giá', 'Đơn', 'Ngày đơn cuối (HT)', 'Số ngày không đơn', 'Sale'],
+    ...rows.map(c => [c.code, c.sys_code, c.contact_name, c.company_name, c.phone, c.zalo, c.tax_code, a.label('customer_type', c.customer_type), a.label('industry', c.industry), a.label('import_method', c.import_method),
+      a.label('stage', c.stage), a.label('temperature', c.temperature), c.next_care_date, c.care_count, c.quote_count, c.order_count, c.sys_last_order_date, c.sys_last_order_date ? daysBetween(c.sys_last_order_date, today()) : '', a.personName(c.owner_id)])], 'Khách hàng');
   const quickCare = async (e: React.MouseEvent, id: string) => { e.stopPropagation(); setCareFor(await db.from('customers').select('*').eq('id', id).maybeSingle()); };
   return (
     <Layout title="Khách hàng" actions={<>
       <Button variant="dark" onClick={() => { setCreating(true); setSel(null); }}>Thêm khách hàng</Button>
+      {canImport && <Button onClick={() => setImpOpen(true)}>⇪ Nhập / đồng bộ</Button>}
+      {a.isLead && <Button onClick={exportList}>⬇ Xuất Excel</Button>}
       <Button onClick={() => { reload(); reloadCounts(); }}>Tải lại</Button></>}>
       <div className={cx((sel || creating) && 'hidden xl:block')}>
         <StatusChips value={stage} onChange={setStage} items={[['', 'Tất cả', total, 'dark'], ...a.opts('stage').map(([k, l]) => [k, l, cmap.get(k) || 0, STAGE_TONE[k] || 'gray'] as [string, string, number, string])]} />
@@ -80,12 +108,20 @@ export default function Customers() {
         </div>}
       </div>
       {careFor && <CareModal open customer={careFor} onClose={() => setCareFor(null)} onSaved={() => { setCareFor(null); reload(); }} />}
+      <ImportWizard open={impOpen} onClose={() => setImpOpen(false)} title="Nhập / đồng bộ khách hàng từ hệ thống" fields={CUSTOMER_IMPORT} sampleName="mau-nhap-khach-hang"
+        options={<label className="ml-auto flex items-center gap-2 rounded-lg bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-900"><input type="checkbox" checked={createNew} onChange={e => setCreateNew(e.target.checked)} /> Tạo khách mới nếu chưa có trên CRM</label>}
+        note={<>Khớp khách theo <b>Mã KH hệ thống → SĐT → MST</b>. Khách đã có: chỉ cập nhật mã hệ thống, ngày đơn cuối (từ “Số ngày không có đơn”), số đơn, doanh số — không đổi thông tin sale đang chăm.
+          Bật “Tạo khách mới” để nhập dữ liệu khách cũ; hệ thống vẫn chặn trùng SĐT/MST như khi nhập tay.</>}
+        onImport={async rs => { let u = 0, n = 0, k = 0; const errs: any[] = [];
+          for (let i = 0; i < rs.length; i += 400) { const r: any = await db.rpc('import_customers', { p_rows: rs.slice(i, i + 400), p_create: createNew }); u += r.updated; n += r.created; k += r.skipped; errs.push(...r.errors.map((e: any) => ({ ...e, row: e.row + i }))); }
+          reload(); reloadCounts();
+          return <div><b>Cập nhật {u} · tạo mới {n} · bỏ qua {k}</b>{errs.length > 0 && <ul className="mt-1 max-h-32 list-disc overflow-auto pl-5 text-xs text-ink-600">{errs.slice(0, 50).map((e, i) => <li key={i}>Dòng {e.row}: {e.msg}</li>)}</ul>}</div>; }} />
       <DuplicateCheck open={checkOpen} onClose={() => { setCheckOpen(false); if (query.check) go('/crm/customers'); }} />
     </Layout>
   );
 }
 
-export const CUSTOMER_COLS = 'id,code,contact_name,company_name,phone,zalo,tax_code,customer_type,industry,import_method,stage,temperature,next_care_date,owner_id,ownership,last_contact_at,last_result,care_count,quote_count,order_count';
+export const CUSTOMER_COLS = 'id,code,contact_name,company_name,phone,zalo,tax_code,customer_type,industry,import_method,stage,temperature,next_care_date,owner_id,ownership,last_contact_at,last_result,care_count,quote_count,order_count,sys_code,sys_last_order_date';
 export function CustomerTable({ rows, sel, onOpen, onCare, compact }: { rows: any[]; sel?: string | null; onOpen: (id: string) => void; onCare: (e: React.MouseEvent, id: string) => void; compact?: boolean }) {
   const a = useApp();
   const tempDot = (t: string) => <span className={cx('whitespace-nowrap text-sm', t === 'nong' ? 'text-red-600' : t === 'am' ? 'text-amber-600' : 'text-sky-600')}>● {a.label('temperature', t)}</span>;
@@ -105,14 +141,14 @@ export function CustomerTable({ rows, sel, onOpen, onCare, compact }: { rows: an
               {rows.map(c => (
                 <tr key={c.id} onClick={() => open(c.id)} className={cx('cursor-pointer hover:bg-ink-50', sel === c.id && 'bg-brand-50')}>
                   <Td className="w-24">{careBadge(c.next_care_date)}{c.next_care_date && c.next_care_date <= today() && <div className="text-[11px] text-ink-400">{fmtDate(c.next_care_date).slice(0, 5)}</div>}</Td>
-                  <Td className="min-w-[180px]"><div className="font-semibold">{c.company_name || c.contact_name}</div><div className="text-xs text-ink-400">{c.code}{c.company_name ? ` – ${c.contact_name}` : ''}{c.ownership === 'owned' && ' · 👑'}</div></Td>
+                  <Td className="min-w-[180px]"><div className="font-semibold">{c.company_name || c.contact_name}</div><div className="text-xs text-ink-400">{c.code}{c.sys_code && <b className="text-brand-700"> · {c.sys_code}</b>}{c.company_name ? ` – ${c.contact_name}` : ''}{c.ownership === 'owned' && ' · 👑'}</div></Td>
                   <Td><div className="whitespace-nowrap">{c.phone || c.zalo}</div><div className="text-xs text-ink-400">{c.last_contact_at ? 'LH ' + fmtDate(c.last_contact_at).slice(0, 5) : 'Chưa liên hệ'}</div></Td>
                   {!compact && <Td><div>{a.label('customer_type', c.customer_type)}</div><div className="text-xs text-ink-400">{a.label('industry', c.industry)}</div></Td>}
                   {!compact && <Td className="max-w-[200px] text-xs">{a.label('import_method', c.import_method)}</Td>}
                   <Td><Badge color={STAGE_TONE[c.stage]}>{a.label('stage', c.stage)}</Badge></Td>
                   <Td>{tempDot(c.temperature)}</Td>
                   <Td className="max-w-[160px] text-xs">{a.label('care_result', c.last_result)}</Td>
-                  <Td className="whitespace-nowrap text-center tabular-nums">{c.care_count} / {c.quote_count} / <b>{c.order_count}</b></Td>
+                  <Td className="whitespace-nowrap text-center tabular-nums">{c.care_count} / {c.quote_count} / <b>{c.order_count}</b>{noOrder(c)}</Td>
                   <Td className="whitespace-nowrap text-xs">{a.personName(c.owner_id)}</Td>
                   <Td className="whitespace-nowrap" onClick={e => e.stopPropagation()}><div className="flex gap-1"><Button size="sm" onClick={e => quickCare(e, c.id)}>Ghi chăm sóc</Button><Button size="sm" onClick={() => go(`/crm/quote?customer=${c.id}`)}>Báo giá</Button></div></Td>
                 </tr>))}
@@ -137,7 +173,7 @@ function CustomerPanel({ id, onClose, onSaved }: { id: string | null; onClose: (
   };
   const save = () => run(async () => {
     const payload: any = { ...f };
-    ['id', 'code', 'phone_norm', 'zalo_norm', 'owner_id', 'ownership', 'owned_at', 'care_count', 'quote_count', 'order_count', 'first_order_code', 'first_order_at', 'last_order_at',
+    ['id', 'code', 'phone_norm', 'zalo_norm', 'owner_id', 'sys_last_order_date', 'sys_order_count', 'sys_revenue', 'sys_synced_at', 'ownership', 'owned_at', 'care_count', 'quote_count', 'order_count', 'first_order_code', 'first_order_at', 'last_order_at',
       'last_contact_at', 'last_result', 'created_by', 'created_at', 'updated_at', 'deleted_at'].forEach(k => delete payload[k]);
     for (const k of Object.keys(payload)) if (payload[k] === '') payload[k] = null;
     if (!payload.contact_name || !payload.customer_type || !payload.source) throw new Error('Nhập đủ: Người liên hệ, Loại khách, Nguồn khách');
@@ -180,6 +216,7 @@ function CustomerPanel({ id, onClose, onSaved }: { id: string | null; onClose: (
             <Field label="Số điện thoại" required><Input value={f.phone} onChange={ev('phone')} onBlur={check} inputMode="tel" /></Field>
             <Field label="Zalo (SĐT hoặc link)"><Input value={f.zalo} onChange={ev('zalo')} onBlur={check} /></Field>
             <Field label="Mã số thuế"><Input value={f.tax_code} onChange={ev('tax_code')} onBlur={check} /></Field>
+            <Field label="Mã KH hệ thống" hint={c?.sys_last_order_date ? `Đơn cuối ${fmtDate(c.sys_last_order_date)} · không đơn ${daysBetween(c.sys_last_order_date, today())} ngày${c.sys_order_count ? ` · ${c.sys_order_count} đơn` : ''}` : 'Mã khách trên hệ thống đơn hàng, dùng cho nội dung QR'}><Input value={f.sys_code} onChange={e => set('sys_code')(e.target.value.toUpperCase())} placeholder="VD: KH1234" /></Field>
             <Field label="Email"><Input value={f.email} onChange={ev('email')} /></Field>
             <Field label="Facebook (link)"><Input value={f.facebook} onChange={ev('facebook')} /></Field>
             <Field label="Tỉnh / thành phố"><Input value={f.province} onChange={ev('province')} /></Field>

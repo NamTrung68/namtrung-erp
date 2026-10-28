@@ -9,6 +9,8 @@ import Dashboard from './pages/Dashboard';
 import Today from './pages/Today';
 import Timesheet from './pages/hr/Timesheet';
 import Staff from './pages/hr/Staff';
+import Library from './pages/crm/Library';
+import Inventory from './pages/Inventory';
 import Customers from './pages/crm/Customers';
 import Quotes from './pages/crm/Quotes';
 import QuoteEditor from './pages/crm/QuoteEditor';
@@ -29,7 +31,7 @@ import DataAdmin from './pages/admin/Data';
 import Account from './pages/Account';
 
 const routes: Record<string, React.FC> = {
-  '/': Today, '/dashboard': Dashboard, '/hr/timesheet': Timesheet, '/hr/staff': Staff,
+  '/': Today, '/dashboard': Dashboard, '/hr/timesheet': Timesheet, '/hr/staff': Staff, '/crm/library': Library, '/inventory': Inventory,
   '/crm/customers': Customers, '/crm/customer': Customers,
   '/crm/quotes': Quotes, '/crm/quote': QuoteEditor,
   '/crm/daily': Daily, '/crm/reports': Reports,
@@ -58,7 +60,7 @@ function App() {
     if (!session) return;
     loadContext().then(c => { if (!c.me) throw new Error('Tài khoản chưa được kích hoạt hoặc đã bị khóa. Liên hệ quản trị.'); setCtx(c); }).catch(e => setErr(e.message));
   }, [session?.access_token && session.user?.id, session === null]);
-  if (!session) return <Login />;
+  if (!session || new URLSearchParams(location.search).get('preview') === 'login') return <Login />;
   if (err) return <div className="grid min-h-screen place-items-center p-6"><div className="max-w-md rounded-xl border bg-white p-6 text-center">
     <p className="mb-4 text-sm text-red-700">{err}</p><Button onClick={() => auth.signOut()}>Đăng xuất</Button></div></div>;
   if (!ctx) return <div className="grid min-h-screen place-items-center"><Loading text="Đang tải dữ liệu…" /></div>;

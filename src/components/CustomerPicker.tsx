@@ -7,7 +7,7 @@ export function CustomerPicker({ value, onChange, disabled }: { value: any; onCh
   useEffect(() => {
     if (!open) return;
     const tm = setTimeout(async () => {
-      let qq = db.from('customers').select('id,code,contact_name,company_name,phone,zalo,import_method').is('deleted_at', null).order('updated_at', { asc: false }).limit(15);
+      let qq = db.from('customers').select('id,code,sys_code,contact_name,company_name,phone,zalo,import_method').is('deleted_at', null).order('updated_at', { asc: false }).limit(15);
       if (q.trim()) { const s = q.trim().replace(/[(),]/g, ' '); qq = qq.or(`contact_name.ilike.*${s}*,company_name.ilike.*${s}*,code.ilike.*${s}*,phone_norm.ilike.*${s}*`); }
       try { setOpts(await qq); } catch { /* */ }
     }, 250);

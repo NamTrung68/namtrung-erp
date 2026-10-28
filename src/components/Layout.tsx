@@ -41,6 +41,7 @@ export function useNav() {
       { to: '/dashboard', label: 'Bảng điều khiển', icon: '📊', show: true },
       { to: '/crm/customers', label: 'Khách hàng', icon: '👥', show: a.isSales },
       { to: '/crm/quotes', label: 'Báo giá', icon: '🧾', show: a.isSales },
+      { to: '/crm/library', label: 'Kho báo giá', icon: '📚', show: true },
       { to: '/support', label: 'Hỗ trợ khách', icon: '🆘', show: true },
       { to: '/crm/daily', label: 'Báo cáo ngày', icon: '📝', show: a.isSales },
       { to: '/crm/reports', label: 'Báo cáo và KPI', icon: '📈', show: a.isSales },
@@ -57,6 +58,7 @@ export function useNav() {
     ]],
     ['Vận hành', [
       { to: '/tickets', label: 'Claim & hỏi đáp', icon: '❓', show: true },
+      { to: '/inventory', label: 'Tồn kho', icon: '📦', show: true },
       { to: '/docs', label: 'Chứng từ', icon: '📁', show: a.canDocs },
     ]],
     ['Quản trị', [

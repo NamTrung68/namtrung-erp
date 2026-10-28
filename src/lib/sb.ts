@@ -186,6 +186,7 @@ export const db = {
 // ---------- Storage ----------
 const encPath = (p: string) => p.split('/').map(encodeURIComponent).join('/');
 export const storage = {
+  publicUrl(bucket: string, path: string) { return `${cfg().supabaseUrl}/storage/v1/object/public/${bucket}/${encPath(path)}`; },
   async upload(bucket: string, path: string, file: Blob, upsert = false) {
     await raw(`/storage/v1/object/${bucket}/${encPath(path)}`, { method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': String(upsert) }, body: file });
     return path;

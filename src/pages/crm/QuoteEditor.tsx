@@ -34,13 +34,13 @@ export default function QuoteEditor() {
       const q = await db.from('quotations').select('*').eq('id', id).maybeSingle();
       if (!q) { toast.err('Không tìm thấy báo giá'); go('/crm/quotes'); return; }
       const ls: any[] = await db.from('quotation_lines').select('*').eq('quotation_id', id).order('line_no');
-      const c = await db.from('customers').select('id,code,contact_name,company_name,phone,zalo,import_method').eq('id', q.customer_id).maybeSingle();
+      const c = await db.from('customers').select('id,code,sys_code,contact_name,company_name,phone,zalo,import_method').eq('id', q.customer_id).maybeSingle();
       setQuote(q); setCustomer(c); setH({ ...defaultHeader(qd), ...q.header }); setNote(q.note || '');
       setLines(ls.length ? ls.map(l => ({ name: l.name, spec: l.spec, hs_code: l.hs_code, unit: l.unit, qty: Number(l.qty), unit_price_cny: Number(l.unit_price_cny), duty_pct: Number(l.duty_pct), vat_pct: l.vat_pct === null ? null : Number(l.vat_pct), freight_pct: l.freight_pct === null ? null : Number(l.freight_pct), manual_price: l.manual_price === null ? null : Number(l.manual_price) })) : [emptyLine()]);
     } else {
       setQuote(null); setLines([emptyLine()]); setNote('');
       setH({ ...defaultHeader(qd), tyGia: rates.current.ban || qd.tyGia || 4015, tyGiaVon: rates.current.von || 3955 });
-      if (query.customer) { const c = await db.from('customers').select('id,code,contact_name,company_name,phone,zalo,import_method').eq('id', query.customer).maybeSingle(); setCustomer(c); if (c?.import_method) setH(x => ({ ...x, hinhThucNK: c.import_method })); }
+      if (query.customer) { const c = await db.from('customers').select('id,code,sys_code,contact_name,company_name,phone,zalo,import_method').eq('id', query.customer).maybeSingle(); setCustomer(c); if (c?.import_method) setH(x => ({ ...x, hinhThucNK: c.import_method })); }
       else setCustomer(null);
     }
     setLoading(false);
@@ -49,6 +49,14 @@ export default function QuoteEditor() {
   useEffect(() => { if (query.print === '1' && quote) setPrintOpen(true); }, [query.print, quote?.id]);
 
   const result = useMemo(() => calcQuote(h, lines, { tyLeCoc: qd.tyLeCoc ?? 80 }), [h, lines]);
+  // Cảnh báo hàng giống tồn kho công ty (chỉ cảnh báo, không chặn)
+  const [inv, setInv] = useState<Record<number, any[]>>({});
+  const namesKey = lines.map(l => l.name.trim()).join('\u0001');
+  useEffect(() => {
+    const names = lines.map(l => l.name.trim()); if (!names.some(n => n.length >= 4)) { setInv({}); return; }
+    const t = setTimeout(() => { db.rpc<any[]>('inventory_match', { p_names: names }).then(rs => { const m: Record<number, any[]> = {}; (rs || []).forEach(r => { (m[r.idx - 1] ||= []).push(r); }); setInv(m); }, () => {}); }, 700);
+    return () => clearTimeout(t);
+  }, [namesKey]);
   const t = result.totals;
   const frame = priceFrame(h, t, { tyGiaSan: rates.current.san ?? qd.tyGiaSan, phiDVSan: qd.phiDVSan, tyLeXuatMin: qd.tyLeXuatMin });
   const locked = quote && LOCKED.includes(quote.status);
@@ -69,6 +77,7 @@ export default function QuoteEditor() {
     const totals = { ...t, lnChiTiet: t.lnChiTiet };
     const id: string = await db.rpc('save_quote', { p_id: quote?.id ?? null, p_customer: customer.id, p_header: h, p_lines: payloadLines, p_totals: totals, p_note: note || null });
     let msg = 'Đã lưu nháp';
+    await db.rpc('quote_inventory_check', { p_id: id }).catch(() => {});
     if (send) {
       const st = await db.rpc('quote_submit', { p_id: id });
       msg = st === 'cho_duyet' ? 'Báo giá phá khung — đã chuyển Trưởng phòng duyệt' : 'Đã gửi báo giá';
@@ -104,6 +113,7 @@ export default function QuoteEditor() {
               <b>{quote ? `${quote.code}` : 'Báo giá mới'}</b>{quote && <QuoteStatus s={quote.status} />}
               {quote?.approved_by && <Badge color="green">Đã duyệt bởi {a.personName(quote.approved_by)}</Badge>}
               {quote?.approval_note && <span className="text-xs text-ink-500">“{quote.approval_note}”</span>}
+              {quote?.inventory_flags?.length > 0 && <Badge color="amber">📦 {quote.inventory_flags.length} dòng giống hàng tồn kho</Badge>}
               <span className="ml-auto" /><Button size="sm" onClick={() => go('/crm/quotes')}>Về danh sách</Button>
             </div>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
@@ -149,7 +159,9 @@ export default function QuoteEditor() {
                     const r = result.lines.find(x => x.idx === i);
                     return <tr key={i} className="border-b border-ink-100">
                       <td className="px-1.5 text-xs text-ink-400">{i + 1}</td>
-                      <td className="px-1 py-1"><textarea disabled={dis} rows={2} maxLength={250} className="min-h-[56px] w-full min-w-[300px] resize-y rounded-xl border border-ink-200 px-2.5 py-1.5 text-sm leading-snug focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-ink-50" value={l.name} onChange={e => setLine(i, 'name', e.target.value)} /></td>
+                      <td className="px-1 py-1"><textarea disabled={dis} rows={2} maxLength={250} className="min-h-[56px] w-full min-w-[300px] resize-y rounded-xl border border-ink-200 px-2.5 py-1.5 text-sm leading-snug focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-ink-50" value={l.name} onChange={e => setLine(i, 'name', e.target.value)} />
+                        {inv[i]?.length > 0 && <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] leading-snug text-amber-900">
+                          <b>📦 Giống hàng tồn kho công ty</b> — báo quản lý xem xét:{inv[i].map((m, k) => <div key={k}>• {m.name}{m.sku && ` (${m.sku})`}{m.qty !== null && <> · tồn <b>{num(m.qty)}</b> {m.unit || ''}</>}{m.warehouse && ` · ${m.warehouse}`} · giống {Math.round(m.score * 100)}%</div>)}</div>}</td>
                       <td className="px-1"><Input disabled={dis} className="w-24" value={l.hs_code || ''} onChange={e => setLine(i, 'hs_code', e.target.value)} /></td>
                       <td className="px-1"><Input disabled={dis} className="w-20" value={l.unit || ''} onChange={e => setLine(i, 'unit', e.target.value)} /></td>
                       <td className="px-1"><NumInput disabled={dis} className="w-24" value={l.qty} onChange={v => setLine(i, 'qty', v ?? 0)} /></td>
@@ -236,7 +248,7 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
   const t = r.totals;
   const [salePhone, setSalePhone] = useState('');
   useEffect(() => { db.from('profiles').select('phone').eq('id', quote.sale_id).maybeSingle().then((p: any) => setSalePhone(p?.phone || ''), () => {}); }, [quote.sale_id]);
-  const defContent = noAccent(`${customer?.contact_name || customer?.company_name || ''} TT tien hang ${h.maDonHeThong || 'NT'}`).replace(/\s+/g, ' ').trim().slice(0, 50);
+  const defContent = noAccent(`${customer?.sys_code || customer?.code || ''} chuyen tien`).replace(/\s+/g, ' ').trim().slice(0, 50);
   const [content, setContent] = useState(defContent); useEffect(() => { if (open) setContent(defContent); }, [open]);
   const [mode, setMode] = useState('coc'); const [pct, setPct] = useState<number>(qd.tyLeCoc ?? 80); const [custom, setCustom] = useState<number | null>(null);
   const amount = mode === 'coc' ? Math.ceil(((t.tienHang + t.phiDV) * pct / 100) / 1000) * 1000 : mode === 'all' ? t.soThu : (custom ?? 0);
@@ -250,7 +262,7 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
     <Modal open={open} onClose={onClose} title={`Xem trước báo giá ${quote.code}`} size="lg"
       footer={<><span className="mr-auto text-xs text-ink-400">Kiểm tra nội dung và số tiền chuyển khoản trước khi gửi khách.</span><Button variant="primary" onClick={doPrint}>In / Lưu PDF từ trình duyệt</Button></>}>
       <div className="mb-3 grid gap-2 rounded-xl border border-orange-200 bg-orange-50 p-3 sm:grid-cols-4">
-        <Field label="Nội dung chuyển khoản" hint="Mặc định: Tên khách TT tien hang + mã NT. Sale kiểm tra, sửa nếu cần." className="sm:col-span-2"><Input placeholder="Ten khach TT tien hang NT1234" value={content} onChange={e => setContent(e.target.value)} maxLength={50} /></Field>
+        <Field label="Nội dung chuyển khoản" hint={customer?.sys_code ? 'Mặc định: Mã KH hệ thống + chuyen tien. Sale kiểm tra, sửa nếu cần.' : '⚠️ Khách chưa có Mã KH hệ thống — nhập trong hồ sơ khách để QR đúng mã.'} className="sm:col-span-2"><Input placeholder="KH1234 chuyen tien" value={content} onChange={e => setContent(e.target.value)} maxLength={50} /></Field>
         <Field label="Khách chuyển"><Select options={[['coc', 'Cọc theo tiền hàng + phí dịch vụ'], ['all', 'Toàn bộ đơn'], ['custom', 'Tự nhập số tiền']]} value={mode} onChange={setMode} /></Field>
         {mode === 'coc' ? <Field label="% cọc"><NumInput value={pct} onChange={v => setPct(v ?? 0)} /></Field> : mode === 'custom' ? <Field label="Số tiền (0 = QR không số tiền)"><NumInput value={custom} onChange={setCustom} /></Field> : <Field label="Số tiền"><Input disabled value={money(amount)} /></Field>}
       </div>
@@ -307,10 +319,10 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
               <li>Thuế nhập khẩu, VAT áp dụng theo mã HS dự kiến; nếu Hải quan áp mã khác, chi phí điều chỉnh theo thực tế.</li></ol>
           </div>
           <div className="p-2"><div className="mb-1 font-bold">THÔNG TIN THANH TOÁN</div>
-            <div className="flex gap-3">{qr.account && <img alt="QR" className="h-36 w-36" src={vietQrUrl({ bin: qr.bank_bin, account: qr.account, amount, content: content || `${quote.code} ${customer?.code || ''}`, holder: qr.holder, template: qr.template })} />}
+            <div className="flex gap-3">{qr.account && <img alt="QR" className="h-36 w-36" src={vietQrUrl({ bin: qr.bank_bin, account: qr.account, amount, content: content || defContent, holder: qr.holder, template: qr.template })} />}
               <div className="text-[11.5px]"><div>Ngân hàng: <b>{qr.bank_name}</b></div><div>Số TK: <b>{qr.account}</b></div><div>Chủ TK: <b>{qr.holder}</b></div>
                 <div className="mt-1">{mode === 'coc' ? 'Số tiền cọc' : 'Số tiền'}: <b>{amount ? money(amount) + ' đ' : 'khách tự nhập'}</b></div>{mode === 'coc' && <div>({num(pct)}% tiền hàng + phí dịch vụ)</div>}
-                <div>Nội dung: {content || `${quote.code} ${customer?.code || ''}`}</div></div></div>
+                <div>Nội dung: {content || defContent}</div></div></div>
           </div>
         </div>
         <div className="mt-6 grid grid-cols-2 text-center">

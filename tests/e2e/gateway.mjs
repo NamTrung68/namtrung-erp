@@ -35,7 +35,7 @@ http.createServer(async (req, res) => {
       const p = u.pathname.replace('/storage/v1/object/', '');
       if (req.method === 'POST' && p.startsWith('sign/')) return send(res, 200, { signedURL: '/object/public-signed/' + p.slice(5) + '?token=t' });
       if (req.method === 'POST') { files.set(decodeURIComponent(p), { type: req.headers['content-type'], data: raw }); return send(res, 200, { Key: p }); }
-      if (req.method === 'GET') { const k = decodeURIComponent(p.replace(/^(public-signed|authenticated)\//, '')); const f = files.get(k); return f ? send(res, 200, f.data, { 'Content-Type': f.type }) : send(res, 404, { message: 'not found' }); }
+      if (req.method === 'GET') { const k = decodeURIComponent(p.replace(/^(public-signed|authenticated|public)\//, '')); const f = files.get(k); return f ? send(res, 200, f.data, { 'Content-Type': f.type }) : send(res, 404, { message: 'not found' }); }
       if (req.method === 'DELETE') { JSON.parse(raw).prefixes.forEach(x => files.delete(decodeURIComponent(p) + '/' + x)); return send(res, 200, []); }
     }
     if (u.pathname.startsWith('/rest/v1/')) {

@@ -4,6 +4,7 @@ import { Button, cx, Loading, useLoad } from '../components/ui';
 import { db } from '../lib/sb';
 import { go, useApp } from '../state';
 import { addDays, today } from '../lib/format';
+import { pickDaily } from '../lib/greeting';
 
 const WD = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 const WDL = ['Chủ nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
@@ -43,6 +44,8 @@ export default function Today() {
       <div className="mx-auto max-w-4xl py-2 sm:py-6">
         <div className="text-sm font-semibold text-ink-500">{WDL[wd(t)]}, {dm(t)}</div>
         <h2 className="display mt-1 text-4xl sm:text-6xl">{headline}</h2>
+        {pickDaily(a.settings.login_screen?.messages, 3, a.me.id) && <div className="mt-3 inline-flex max-w-2xl items-start gap-2 rounded-2xl bg-gradient-to-r from-brand-50 to-pink-50 px-4 py-2.5 text-sm text-ink-700">
+          <span>💜</span><span><b>{a.me.full_name.split(' ').slice(-1)[0]}</b> ơi, {pickDaily(a.settings.login_screen?.messages, 3, a.me.id)}</span></div>}
         <p className="mt-2 text-ink-500">{WD[wd(t1)]} {dm(t1)} {tomorrow.length ? `có ${tomorrow.length} người báo vắng.` : 'chưa ai báo vắng.'}</p>
         <div className="mt-5 flex flex-wrap gap-2">
           {[['', 'Tất cả'], ...units.map(u => [u.id, u.name])].map(([id, name]) =>

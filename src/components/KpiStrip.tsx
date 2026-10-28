@@ -3,19 +3,12 @@ import { cx } from './ui';
 import { num } from '../lib/format';
 import { useApp } from '../state';
 
-const ACTIVITY: Record<string, { label: string; day: number }> = {
-  cuoc_goi_nhat_ky: { label: 'Cuộc gọi có ghi nhật ký', day: 10 },
-  tin_nhan_nhat_ky: { label: 'Tin nhắn có ghi nhật ký', day: 10 },
-};
-
 /** Gộp KPI của nhiều nhân viên: thực tế / chỉ tiêu từng chỉ số + điểm trung bình */
 export function useKpiSummary(rows: any[] | null | undefined) {
   const a = useApp(); const k = a.settings.kpi || {}; const nf = Number(k.new_hire_factor ?? 0.7);
-  const metrics: Record<string, { label: string; day: number; weight?: number }> = { ...(k.metrics || {}) };
-  delete (metrics as any).bao_cao;
-  const all = { ...metrics, ...ACTIVITY, ...(k.activity || {}) };
+  const all: Record<string, { label: string; day: number; weight?: number; show?: boolean }> = Object.fromEntries(Object.entries(k.metrics || {}).filter(([key, m]: any) => m.show ?? key !== 'bao_cao')) as any;
   const rs = rows || [];
-  const ORDER = ['kh_moi', 'tiep_can', 'ket_noi', 'cham_cu', 'bao_gia', 'bai_fb', 'cuoc_goi_nhat_ky', 'tin_nhan_nhat_ky'];
+  const ORDER = ['kh_moi', 'tiep_can', 'ket_noi', 'cham_cu', 'bao_gia', 'bai_fb', 'cuoc_goi_nhat_ky', 'tin_nhan_nhat_ky', 'bao_cao', 'don_chot', 'khach_nong_am', 'cuoc_goi_khai', 'tin_nhan_khai'];
   const items = Object.entries(all).sort(([x], [y]) => (ORDER.indexOf(x) + 1 || 99) - (ORDER.indexOf(y) + 1 || 99)).map(([key, m]) => {
     const actual = rs.reduce((s, r) => s + (Number(r.metrics?.[key]) || 0), 0);
     const target = Math.round(rs.reduce((s, r) => s + Number(m.day || 0) * (Number(r.metrics?.days) || 1) * (r.is_new ? nf : 1), 0));
@@ -29,7 +22,7 @@ export function KpiStrip({ rows, title = 'Điểm KPI hôm nay', compact }: { ro
   const { items, score, count } = useKpiSummary(rows);
   return (
     <div className="overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-soft">
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-9">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(128px,1fr))]">
         {items.map(it => {
           const tone = it.pct >= 1 ? 'bg-emerald-500' : it.pct >= 0.7 ? 'bg-amber-400' : 'bg-orange-500';
           const short = it.target - it.actual;

@@ -41,8 +41,8 @@ const errors = [];
   await sale.goto(BASE + '#/crm/quotes'); await sale.waitForTimeout(800);
   if (!(await sale.textContent('body')).includes('NT1234')) throw new Error('Cột Mã đơn không hiện NT1234');
   await sale.locator('button:visible:has-text("🖨 In")').first().click(); await sale.waitForTimeout(1200);
-  const content = await sale.locator('input[placeholder="Ten khach TT tien hang NT1234"]').inputValue();
-  if (!/TT tien hang NT/.test(content)) throw new Error('Nội dung CK mặc định sai: ' + content);
+  const content = await sale.locator('input[placeholder="KH1234 chuyen tien"]').inputValue();
+  if (!/chuyen tien$/.test(content)) throw new Error('Nội dung CK mặc định sai: ' + content);
   await shot(sale, null, 'print');
   // Nhờ hỗ trợ lead với khách
   await sale.goto(BASE + '#/crm/customers'); await sale.waitForTimeout(800);

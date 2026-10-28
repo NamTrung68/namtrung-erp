@@ -19,3 +19,10 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmln
   .print-area table { page-break-inside: auto; } .print-area tr { page-break-inside: avoid; }
   .print-area * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+@keyframes nt-float { 0%, 100% { transform: translateY(0) rotate(var(--r, 0deg)); } 50% { transform: translateY(-10px) rotate(var(--r, 0deg)); } }
+@keyframes nt-pop { from { opacity: 0; transform: translateY(14px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes nt-spin { to { transform: rotate(360deg); } }
+.nt-float { animation: nt-float 6s ease-in-out infinite; }
+.nt-pop { animation: nt-pop .7s cubic-bezier(.2,.8,.2,1) both; }
+@media (prefers-reduced-motion: reduce) { .nt-float, .nt-pop { animation: none; } }

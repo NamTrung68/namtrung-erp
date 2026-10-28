@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Card, Chips, Empty, Field, Input, NumInput, Select, Table, Td, Tabs, toast, useAction, useLoad } from '../../components/ui';
-import { db } from '../../lib/sb';
+import { db, storage } from '../../lib/sb';
+import { CARD_COLORS, LoginCard, LoginContent } from '../../lib/greeting';
 import { useApp } from '../../state';
 import { BANKS } from '../../lib/vietqr';
 import { fmtDate, fmtDateTime, money } from '../../lib/format';
@@ -21,6 +22,7 @@ export default function Settings() {
   const tabs: [string, string][] = [];
   if (a.isAdmin) tabs.push(['telegram', 'Telegram']);
   if (a.isAdmin || a.has('ke_toan')) tabs.push(['quote', 'Báo giá & tỷ giá'], ['company', 'Công ty & VietQR']);
+  if (a.isAdmin || a.has('hcns', 'bgd')) tabs.push(['login', 'Màn hình đăng nhập']);
   if (a.isAdmin || a.has('hcns')) tabs.push(['attendance', 'Chấm công & lịch'], ['holidays', 'Ngày lễ']);
   if (a.isAdmin) tabs.push(['payroll', 'Lương & KPI'], ['crm', 'Tham số CRM'], ['lookups', 'Danh mục'], ['org', 'Phòng ban']);
   const [tab, setTab] = useState(tabs[0]?.[0] || '');
@@ -29,7 +31,7 @@ export default function Settings() {
       <Tabs value={tab} onChange={setTab} tabs={tabs} />
       <div className="mt-4 max-w-4xl">
         {tab === 'telegram' && <Telegram />}{tab === 'quote' && <QuoteCfg />}{tab === 'company' && <Company />}{tab === 'attendance' && <AttendanceCfg />}
-        {tab === 'holidays' && <Holidays />}{tab === 'payroll' && <PayrollCfg />}{tab === 'crm' && <CrmCfg />}{tab === 'lookups' && <Lookups />}{tab === 'org' && <Org />}
+        {tab === 'holidays' && <Holidays />}{tab === 'payroll' && <PayrollCfg />}{tab === 'crm' && <CrmCfg />}{tab === 'lookups' && <Lookups />}{tab === 'org' && <Org />}{tab === 'login' && <LoginCfg />}{tab === 'payroll' && <InventoryCfg />}
       </div>
     </Layout>
   );
@@ -175,15 +177,42 @@ function PayrollCfg() {
         <Button className="mt-3" variant="primary" loading={p.busy} onClick={p.save}>Lưu</Button>
       </Card>
       <Card title={`Chỉ tiêu KPI (tổng trọng số ${sumW}%)`}>
-        <Table head={['Chỉ số', 'Chỉ tiêu / ngày', 'Trọng số %']}>{Object.entries(metrics).map(([key, m]: any) => <tr key={key}><Td>{m.label}</Td>
-          <Td><NumInput value={m.day} onChange={v => k.set('metrics')({ ...metrics, [key]: { ...m, day: v ?? 0 } })} /></Td><Td><NumInput value={m.weight} onChange={v => k.set('metrics')({ ...metrics, [key]: { ...m, weight: v ?? 0 } })} /></Td></tr>)}</Table>
+        <p className="mb-2 text-xs text-ink-500">Mọi chỉ số KPI cấu hình ở đây. <b>Chỉ tiêu / ngày</b> dùng cho thanh tiến độ trên Bảng điều khiển và Báo cáo ngày; <b>Trọng số</b> tính điểm KPI (để 0 nếu chỉ theo dõi, không tính điểm). Bỏ tick “Hiện” để ẩn khỏi dải KPI.</p>
+        <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-sm">
+          <thead><tr className="border-b border-ink-200 bg-ink-50 text-left text-xs text-ink-500"><th className="px-3 py-2">Chỉ số</th><th className="px-3 py-2">Chỉ tiêu / ngày</th><th className="px-3 py-2">Trọng số %</th><th className="px-3 py-2 text-center">Hiện</th><th /></tr></thead>
+          <tbody className="divide-y divide-ink-100">{Object.entries(metrics).sort(([x], [y]) => KPI_ORDER.indexOf(x) - KPI_ORDER.indexOf(y)).map(([key, m]: any) => <tr key={key}>
+            <td className="px-3 py-1.5"><Input value={m.label} onChange={e => k.set('metrics')({ ...metrics, [key]: { ...m, label: e.target.value } })} /><div className="mt-0.5 text-[11px] text-ink-400">{KPI_CATALOG[key]?.hint}</div></td>
+            <td className="w-36 px-3 py-1.5"><NumInput value={m.day} onChange={v => k.set('metrics')({ ...metrics, [key]: { ...m, day: v ?? 0 } })} /></td>
+            <td className="w-32 px-3 py-1.5"><NumInput value={m.weight} onChange={v => k.set('metrics')({ ...metrics, [key]: { ...m, weight: v ?? 0 } })} /></td>
+            <td className="px-3 py-1.5 text-center"><input type="checkbox" checked={m.show ?? key !== 'bao_cao'} onChange={e => k.set('metrics')({ ...metrics, [key]: { ...m, show: e.target.checked } })} /></td>
+            <td className="px-1"><button className="text-ink-400 hover:text-red-600" title="Bỏ chỉ số" onClick={() => { const n = { ...metrics }; delete n[key]; k.set('metrics')(n); }}>✕</button></td></tr>)}</tbody>
+        </table></div>
+        {Object.keys(KPI_CATALOG).some(x => !metrics[x]) && <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs"><span className="text-ink-500">Thêm chỉ số:</span>
+          {Object.entries(KPI_CATALOG).filter(([x]) => !metrics[x]).map(([x, c]) => <button key={x} className="rounded-full border border-dashed border-ink-300 px-2.5 py-1 font-semibold hover:border-brand-500 hover:text-brand-700" onClick={() => k.set('metrics')({ ...metrics, [x]: { label: c.label, day: c.day, weight: 0 } })}>+ {c.label}</button>)}</div>}
         <div className="mt-3 grid gap-3 sm:grid-cols-3"><Field label="Hệ số chỉ tiêu nhân viên mới"><NumInput value={k.v.new_hire_factor} onChange={k.set('new_hire_factor')} /></Field></div>
-        {sumW !== 100 && <p className="mt-2 text-sm text-red-600">Tổng trọng số phải bằng 100%.</p>}
+        {sumW !== 100 && <p className="mt-2 text-sm text-red-600">Tổng trọng số phải bằng 100% (đang {sumW}%).</p>}
         <Button className="mt-3" variant="primary" disabled={sumW !== 100} loading={k.busy} onClick={k.save}>Lưu KPI</Button>
       </Card>
     </div>
   );
 }
+
+const KPI_CATALOG: Record<string, { label: string; day: number; hint: string }> = {
+  kh_moi: { label: 'KH mới nhập hệ thống', day: 15, hint: 'Khách do sale tạo trong ngày' },
+  tiep_can: { label: 'Tiếp cận lần đầu', day: 15, hint: 'Khách có nhật ký mục đích “Tiếp cận lần đầu”' },
+  ket_noi: { label: 'Kết nối thành công', day: 6, hint: 'Nhật ký có kết quả kết nối được' },
+  cham_cu: { label: 'Chăm sóc khách cũ', day: 10, hint: 'Nhật ký chăm sóc khác tiếp cận lần đầu' },
+  bao_gia: { label: 'Báo giá gửi khách', day: 1, hint: 'Báo giá chuyển sang Đã gửi' },
+  bai_fb: { label: 'Bài FB chính ngạch', day: 2, hint: 'Link bài FB được quản lý bấm Đạt' },
+  cuoc_goi_nhat_ky: { label: 'Cuộc gọi có ghi nhật ký', day: 10, hint: 'Nhật ký kênh Gọi điện' },
+  tin_nhan_nhat_ky: { label: 'Tin nhắn có ghi nhật ký', day: 10, hint: 'Nhật ký kênh Zalo / SMS / Facebook' },
+  bao_cao: { label: 'Báo cáo ngày đúng hạn', day: 1, hint: 'Nộp báo cáo ngày trước hạn' },
+  don_chot: { label: 'Đơn chốt', day: 0.2, hint: 'Báo giá chuyển Đã chốt đơn' },
+  khach_nong_am: { label: 'Khách nóng / ấm', day: 2, hint: 'Khách được đánh giá nóng hoặc ấm sau chăm sóc' },
+  cuoc_goi_khai: { label: 'Cuộc gọi tự khai', day: 30, hint: 'Số cuộc gọi sale tự khai trong báo cáo ngày' },
+  tin_nhan_khai: { label: 'Tin nhắn tự khai', day: 30, hint: 'Số tin nhắn sale tự khai trong báo cáo ngày' },
+};
+const KPI_ORDER = Object.keys(KPI_CATALOG);
 
 function CrmCfg() {
   const s = useSetting('crm');
@@ -221,4 +250,58 @@ function Org() {
         <Button variant="dark" loading={busy} onClick={() => run(async () => { await db.from('org_units').insert({ name, kind, parent_id: parent || null }); setName(''); await a.reload(); }, 'Đã thêm')}>Thêm</Button></div>
     </Card>
   );
+}
+
+function LoginCfg() {
+  const a = useApp(); const { busy, run } = useAction();
+  const [v, setV] = useState<LoginContent>(a.settings.login_screen || {});
+  const [hl, setHl] = useState((a.settings.login_screen?.headlines || []).join('\n'));
+  const [ms, setMs] = useState((a.settings.login_screen?.messages || []).join('\n'));
+  const cards: LoginCard[] = v.cards || [];
+  const setCard = (i: number, patch: Partial<LoginCard>) => setV(x => ({ ...x, cards: cards.map((c, j) => j === i ? { ...c, ...patch } : c) }));
+  const upload = async (file: File) => { const path = `login/${Date.now()}-${file.name.replace(/[^\w.\-]/g, '_')}`; await storage.upload('branding', path, file); return storage.publicUrl('branding', path); };
+  const lines = (t: string) => t.split('\n').map(x => x.trim()).filter(Boolean);
+  const save = () => run(async () => { await db.rpc('set_login_screen', { p_value: { ...v, headlines: lines(hl), messages: lines(ms) } }); await a.reload(); }, 'Đã lưu màn hình đăng nhập');
+  return (
+    <div className="space-y-4">
+      <Card title="Câu chào lớn" actions={<span className="text-xs text-ink-400">{lines(hl).length} câu</span>}>
+        <p className="mb-2 text-xs text-ink-500">Mỗi dòng một câu (nên ngắn, 3–8 chữ). Mỗi ngày, mỗi máy hiện một câu khác nhau.</p>
+        <textarea rows={5} className="w-full rounded-xl border border-ink-200 p-3 text-sm focus:border-brand-500 focus:outline-none" value={hl} onChange={e => setHl(e.target.value)} />
+      </Card>
+      <Card title="Lời chúc · thơ · lời khen" actions={<span className="text-xs text-ink-400">{lines(ms).length} dòng</span>}>
+        <p className="mb-2 text-xs text-ink-500">Mỗi dòng một lời chúc. Mỗi người, mỗi ngày thấy một câu khác (cũng hiện ở trang Hôm nay sau khi đăng nhập).</p>
+        <textarea rows={12} className="w-full rounded-xl border border-ink-200 p-3 text-sm leading-relaxed focus:border-brand-500 focus:outline-none" value={ms} onChange={e => setMs(e.target.value)} />
+      </Card>
+      <Card title="Thẻ tích cực (tối đa 4)" actions={cards.length < 4 && <Button size="sm" onClick={() => setV(x => ({ ...x, cards: [...cards, { emoji: '⭐', name: '', color: 'sun' }] }))}>+ Thêm thẻ</Button>}>
+        <p className="mb-3 text-xs text-ink-500">Vinh danh nhân viên, khách khen, thành tích đội… Có thể tải ảnh người hoặc sản phẩm thay cho biểu tượng.</p>
+        <div className="space-y-3">{cards.map((c, i) => (
+          <div key={i} className="grid gap-2 rounded-xl border border-ink-200 p-3 sm:grid-cols-[auto_1fr_1fr_auto]">
+            <div className="flex items-center gap-2">
+              {c.img ? <img src={c.img} className="h-12 w-12 rounded-full border-2 border-ink-900 object-cover" alt="" /> : <div className="grid h-12 w-12 place-items-center rounded-full border-2 border-ink-900 text-xl" style={{ background: CARD_COLORS[c.color || 'sun'] }}>{c.emoji || '✨'}</div>}
+              <div className="space-y-1"><Input className="w-16" value={c.emoji || ''} onChange={e => setCard(i, { emoji: e.target.value })} placeholder="😊" />
+                <label className="block cursor-pointer text-[11px] font-semibold text-brand-700">{c.img ? 'Đổi ảnh' : 'Tải ảnh'}<input type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) run(async () => setCard(i, { img: await upload(f) })); }} /></label>
+                {c.img && <button className="block text-[11px] text-red-600" onClick={() => setCard(i, { img: undefined })}>Bỏ ảnh</button>}</div></div>
+            <div className="space-y-1.5"><Input placeholder="Tên / tiêu đề (VD: Linh KD)" value={c.name} onChange={e => setCard(i, { name: e.target.value })} /><Input placeholder="Dòng phụ (VD: Phòng Kinh doanh)" value={c.sub || ''} onChange={e => setCard(i, { sub: e.target.value })} /></div>
+            <div className="space-y-1.5"><div className="flex gap-1.5"><Input placeholder="Nhãn màu (VD: Chốt đơn 1 tỷ)" value={c.tag || ''} onChange={e => setCard(i, { tag: e.target.value })} />
+              <Select className="w-28" options={Object.keys(CARD_COLORS).map(k => [k, ({ sun: 'Vàng', mint: 'Xanh lá', aqua: 'Xanh dương', hot: 'Hồng', brand: 'Tím', nt: 'Cam' } as any)[k]])} value={c.color || 'sun'} onChange={x => setCard(i, { color: x })} /></div>
+              <Input placeholder="Nhãn phụ (VD: Tuần này)" value={c.tag2 || ''} onChange={e => setCard(i, { tag2: e.target.value })} /></div>
+            <button className="self-start text-ink-400 hover:text-red-600" onClick={() => setV(x => ({ ...x, cards: cards.filter((_, j) => j !== i) }))}>✕</button>
+          </div>))}</div>
+      </Card>
+      <Card title="Ảnh lớn (không bắt buộc)">
+        <div className="flex flex-wrap items-center gap-3">{v.image && <img src={v.image} alt="" className="h-28 w-24 rounded-2xl border-2 border-ink-900 object-cover" />}
+          <label className="cursor-pointer rounded-xl border border-ink-200 px-3 py-2 text-sm font-semibold hover:bg-ink-50">{v.image ? 'Đổi ảnh' : 'Tải ảnh đội nhóm / sự kiện'}<input type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) run(async () => { const u = await upload(f); setV(x => ({ ...x, image: u })); }); }} /></label>
+          {v.image && <Button size="sm" variant="ghost" onClick={() => setV(x => ({ ...x, image: null }))}>Bỏ ảnh</Button>}</div>
+        <p className="mt-2 text-xs text-ink-500">Ảnh dọc, hiện nghiêng như tấm polaroid bên trái màn hình (máy tính). Dùng ảnh nội bộ công ty, đã được người trong ảnh đồng ý.</p>
+      </Card>
+      <div className="flex items-center gap-3"><Button variant="primary" loading={busy} onClick={save}>Lưu màn hình đăng nhập</Button><a className="text-sm font-semibold text-brand-700" href="./" target="_blank" rel="noreferrer" onClick={e => { e.preventDefault(); window.open(location.pathname + '?preview=login', '_blank'); }}>Xem thử ↗</a></div>
+    </div>
+  );
+}
+
+function InventoryCfg() {
+  const s = useSetting('inventory');
+  return <Card title="Cảnh báo trùng hàng tồn kho"><div className="grid gap-3 sm:grid-cols-3">
+    <Field label="Ngưỡng giống nhau (0–1)" hint="0,5 = khá giống. Tăng lên để ít cảnh báo hơn, giảm xuống để bắt rộng hơn."><NumInput value={s.v.match_threshold} onChange={s.set('match_threshold')} /></Field>
+  </div><Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button></Card>;
 }
