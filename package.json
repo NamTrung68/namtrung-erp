@@ -1,0 +1,22 @@
+{
+  "name": "namtrung-erp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ERP/CRM nội bộ Công ty TNHH DV&TM Quốc tế Nam Trung",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "tsx --test tests/*.test.ts",
+    "db:bundle": "node scripts/bundle-sql.mjs",
+    "db:test": "bash scripts/test-db.sh"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "tailwindcss": "3.4.17",
+    "tsx": "4.23.12"
+  }
+}

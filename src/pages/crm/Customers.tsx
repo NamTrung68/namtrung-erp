@@ -1,0 +1,317 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Layout } from '../../components/Layout';
+import { Badge, Button, Chips, cx, Empty, Field, Input, Loading, Modal, Select, Tabs, Textarea, toast, useAction, useLoad, Table, Td, ask } from '../../components/ui';
+import { db } from '../../lib/sb';
+import { go, useApp, useRoute } from '../../state';
+import { addDays, daysBetween, fmtDate, fmtDateTime, money, today } from '../../lib/format';
+
+const EMPTY = {
+  contact_name: '', position: '', company_name: '', phone: '', zalo: '', tax_code: '', email: '', facebook: '', province: '', address: '',
+  customer_type: '', source: '', industry: '', goods: '', current_provider: '', import_method: '', legal_entity: '', invoice_need: '',
+  frequency: '', monthly_value: '', stage: 'moi', temperature: 'lanh', services: [] as string[], goods_traits: [] as string[],
+  next_care_date: today(), birthday: '', note: '', group_root_id: null as string | null,
+};
+
+export function careBadge(d: string | null, t = today()) {
+  if (!d) return null;
+  const n = daysBetween(d, t);
+  if (n > 0) return <Badge color="solidred">Quá {n} ngày</Badge>;
+  if (n === 0) return <Badge color="solidamber">Hôm nay</Badge>;
+  return <span className="text-xs text-ink-500">{fmtDate(d).slice(0, 5)}</span>;
+}
+
+export default function Customers() {
+  const a = useApp(); const { query } = useRoute();
+  const [q, setQ] = useState(''); const [stage, setStage] = useState(''); const [temp, setTemp] = useState(''); const [type, setType] = useState('');
+  const [owner, setOwner] = useState(query.scope === 'team' ? '' : ''); const [due, setDue] = useState(query.due === '1');
+  const [sel, setSel] = useState<string | null>(query.id || null);
+  const [creating, setCreating] = useState(false);
+  const [checkOpen, setCheckOpen] = useState(query.check === '1');
+  useEffect(() => { setSel(query.id || null); if (query.check === '1') setCheckOpen(true); if (query.new === '1') setCreating(true); }, [query.id, query.check, query.new]);
+  const { data, loading, reload } = useLoad(async () => {
+    let qq = db.from('customers').select('id,code,contact_name,company_name,phone,zalo,tax_code,customer_type,industry,import_method,stage,temperature,next_care_date,owner_id,ownership,last_contact_at,order_count')
+      .is('deleted_at', null).order('next_care_date', { nulls: 'last' }).order('created_at', { asc: false }).limit(300);
+    if (q.trim()) { const s = q.trim().replace(/[(),]/g, ' '); qq = qq.or(`contact_name.ilike.*${s}*,company_name.ilike.*${s}*,phone_norm.ilike.*${s.replace(/\D/g, '') || s}*,code.ilike.*${s}*,tax_code.ilike.*${s}*`); }
+    if (stage) qq = qq.eq('stage', stage); if (temp) qq = qq.eq('temperature', temp); if (type) qq = qq.eq('customer_type', type);
+    if (owner) qq = qq.eq('owner_id', owner); else if (!a.isLead) qq = qq.eq('owner_id', a.me.id);
+    if (due) qq = qq.lte('next_care_date', today()).neq('stage', 'khong_tiem_nang');
+    return qq;
+  }, [q, stage, temp, type, owner, due]);
+  const salesOpts = a.people.filter(p => p.status === 'active').map(p => [p.id, p.full_name] as [string, string]);
+  const open = (id: string) => go(`/crm/customer?id=${id}`);
+  const close = () => { setCreating(false); go('/crm/customers'); };
+  const rows = (data as any[]) || [];
+  return (
+    <Layout title="Khách hàng" actions={<>
+      <Button variant="dark" onClick={() => { setCreating(true); setSel(null); }}>Thêm khách hàng</Button>
+      <Button onClick={reload}>Tải lại</Button></>}>
+      <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
+        <Input className="col-span-2" placeholder="Tìm tên, SĐT, MST, mã KH…" value={q} onChange={e => setQ(e.target.value)} />
+        <Select options={a.opts('stage')} value={stage} onChange={setStage} placeholder="Mọi giai đoạn" />
+        <Select options={a.opts('temperature')} value={temp} onChange={setTemp} placeholder="Mọi mức độ" />
+        <Select options={a.opts('customer_type')} value={type} onChange={setType} placeholder="Mọi loại khách" />
+        {a.isLead ? <Select options={salesOpts} value={owner} onChange={setOwner} placeholder="Mọi nhân viên" /> : <span />}
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={due} onChange={e => setDue(e.target.checked)} /> Chỉ khách đến hạn</label>
+      </div>
+      <div className="flex gap-4">
+        <div className={cx('min-w-0 flex-1 rounded-xl border border-ink-200 bg-white', (sel || creating) && 'hidden xl:block')}>
+          {loading ? <Loading /> : rows.length === 0 ? <Empty>Không có khách phù hợp</Empty> :
+            <Table head={['Hẹn chăm', 'Khách hàng', 'Liên hệ', 'Loại / Ngành', 'Hình thức NK', a.isLead ? 'Phụ trách' : 'Giai đoạn']}>
+              {rows.map(c => (
+                <tr key={c.id} onClick={() => open(c.id)} className={cx('cursor-pointer hover:bg-ink-50', sel === c.id && 'bg-brand-50')}>
+                  <Td className="w-24">{careBadge(c.next_care_date)}{c.next_care_date && c.next_care_date <= today() && <div className="text-[11px] text-ink-400">{fmtDate(c.next_care_date).slice(0, 5)}</div>}</Td>
+                  <Td><div className="font-medium">{c.company_name || c.contact_name}</div><div className="text-xs text-ink-400">{c.code}{c.company_name ? ` – ${c.contact_name}` : ''}{c.ownership === 'owned' && ' · 👑'}</div></Td>
+                  <Td><div className="whitespace-nowrap">{c.phone || c.zalo}</div><div className="text-xs text-ink-400">{c.last_contact_at ? 'LH ' + fmtDate(c.last_contact_at).slice(0, 5) : 'Chưa liên hệ'}</div></Td>
+                  <Td><div>{a.label('customer_type', c.customer_type)}</div><div className="text-xs text-ink-400">{a.label('industry', c.industry)}</div></Td>
+                  <Td className="max-w-[220px] text-xs">{a.label('import_method', c.import_method)}</Td>
+                  <Td className="text-xs">{a.isLead ? a.personName(c.owner_id) : a.label('stage', c.stage)}</Td>
+                </tr>))}
+            </Table>}
+          {rows.length >= 300 && <div className="p-3 text-center text-xs text-ink-400">Hiển thị 300 khách đầu — dùng bộ lọc để thu hẹp</div>}
+        </div>
+        {(sel || creating) && <div className="w-full xl:w-[56%] xl:max-w-[920px]">
+          <CustomerPanel key={sel || 'new'} id={creating ? null : sel} onClose={close} onSaved={(id) => { reload(); setCreating(false); open(id); }} />
+        </div>}
+      </div>
+      <DuplicateCheck open={checkOpen} onClose={() => { setCheckOpen(false); if (query.check) go('/crm/customers'); }} />
+    </Layout>
+  );
+}
+
+function CustomerPanel({ id, onClose, onSaved }: { id: string | null; onClose: () => void; onSaved: (id: string) => void }) {
+  const a = useApp();
+  const [tab, setTab] = useState('info');
+  const [f, setF] = useState<any>({ ...EMPTY });
+  const [dup, setDup] = useState<any>(null);
+  const [careOpen, setCareOpen] = useState(false); const [transferOpen, setTransferOpen] = useState(false);
+  const { busy, run } = useAction();
+  const { data: c, loading, reload } = useLoad(() => (id ? db.from('customers').select('*').eq('id', id).maybeSingle() : Promise.resolve(null)), [id]);
+  useEffect(() => { if (c) setF({ ...EMPTY, ...Object.fromEntries(Object.entries(c).map(([k, v]) => [k, v ?? (Array.isArray((EMPTY as any)[k]) ? [] : '')])) }); }, [c]);
+  const set = (k: string) => (v: any) => setF((x: any) => ({ ...x, [k]: v }));
+  const ev = (k: string) => (e: any) => set(k)(e.target.value);
+  const check = async () => {
+    if (!f.phone && !f.tax_code && !f.zalo) return;
+    try { const r = await db.rpc('check_duplicate', { p_phone: f.phone || f.zalo || null, p_tax: f.tax_code || null, p_exclude: id }); setDup(r.status === 'none' ? null : r); } catch { /* */ }
+  };
+  const save = () => run(async () => {
+    const payload: any = { ...f };
+    ['id', 'code', 'phone_norm', 'zalo_norm', 'owner_id', 'ownership', 'owned_at', 'care_count', 'quote_count', 'order_count', 'first_order_code', 'first_order_at', 'last_order_at',
+      'last_contact_at', 'last_result', 'created_by', 'created_at', 'updated_at', 'deleted_at'].forEach(k => delete payload[k]);
+    for (const k of Object.keys(payload)) if (payload[k] === '') payload[k] = null;
+    if (!payload.contact_name || !payload.customer_type || !payload.source) throw new Error('Nhập đủ: Người liên hệ, Loại khách, Nguồn khách');
+    if (!payload.phone && !payload.zalo) throw new Error('Cần ít nhất SĐT hoặc Zalo');
+    if (id) { await db.from('customers').update(payload).eq('id', id); toast.ok('Đã lưu khách hàng'); reload(); }
+    else { const r: any[] = await db.from('customers').insert(payload); toast.ok(`Đã tạo ${r[0].code}`); onSaved(r[0].id); }
+  });
+  if (id && loading) return <div className="rounded-xl border border-ink-200 bg-white"><Loading /></div>;
+  if (id && !c) return <div className="rounded-xl border border-ink-200 bg-white p-6 text-sm">Không tìm thấy khách hoặc bạn không có quyền. <Button size="sm" onClick={onClose}>Đóng</Button></div>;
+  const mine = !c || c.owner_id === a.me.id || a.isLead;
+  return (
+    <div className="sticky top-16 flex max-h-[calc(100vh-5rem)] flex-col rounded-xl border border-ink-200 bg-white">
+      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-ink-100 px-4 py-3">
+        <div className="min-w-0">
+          <h2 className="truncate text-lg font-semibold">{c ? (c.company_name || c.contact_name) : 'Khách hàng mới'}</h2>
+          {c && <div className="flex flex-wrap items-center gap-1.5 text-xs text-ink-500">{c.code} – {c.contact_name} – {c.phone || c.zalo}
+            <Badge color="green">{a.label('stage', c.stage)}</Badge>
+            <span className={c.temperature === 'nong' ? 'text-red-600' : c.temperature === 'am' ? 'text-amber-600' : 'text-blue-600'}>● {a.label('temperature', c.temperature)}</span>
+            {careBadge(c.next_care_date)}
+            <Badge>{c.ownership === 'owned' ? 'Chủ khách' : 'Đang theo'}: {a.personName(c.owner_id)}</Badge></div>}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {c && <Button size="sm" onClick={() => setCareOpen(true)}>Ghi chăm sóc</Button>}
+          {c && <Button size="sm" onClick={() => go(`/crm/quote?customer=${c.id}`)}>Tạo báo giá</Button>}
+          {c && a.isLead && <Button size="sm" onClick={() => setTransferOpen(true)}>Chuyển khách</Button>}
+          <Button size="sm" onClick={onClose}>Đóng</Button>
+        </div>
+      </div>
+      {c && <div className="px-4 pt-2"><Tabs value={tab} onChange={setTab} tabs={[['info', 'Thông tin'], ['care', `Lịch sử chăm sóc (${c.care_count})`], ['quotes', `Báo giá (${c.quote_count})`], ['support', 'Hỗ trợ'], ['transfer', 'Chuyển giao'], ['history', 'Lịch sử sửa']]} /></div>}
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {tab === 'info' && <div className="space-y-3">
+          {dup && <div className={cx('rounded-lg border p-3 text-sm', dup.status === 'visible' ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50 text-red-800')}>{dupText(dup)}</div>}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Field label="Người liên hệ" required><Input value={f.contact_name} onChange={ev('contact_name')} /></Field>
+            <Field label="Chức vụ"><Input value={f.position} onChange={ev('position')} /></Field>
+            <Field label="Tên công ty / shop"><Input value={f.company_name} onChange={ev('company_name')} /></Field>
+            <Field label="Số điện thoại" required><Input value={f.phone} onChange={ev('phone')} onBlur={check} inputMode="tel" /></Field>
+            <Field label="Zalo (SĐT hoặc link)"><Input value={f.zalo} onChange={ev('zalo')} onBlur={check} /></Field>
+            <Field label="Mã số thuế"><Input value={f.tax_code} onChange={ev('tax_code')} onBlur={check} /></Field>
+            <Field label="Email"><Input value={f.email} onChange={ev('email')} /></Field>
+            <Field label="Facebook (link)"><Input value={f.facebook} onChange={ev('facebook')} /></Field>
+            <Field label="Tỉnh / thành phố"><Input value={f.province} onChange={ev('province')} /></Field>
+            <Field label="Địa chỉ" className="sm:col-span-2"><Input value={f.address} onChange={ev('address')} /></Field>
+            <Field label="Loại khách" required><Select options={a.opts('customer_type')} value={f.customer_type} onChange={set('customer_type')} placeholder="— Chọn —" /></Field>
+            <Field label="Nguồn khách" required><Select options={a.opts('source')} value={f.source} onChange={set('source')} placeholder="— Chọn —" /></Field>
+            <Field label="Ngành hàng"><Select options={a.opts('industry')} value={f.industry} onChange={set('industry')} placeholder="— Chọn —" /></Field>
+            <Field label="Mặt hàng cụ thể" className="sm:col-span-2"><Input value={f.goods} onChange={ev('goods')} /></Field>
+            <Field label="Đang dùng đơn vị nào"><Input value={f.current_provider} onChange={ev('current_provider')} /></Field>
+            <Field label="Hình thức nhập khẩu" className="sm:col-span-2"><Select options={a.opts('import_method')} value={f.import_method} onChange={set('import_method')} placeholder="— Chọn —" /></Field>
+            <Field label="Pháp nhân"><Select options={a.opts('legal_entity')} value={f.legal_entity} onChange={set('legal_entity')} placeholder="— Chọn —" /></Field>
+            <Field label="Nhu cầu hóa đơn"><Select options={a.opts('invoice_need')} value={f.invoice_need} onChange={set('invoice_need')} placeholder="— Chọn —" /></Field>
+            <Field label="Tần suất nhập"><Select options={a.opts('frequency')} value={f.frequency} onChange={set('frequency')} placeholder="— Chọn —" /></Field>
+            <Field label="Giá trị nhập / tháng"><Select options={a.opts('monthly_value')} value={f.monthly_value} onChange={set('monthly_value')} placeholder="— Chọn —" /></Field>
+            <Field label="Giai đoạn"><Select options={a.opts('stage')} value={f.stage} onChange={set('stage')} /></Field>
+            <Field label="Mức độ"><Select options={a.opts('temperature')} value={f.temperature} onChange={set('temperature')} /></Field>
+            <Field label="Ngày hẹn chăm"><Input type="date" value={f.next_care_date || ''} onChange={ev('next_care_date')} /></Field>
+            <Field label="Sinh nhật / ngày kỷ niệm"><Input type="date" value={f.birthday || ''} onChange={ev('birthday')} /></Field>
+          </div>
+          <Field label="Dịch vụ quan tâm"><Chips options={a.opts('service')} value={f.services} onChange={set('services')} /></Field>
+          <Field label="Đặc thù hàng hóa"><Chips options={a.opts('goods_trait')} value={f.goods_traits} onChange={set('goods_traits')} /></Field>
+          <Field label="Ghi chú (nhu cầu, tính cách, điều cần lưu ý)"><Textarea rows={3} value={f.note} onChange={ev('note')} /></Field>
+        </div>}
+        {tab === 'care' && c && <CareHistory customerId={c.id} />}
+        {tab === 'quotes' && c && <CustomerQuotes customerId={c.id} />}
+        {tab === 'support' && c && <CustomerSupport customerId={c.id} />}
+        {tab === 'transfer' && c && <TransferHistory customerId={c.id} />}
+        {tab === 'history' && c && <AuditHistory table="customers" id={c.id} />}
+      </div>
+      {tab === 'info' && mine && <div className="flex items-center justify-between gap-2 border-t border-ink-100 px-4 py-3">
+        <span className="text-xs text-ink-400">{c ? `Tạo ${fmtDate(c.created_at)}, chăm ${c.care_count} lần, ${c.quote_count} báo giá, ${c.order_count} đơn` : 'Hệ thống kiểm tra trùng SĐT/MST khi lưu'}</span>
+        <Button variant="primary" loading={busy} onClick={save}>Lưu khách hàng</Button></div>}
+      {c && <CareModal open={careOpen} customer={c} onClose={() => setCareOpen(false)} onSaved={() => { setCareOpen(false); reload(); setTab('care'); }} />}
+      {c && <TransferModal open={transferOpen} customer={c} onClose={() => setTransferOpen(false)} onDone={() => { setTransferOpen(false); reload(); }} />}
+    </div>
+  );
+}
+
+function dupText(d: any) {
+  switch (d.status) {
+    case 'company_active': return `⛔ KHÁCH ĐANG CHẠY CỦA CÔNG TY: ${d.name || ''} (phụ trách ${d.owner || '?'}, đơn gần nhất ${fmtDate(d.last_order)}). Không được tạo hồ sơ, chăm sóc hay báo giá.`;
+    case 'company_sleep': return `Khách cũ đã ngủ của công ty (${d.name || ''}, đơn gần nhất ${fmtDate(d.last_order)}). Được đánh thức — chọn nguồn "Kho khách ngủ".`;
+    case 'owned_by_other': return `⛔ Khách ${d.code} đã có chủ: ${d.owner}. Không được tiếp cận.`;
+    case 'shared': return `⚠️ Khách ${d.code} đang được ${d.owner} theo (sân chung). Báo Trưởng nhóm thống nhất 1 đầu mối, 1 báo giá.`;
+    case 'visible': return `Khách đã có trong hệ thống: ${d.code} – ${d.name} (${d.ownership === 'owned' ? 'chủ khách' : 'đang theo'}: ${d.owner}).`;
+    default: return 'Chưa có trong hệ thống — tạo mới được.';
+  }
+}
+
+export function DuplicateCheck({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [phone, setPhone] = useState(''); const [tax, setTax] = useState(''); const [r, setR] = useState<any>(null); const { busy, run } = useAction();
+  return (
+    <Modal open={open} onClose={onClose} title="Kiểm tra SĐT / MST trước khi tiếp cận" size="sm"
+      footer={<Button variant="dark" loading={busy} onClick={() => run(async () => setR(await db.rpc('check_duplicate', { p_phone: phone || null, p_tax: tax || null })))}>Kiểm tra</Button>}>
+      <div className="space-y-3">
+        <Field label="Số điện thoại / Zalo"><Input value={phone} onChange={e => setPhone(e.target.value)} inputMode="tel" /></Field>
+        <Field label="Mã số thuế"><Input value={tax} onChange={e => setTax(e.target.value)} /></Field>
+        {r && <div className={cx('rounded-lg border p-3 text-sm', r.status === 'none' || r.status === 'company_sleep' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : r.status === 'visible' ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50 text-red-800')}>
+          {dupText(r)} {r.status === 'visible' && <a className="text-brand-700 underline" href={`#/crm/customer?id=${r.id}`} onClick={onClose}>Mở hồ sơ</a>}
+          {(r.status === 'none' || r.status === 'company_sleep') && <a className="ml-1 text-brand-700 underline" href="#/crm/customers?new=1" onClick={onClose}>Tạo khách mới</a>}</div>}
+      </div>
+    </Modal>
+  );
+}
+
+export function CareModal({ open, customer, onClose, onSaved }: { open: boolean; customer: any; onClose: () => void; onSaved: () => void }) {
+  const a = useApp();
+  const init = () => ({ channel: 'goi_dien', purpose: customer.care_count > 0 ? 'cham_soc_khach_cu' : 'tiep_can_lan_dau', result: '', content: '', stage_after: customer.stage, temperature_after: customer.temperature, next_care_date: '', quotation_code: '' });
+  const [f, setF] = useState<any>(init); const { busy, run } = useAction();
+  useEffect(() => { if (open) setF(init()); }, [open]);
+  const stageCad = (s: string) => a.lk('stage', s)?.extra?.cadence ?? 99; const tempCad = (t: string) => a.lk('temperature', t)?.extra?.cadence ?? 99;
+  const suggest = useMemo(() => {
+    if (f.stage_after === 'khong_tiem_nang') return '';
+    let d = addDays(today(), Math.min(stageCad(f.stage_after), tempCad(f.temperature_after)));
+    if (new Date(d + 'T00:00:00Z').getUTCDay() === 0) d = addDays(d, 1);
+    return d;
+  }, [f.stage_after, f.temperature_after]);
+  const pickResult = (r: string) => {
+    const ex = a.lk('care_result', r)?.extra || {};
+    setF((x: any) => ({ ...x, result: r, stage_after: ex.stage && (a.lk('stage', ex.stage)?.sort ?? 0) > (a.lk('stage', x.stage_after)?.sort ?? 0) ? ex.stage : x.stage_after, temperature_after: ex.temp || x.temperature_after }));
+    if (ex.hint) toast.info(ex.hint);
+  };
+  const save = () => run(async () => {
+    if (!f.result) throw new Error('Chọn kết quả');
+    if (f.content.trim().length < 15) throw new Error('Nội dung trao đổi tối thiểu 15 ký tự');
+    await db.from('care_logs').insert({ customer_id: customer.id, channel: f.channel, purpose: f.purpose, result: f.result, content: f.content.trim(),
+      stage_after: f.stage_after, temperature_after: f.temperature_after, next_care_date: f.next_care_date || null, quotation_code: f.quotation_code || null });
+    onSaved();
+  }, 'Đã lưu chăm sóc');
+  const purposes = a.opts('care_purpose').filter(([v]) => customer.care_count === 0 || v !== 'tiep_can_lan_dau');
+  return (
+    <Modal open={open} onClose={onClose} title={`Ghi chăm sóc: ${customer.company_name || customer.contact_name}`} size="md"
+      footer={<><span className="mr-auto text-xs text-ink-400">Ctrl + Enter để lưu</span><Button onClick={onClose}>Hủy</Button><Button variant="primary" loading={busy} onClick={save}>Lưu chăm sóc</Button></>}>
+      <div className="space-y-3" onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save(); }}>
+        <Field label="Kênh liên hệ"><Chips options={a.opts('channel')} value={[f.channel]} onChange={v => setF({ ...f, channel: v.filter(x => x !== f.channel)[0] || f.channel })} /></Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Mục đích"><Select options={purposes} value={f.purpose} onChange={v => setF({ ...f, purpose: v })} /></Field>
+          <Field label="Giai đoạn sau lần chăm này"><Select options={a.opts('stage')} value={f.stage_after} onChange={v => setF({ ...f, stage_after: v })} /></Field>
+        </div>
+        <Field label="Kết quả"><Chips options={a.opts('care_result')} value={f.result ? [f.result] : []} onChange={v => pickResult(v.filter(x => x !== f.result)[0] || f.result)} /></Field>
+        <Field label="Nội dung trao đổi (tối thiểu 15 ký tự)"><Textarea rows={4} autoFocus placeholder="Khách nhập mặt hàng gì, khối lượng, đang dùng đơn vị nào, vướng gì, hẹn gì…" value={f.content} onChange={e => setF({ ...f, content: e.target.value })} /></Field>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="Mức độ"><Chips options={a.opts('temperature')} value={[f.temperature_after]} onChange={v => setF({ ...f, temperature_after: v.filter(x => x !== f.temperature_after)[0] || f.temperature_after })} /></Field>
+          <Field label="Hẹn chăm tiếp" hint={suggest ? `Gợi ý theo nhịp chăm: ${fmtDate(suggest)}` : 'Không hẹn'}><Input type="date" min={today()} value={f.next_care_date || suggest} onChange={e => setF({ ...f, next_care_date: e.target.value })} /></Field>
+          <Field label="Mã báo giá liên quan"><Input placeholder="Không bắt buộc" value={f.quotation_code} onChange={e => setF({ ...f, quotation_code: e.target.value })} /></Field>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function TransferModal({ open, customer, onClose, onDone }: { open: boolean; customer: any; onClose: () => void; onDone: () => void }) {
+  const a = useApp(); const [to, setTo] = useState(''); const [reason, setReason] = useState(''); const [note, setNote] = useState(''); const { busy, run } = useAction();
+  const people = a.people.filter(p => p.status === 'active' && p.id !== customer.owner_id && (a.isAdmin || p.id !== a.me.id)).map(p => [p.id, p.full_name] as [string, string]);
+  return (
+    <Modal open={open} onClose={onClose} title={`Chuyển khách ${customer.code}`} size="sm"
+      footer={<Button variant="primary" loading={busy} onClick={() => run(async () => { await db.rpc('transfer_customer', { p_customer: customer.id, p_to: to, p_reason: reason, p_note: note || null }); onDone(); }, 'Đã chuyển khách')}>Chuyển</Button>}>
+      <div className="space-y-3 text-sm">
+        <p>Hiện tại: <b>{a.personName(customer.owner_id)}</b> ({customer.ownership === 'owned' ? 'chủ khách' : 'đang theo'})</p>
+        <Field label="Chuyển cho" required><Select options={people} value={to} onChange={setTo} placeholder="— Chọn nhân viên —" /></Field>
+        <Field label="Lý do" required><Select options={a.opts('transfer_reason')} value={reason} onChange={setReason} placeholder="— Chọn —" /></Field>
+        <Field label="Ghi chú"><Textarea value={note} onChange={e => setNote(e.target.value)} /></Field>
+        <p className="text-xs text-ink-500">Quản lý không tự nhận khách về mình. Khách đang hoạt động cần chủ cũ đồng ý hoặc BGĐ quyết định.</p>
+      </div>
+    </Modal>
+  );
+}
+
+function CareHistory({ customerId }: { customerId: string }) {
+  const a = useApp();
+  const { data, loading } = useLoad(() => db.from('care_logs').select('*').eq('customer_id', customerId).order('created_at', { asc: false }), [customerId]);
+  if (loading) return <Loading />;
+  if (!data?.length) return <Empty>Chưa có lần chăm sóc nào</Empty>;
+  return <ol className="space-y-3">{(data as any[]).map(l => (
+    <li key={l.id} className="rounded-lg border border-ink-100 p-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-ink-500"><b className="text-ink-800">{fmtDateTime(l.created_at)}</b>
+        {a.personName(l.sale_id)} · {a.label('channel', l.channel)} · {a.label('care_purpose', l.purpose)}
+        <Badge color={l.is_connected ? 'green' : 'gray'}>{a.label('care_result', l.result)}</Badge></div>
+      <p className="mt-1 whitespace-pre-wrap text-sm">{l.content}</p>
+      <div className="mt-1 text-xs text-ink-400">→ {a.label('stage', l.stage_after)} · {a.label('temperature', l.temperature_after)}{l.next_care_date && ` · hẹn ${fmtDate(l.next_care_date)}`}{l.quotation_code && ` · ${l.quotation_code}`}</div>
+    </li>))}</ol>;
+}
+function CustomerQuotes({ customerId }: { customerId: string }) {
+  const { data, loading } = useLoad(() => db.from('quotations').select('id,code,version,status,total_after_vat,created_at,order_code').eq('customer_id', customerId).order('created_at', { asc: false }), [customerId]);
+  if (loading) return <Loading />;
+  if (!data?.length) return <Empty>Chưa có báo giá</Empty>;
+  return <Table head={['Mã', 'Ngày', 'Trạng thái', 'Tổng sau VAT', 'Mã đơn']}>{(data as any[]).map(q => (
+    <tr key={q.id} className="cursor-pointer hover:bg-ink-50" onClick={() => go(`/crm/quote?id=${q.id}`)}>
+      <Td>{q.code} v{q.version}</Td><Td>{fmtDate(q.created_at)}</Td><Td><QuoteStatus s={q.status} /></Td><Td className="text-right">{money(q.total_after_vat)}</Td><Td>{q.order_code}</Td></tr>))}</Table>;
+}
+function CustomerSupport({ customerId }: { customerId: string }) {
+  const { data, loading } = useLoad(() => db.from('support_requests').select('id,code,title,status,created_at').eq('customer_id', customerId).order('created_at', { asc: false }), [customerId]);
+  if (loading) return <Loading />;
+  return <div className="space-y-2">{!(data as any[])?.length && <Empty>Chưa có yêu cầu hỗ trợ</Empty>}
+    {(data as any[] || []).map(s => <a key={s.id} href={`#/support?id=${s.id}`} className="block rounded-lg border border-ink-100 p-3 text-sm hover:bg-ink-50">{s.code} · {s.title} <Badge>{s.status}</Badge></a>)}
+    <Button size="sm" onClick={() => go(`/support?new=1&customer=${customerId}`)}>Gọi hỗ trợ cho khách này</Button></div>;
+}
+function TransferHistory({ customerId }: { customerId: string }) {
+  const a = useApp();
+  const { data, loading } = useLoad(() => db.from('customer_transfers').select('*').eq('customer_id', customerId).order('created_at', { asc: false }), [customerId]);
+  if (loading) return <Loading />;
+  if (!data?.length) return <Empty>Chưa chuyển giao lần nào</Empty>;
+  return <Table head={['Thời gian', 'Từ', 'Sang', 'Lý do', 'Người chuyển']}>{(data as any[]).map(t => (
+    <tr key={t.id}><Td>{fmtDateTime(t.created_at)}</Td><Td>{a.personName(t.from_id)}</Td><Td>{a.personName(t.to_id)}</Td><Td>{a.label('transfer_reason', t.reason)}{t.note && <div className="text-xs text-ink-400">{t.note}</div>}</Td><Td>{a.personName(t.created_by)}</Td></tr>))}</Table>;
+}
+export function AuditHistory({ table, id }: { table: string; id: string }) {
+  const a = useApp();
+  const { data, loading, error } = useLoad(() => db.from('audit_logs').select('*').eq('table_name', table).eq('record_id', id).order('at', { asc: false }).limit(100), [table, id]);
+  if (loading) return <Loading />;
+  if (error || !data?.length) return <Empty>{error ? 'Chỉ Admin/BGĐ xem được lịch sử chỉnh sửa' : 'Chưa có lịch sử'}</Empty>;
+  return <ul className="space-y-2 text-xs">{(data as any[]).map(l => <li key={l.id} className="rounded-lg border border-ink-100 p-2">
+    <b>{fmtDateTime(l.at)}</b> · {a.personName(l.actor_id) || 'Hệ thống'} · {l.action}
+    {l.action === 'UPDATE' && <div className="mt-1 text-ink-600">{Object.entries(l.diff || {}).map(([k, v]: any) => <div key={k}>{k}: <s className="text-ink-400">{JSON.stringify(v[0])}</s> → {JSON.stringify(v[1])}</div>)}</div>}</li>)}</ul>;
+}
+
+export const QUOTE_STATUS: Record<string, [string, string]> = {
+  nhap: ['Nháp', 'gray'], cho_duyet: ['Chờ duyệt giá', 'amber'], da_gui: ['Đã gửi', 'blue'], can_nhac: ['Khách đang cân nhắc', 'purple'],
+  da_chot: ['Đã chốt đơn', 'green'], tu_choi: ['Khách từ chối', 'red'], het_han: ['Hết hạn', 'gray'], da_thay_the: ['Đã thay thế', 'gray'],
+};
+export const QuoteStatus = ({ s }: { s: string }) => <Badge color={QUOTE_STATUS[s]?.[1]}>{QUOTE_STATUS[s]?.[0] || s}</Badge>;
