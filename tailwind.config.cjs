@@ -4,9 +4,13 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        ink: { 50: '#f6f6f5', 100: '#ececea', 200: '#dededb', 300: '#c4c4c0', 400: '#9a9a95', 500: '#73736e', 600: '#5a5a55', 700: '#41413d', 800: '#2a2a27', 900: '#151513' },
-        brand: { 50: '#f3f0ff', 100: '#e7e1ff', 500: '#7c5cff', 600: '#6a45f5', 700: '#5733db' },
+        // navy-lavender trung tính (phong cách 2026)
+        ink: { 50: '#f4f3fb', 100: '#ebe9f6', 200: '#dcd9ee', 300: '#c3bfdc', 400: '#9a95b8', 500: '#706b92', 600: '#565176', 700: '#3e3a5c', 800: '#272446', 900: '#17153b' },
+        brand: { 50: '#f1edff', 100: '#e4dcff', 200: '#cbbcff', 500: '#7b5cff', 600: '#6a45ff', 700: '#5633e6' },
+        sun: '#ffcf3f', aqua: '#58b7ff', hot: '#ff5c7a', mint: '#22d3a0', nt: '#F07B3C',
       },
+      boxShadow: { pop: '4px 4px 0 0 #17153b', 'pop-sm': '2px 2px 0 0 #17153b', soft: '0 8px 24px -12px rgba(23,21,59,.18)' },
+      borderRadius: { '2xl': '1.1rem', '3xl': '1.6rem' },
     },
   },
   plugins: [],

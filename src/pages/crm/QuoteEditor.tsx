@@ -7,6 +7,7 @@ import { calcQuote, defaultHeader, priceFrame, QuoteHeader, QuoteLine } from '..
 import { fmtDate, money, num, today, addDays } from '../../lib/format';
 import { QuoteStatus } from './Customers';
 import { vietQrUrl } from '../../lib/vietqr';
+import { CustomerPicker } from '../../components/CustomerPicker';
 
 const LOCKED = ['da_chot', 'tu_choi', 'het_han', 'da_thay_the'];
 const emptyLine = (): QuoteLine => ({ name: '', spec: '', hs_code: '', unit: 'Chiếc', qty: 0, unit_price_cny: 0, duty_pct: 0, vat_pct: null, freight_pct: null, manual_price: null });
@@ -136,17 +137,16 @@ export default function QuoteEditor() {
               {canEdit && <Button size="sm" onClick={() => setLines(l => [...l, emptyLine()])}>Thêm dòng hàng</Button>}
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1150px] text-sm">
+              <table className="w-full min-w-[1150px] text-sm [&_td]:align-top">
                 <thead><tr className="border-y border-ink-200 bg-ink-50 text-left text-xs text-ink-500">
-                  {['#', 'Tên hàng *', 'Mô tả / quy cách', 'HS code', 'ĐVT', 'SL *', 'Đơn giá ¥', 'Thuế NK %', 'VAT %', '% cước', ...(lowHigh ? ['Giá chọn tay'] : []), 'Cước', 'Giá xuất / ĐV', 'Giá khai APT / ĐV', 'Tổng trước VAT', ''].map((x, i) =>
+                  {['#', 'Tên hàng * (tối đa 250 ký tự)', 'HS code', 'ĐVT', 'SL *', 'Đơn giá ¥', 'Thuế NK %', 'VAT %', '% cước', ...(lowHigh ? ['Giá chọn tay'] : []), 'Cước', 'Giá xuất / ĐV', 'Giá khai APT / ĐV', 'Tổng trước VAT', ''].map((x, i) =>
                     <th key={i} className="px-1.5 py-2 font-medium">{x}</th>)}</tr></thead>
                 <tbody>
                   {lines.map((l, i) => {
                     const r = result.lines.find(x => x.idx === i);
                     return <tr key={i} className="border-b border-ink-100">
                       <td className="px-1.5 text-xs text-ink-400">{i + 1}</td>
-                      <td className="px-1 py-1"><Input disabled={dis} className="min-w-[160px]" value={l.name} onChange={e => setLine(i, 'name', e.target.value)} /></td>
-                      <td className="px-1"><Input disabled={dis} className="min-w-[120px]" value={l.spec || ''} onChange={e => setLine(i, 'spec', e.target.value)} /></td>
+                      <td className="px-1 py-1"><textarea disabled={dis} rows={2} maxLength={250} className="min-h-[56px] w-full min-w-[300px] resize-y rounded-xl border border-ink-200 px-2.5 py-1.5 text-sm leading-snug focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-ink-50" value={l.name} onChange={e => setLine(i, 'name', e.target.value)} /></td>
                       <td className="px-1"><Input disabled={dis} className="w-24" value={l.hs_code || ''} onChange={e => setLine(i, 'hs_code', e.target.value)} /></td>
                       <td className="px-1"><Input disabled={dis} className="w-20" value={l.unit || ''} onChange={e => setLine(i, 'unit', e.target.value)} /></td>
                       <td className="px-1"><NumInput disabled={dis} className="w-24" value={l.qty} onChange={v => setLine(i, 'qty', v ?? 0)} /></td>
@@ -220,35 +220,13 @@ const Row = ({ l, v, sub, cls }: { l: string; v: number; sub?: string; cls?: str
   <div className="flex items-start justify-between gap-3 py-1"><span className="text-ink-700">{l}{sub && <span className="block text-[11px] text-ink-400">{sub}</span>}</span><b className={cx('whitespace-nowrap tabular-nums', cls)}>{money(v)}</b></div>
 );
 
-function CustomerPicker({ value, onChange, disabled }: { value: any; onChange: (c: any) => void; disabled?: boolean }) {
-  const [q, setQ] = useState(''); const [opts, setOpts] = useState<any[]>([]); const [open, setOpen] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    const tm = setTimeout(async () => {
-      let qq = db.from('customers').select('id,code,contact_name,company_name,phone,zalo,import_method').is('deleted_at', null).order('updated_at', { asc: false }).limit(15);
-      if (q.trim()) { const s = q.trim().replace(/[(),]/g, ' '); qq = qq.or(`contact_name.ilike.*${s}*,company_name.ilike.*${s}*,code.ilike.*${s}*,phone_norm.ilike.*${s}*`); }
-      try { setOpts(await qq); } catch { /* */ }
-    }, 250);
-    return () => clearTimeout(tm);
-  }, [q, open]);
-  const label = value ? `${value.code} | ${value.company_name || value.contact_name} | ${value.phone || value.zalo || ''}` : '';
-  return (
-    <div className="relative">
-      <Input disabled={disabled} value={open ? q : label} placeholder="Gõ tên, mã KH, SĐT…" onFocus={() => { setOpen(true); setQ(''); }} onBlur={() => setTimeout(() => setOpen(false), 200)} onChange={e => setQ(e.target.value)} />
-      {open && <div className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-ink-200 bg-white shadow-lg">
-        {opts.length === 0 && <div className="p-3 text-sm text-ink-400">Không tìm thấy</div>}
-        {opts.map(o => <button key={o.id} type="button" onMouseDown={() => { onChange(o); setOpen(false); }} className="block w-full px-3 py-2 text-left text-sm hover:bg-ink-50">
-          <b>{o.code}</b> · {o.company_name || o.contact_name} <span className="text-ink-400">{o.phone || o.zalo}</span></button>)}
-      </div>}
-    </div>
-  );
-}
-
 // ---------- Bản in gửi khách ----------
 function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolean; onClose: () => void; quote: any; customer: any; h: QuoteHeader; lines: QuoteLine[] }) {
   const a = useApp(); const co = a.settings.company || {}; const qr = a.settings.vietqr || {}; const qd = a.settings.quote_defaults || {};
   const r = useMemo(() => calcQuote(h, lines, { tyLeCoc: qd.tyLeCoc ?? 80 }), [h, lines]);
   const t = r.totals;
+  const [salePhone, setSalePhone] = useState('');
+  useEffect(() => { db.from('profiles').select('phone').eq('id', quote.sale_id).maybeSingle().then((p: any) => setSalePhone(p?.phone || ''), () => {}); }, [quote.sale_id]);
   const [content, setContent] = useState(''); const [mode, setMode] = useState('coc'); const [pct, setPct] = useState<number>(qd.tyLeCoc ?? 80); const [custom, setCustom] = useState<number | null>(null);
   const amount = mode === 'coc' ? Math.ceil(((t.tienHang + t.phiDV) * pct / 100) / 1000) * 1000 : mode === 'all' ? t.soThu : (custom ?? 0);
   const validUntil = quote.valid_until || addDays(today(), qd.hieuLuc ?? 5);
@@ -267,20 +245,20 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
       </div>
       <div className="print-area mx-auto max-w-[800px] bg-white p-6 font-serif text-[12.5px] leading-snug text-black" style={{ fontFamily: '"Times New Roman", Times, serif' }}>
         <div className="flex items-start gap-4 border-b-2 border-[#F07B3C] pb-2">
-          <div className="grid h-14 w-14 shrink-0 place-items-center rounded bg-[#F07B3C] text-xl font-bold text-white">NT</div>
-          <div className="flex-1"><div className="text-[15px] font-bold">{co.name}</div><div>Địa chỉ: {co.address}</div><div>Hotline: {co.hotline} | Email: {co.email}</div><div>MST: {co.tax_code} | Website: {co.website}</div></div>
+          <img src="logo-mark.png" alt="Nam Trung" className="h-16 w-16 shrink-0 object-contain" />
+          <div className="flex-1"><div className="text-[15px] font-bold text-[#1d1d1d]">{co.name}</div><div>Địa chỉ: {co.address}</div><div>Hotline: {co.hotline} | Email: {co.email}</div><div>MST: {co.tax_code} | Website: {co.website}</div></div>
           <div className="text-right"><div>Số: <b>{quote.code}{quote.version > 1 ? `-v${quote.version}` : ''}</b></div><div>Ngày: {fmtDate(quote.sent_at || quote.created_at)}</div></div>
         </div>
         <h2 className="my-3 text-center text-[19px] font-bold">BẢNG BÁO GIÁ NHẬP KHẨU</h2>
         <div className="mb-3 grid grid-cols-2 gap-x-6">
           <div>Kính gửi: <b>{customer?.company_name || customer?.contact_name}</b></div><div>Mã đơn: {h.maDonHeThong}</div>
           <div>Người liên hệ: <b>{customer?.contact_name} – {customer?.phone || customer?.zalo}</b></div><div>Tỷ giá: <b>{money(h.tyGia)} đ/¥</b></div>
-          <div>Nhân viên: <b>{a.personName(quote.sale_id)}</b></div><div>Hiệu lực đến: <b>{fmtDate(validUntil)}</b></div>
+          <div>Nhân viên: <b>{a.personName(quote.sale_id)}{salePhone && ` – ${salePhone}`}</b></div><div>Hiệu lực đến: <b>{fmtDate(validUntil)}</b></div>
         </div>
         <div className="mb-1 border-l-4 border-[#F07B3C] pl-2 font-bold">A. HÀNG HÓA VÀ GIÁ XUẤT HÓA ĐƠN</div>
         <table className="mb-3 w-full border-collapse text-[12px]">
           <thead className="bg-[#f8d5bf]"><tr>{['STT', 'Sản phẩm', 'ĐVT', 'SL', 'Đơn giá NCC', 'Giá xuất trước VAT', 'Thành tiền trước VAT', 'VAT', 'Tiền VAT'].map(x => <th key={x} className={C}>{x}</th>)}</tr></thead>
-          <tbody>{valid.map(({ l, r: lr }, i) => <tr key={i}><td className={C + ' text-center'}>{i + 1}</td><td className={C}>{l.name}{l.spec && <div className="text-[11px]">{l.spec}</div>}</td><td className={C}>{l.unit}</td>
+          <tbody>{valid.map(({ l, r: lr }, i) => <tr key={i}><td className={C + ' text-center'}>{i + 1}</td><td className={C + ' whitespace-pre-wrap'}>{l.name}{l.spec && <div className="text-[11px]">{l.spec}</div>}</td><td className={C}>{l.unit}</td>
             <td className={C + ' text-right'}>{num(l.qty)}</td><td className={C + ' text-right'}>¥{num(l.unit_price_cny)}</td><td className={C + ' text-right'}>{money(lr!.giaXuat)}</td>
             <td className={C + ' text-right'}>{money(lr!.tongTruocVAT)}</td><td className={C + ' text-center'}>{num(lr!.vatPct)}%</td><td className={C + ' text-right'}>{money(lr!.vat)}</td></tr>)}
             <tr className="font-bold"><td className={C} colSpan={6}>TỔNG</td><td className={C + ' text-right'}>{money(t.tongTruocVAT)}</td><td className={C} /><td className={C + ' text-right'}>{money(t.vat)}</td></tr>
@@ -293,7 +271,7 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
             <B C={C} n="1" l="Tiền hàng" q={`¥${num(t.tienHangCNY)}`} p={`${money(h.tyGia)} đ/¥`} v={t.tienHang} />
             <B C={C} n="2" l="Phí ship nội địa Trung Quốc" q={`¥${num(h.shipNoiDiaCNY)}`} p={`${money(h.tyGia)} đ/¥`} v={t.ship} />
             <tr className="bg-[#fbeee5] font-bold"><td className={C} colSpan={5}>I. Mục phí chính</td></tr>
-            <B C={C} n="3" l="Phí vận chuyển TQ – Việt Nam" q={t.cuocTheoKg >= t.cuocTheoKhoi ? `${num(h.soKg)} kg` : `${num(h.soKhoi)} m³`} p={t.cuocTheoKg >= t.cuocTheoKhoi ? `${money(h.donGiaKg)} đ/kg` : `${money(h.donGiaKhoi)} đ/m³`} v={t.cuoc} />
+            <B C={C} n="3" l={`Phí vận chuyển TQ – ${h.khoNhan === 'HCM' ? 'Hồ Chí Minh' : 'Hà Nội'}`} q={t.cuocTheoKg >= t.cuocTheoKhoi ? `${num(h.soKg)} kg` : `${num(h.soKhoi)} m³`} p={t.cuocTheoKg >= t.cuocTheoKhoi ? `${money(h.donGiaKg)} đ/kg` : `${money(h.donGiaKhoi)} đ/m³`} v={t.cuoc} />
             <B C={C} n="4" l="Phí dịch vụ" q={h.phiDVCoDinh > 0 ? '' : money(t.tienHang)} p={h.phiDVCoDinh > 0 ? 'Trọn gói' : `${num(h.phiDVPct)}%`} v={t.phiDV} />
             <B C={C} n="5" l="Phí ủy thác" q={money(h.coSoUyThac === 'tienHang' ? t.tienHang : t.tongTruocVAT)} p={`${num(h.phiUTPct)}%`} v={utPrint} />
             <tr className="bg-[#fbeee5] font-bold"><td className={C} colSpan={5}>II. Mục phát sinh</td></tr>
@@ -316,14 +294,17 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
               <li>Giá trên là dự kiến, tính theo thông tin hàng hóa, cân nặng, số khối do nhà cung cấp gửi. Chi phí thực tế có thể thay đổi khi hàng về kho.</li>
               <li>Cước vận chuyển tính theo cân nặng hoặc thể tích thực tế khi hàng về kho Việt Nam.</li>
               <li>Thuế nhập khẩu, VAT áp dụng theo mã HS dự kiến; nếu Hải quan áp mã khác, chi phí điều chỉnh theo thực tế.</li></ol>
-            <div className="mt-6 grid grid-cols-2 text-center text-[11.5px]"><div><b>Khách hàng xác nhận</b><div className="h-12" /></div><div><b>Nhân viên kinh doanh</b><div className="h-12" />{a.personName(quote.sale_id)}</div></div>
           </div>
           <div className="p-2"><div className="mb-1 font-bold">THÔNG TIN THANH TOÁN</div>
             <div className="flex gap-3">{qr.account && <img alt="QR" className="h-36 w-36" src={vietQrUrl({ bin: qr.bank_bin, account: qr.account, amount, content: content || `${quote.code} ${customer?.code || ''}`, holder: qr.holder, template: qr.template })} />}
               <div className="text-[11.5px]"><div>Ngân hàng: <b>{qr.bank_name}</b></div><div>Số TK: <b>{qr.account}</b></div><div>Chủ TK: <b>{qr.holder}</b></div>
-                <div className="mt-1">Số tiền: <b>{amount ? money(amount) + ' đ' : 'khách tự nhập'}</b></div>{mode === 'coc' && <div>({num(pct)}% tiền hàng + phí dịch vụ)</div>}
+                <div className="mt-1">{mode === 'coc' ? 'Số tiền cọc' : 'Số tiền'}: <b>{amount ? money(amount) + ' đ' : 'khách tự nhập'}</b></div>{mode === 'coc' && <div>({num(pct)}% tiền hàng + phí dịch vụ)</div>}
                 <div>Nội dung: {content || `${quote.code} ${customer?.code || ''}`}</div></div></div>
           </div>
+        </div>
+        <div className="mt-6 grid grid-cols-2 text-center">
+          <div><b>XÁC NHẬN CỦA KHÁCH HÀNG</b><div className="text-[11px] italic">(Ký, ghi rõ họ tên)</div><div className="h-16" /></div>
+          <div><b>NAM TRUNG GROUP</b><div className="text-[11px] italic">Nhân viên kinh doanh</div><div className="h-12" /><b>{a.personName(quote.sale_id)}</b></div>
         </div>
       </div>
     </Modal>

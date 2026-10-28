@@ -6,7 +6,7 @@ export const cx = (...a: any[]) => a.filter(Boolean).join(' ');
 type BtnProps = React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'dark' | 'secondary' | 'ghost' | 'danger' | 'success'; size?: 'sm' | 'md'; loading?: boolean };
 export function Button({ variant = 'secondary', size = 'md', loading, className, children, disabled, ...p }: BtnProps) {
   const v = {
-    primary: 'bg-brand-600 text-white hover:bg-brand-700 border-brand-600',
+    primary: 'bg-brand-600 text-white hover:bg-brand-700 border-brand-600 shadow-[0_6px_16px_-8px_rgba(106,69,255,.8)]',
     dark: 'bg-ink-900 text-white hover:bg-ink-800 border-ink-900',
     secondary: 'bg-white text-ink-800 hover:bg-ink-50 border-ink-200',
     ghost: 'bg-transparent text-ink-700 hover:bg-ink-100 border-transparent',
@@ -15,14 +15,14 @@ export function Button({ variant = 'secondary', size = 'md', loading, className,
   }[variant];
   return (
     <button {...p} disabled={disabled || loading}
-      className={cx('inline-flex items-center justify-center gap-1.5 rounded-lg border font-medium transition disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap',
+      className={cx('inline-flex items-center justify-center gap-1.5 rounded-xl border font-semibold active:translate-y-px transition disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap',
         size === 'sm' ? 'h-8 px-2.5 text-[13px]' : 'h-9 px-3.5 text-sm', v, className)}>
       {loading && <Spinner small />}{children}
     </button>
   );
 }
 
-export const inputCls = 'w-full h-9 rounded-lg border border-ink-200 bg-white px-3 text-sm text-ink-900 placeholder:text-ink-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-ink-50 disabled:text-ink-500';
+export const inputCls = 'w-full h-9 rounded-xl border border-ink-200 bg-white px-3 text-sm text-ink-900 placeholder:text-ink-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-ink-50 disabled:text-ink-500';
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...p }, ref) {
   return <input ref={ref} {...p} className={cx(inputCls, className)} />;
 });
@@ -60,7 +60,7 @@ export function Chips({ options, value, onChange, disabled }: { options: [string
       {options.map(([v, l]) => {
         const on = value.includes(v);
         return <button type="button" key={v} disabled={disabled} onClick={() => onChange(on ? value.filter(x => x !== v) : [...value, v])}
-          className={cx('rounded-full border px-3 py-1 text-[13px] transition', on ? 'border-ink-900 bg-ink-900 text-white' : 'border-ink-200 bg-white text-ink-700 hover:border-ink-400')}>{l}</button>;
+          className={cx('rounded-full border px-3 py-1 text-[13px] font-medium transition', on ? 'border-brand-600 bg-brand-600 text-white shadow-[0_4px_12px_-6px_rgba(106,69,255,.9)]' : 'border-ink-200 bg-white text-ink-700 hover:border-brand-200 hover:bg-brand-50')}>{l}</button>;
       })}
     </div>
   );
@@ -70,7 +70,7 @@ export function Radio({ options, value, onChange }: { options: [string, string][
 }
 export function Card({ title, actions, children, className, bodyClass }: { title?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode; className?: string; bodyClass?: string }) {
   return (
-    <section className={cx('rounded-xl border border-ink-200 bg-white', className)}>
+    <section className={cx('rounded-2xl border border-ink-200 bg-white shadow-soft', className)}>
       {(title || actions) && <header className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-100 px-4 py-3">
         <h2 className="text-[15px] font-semibold text-ink-900">{title}</h2><div className="flex flex-wrap gap-2">{actions}</div></header>}
       <div className={cx('p-4', bodyClass)}>{children}</div>
@@ -99,7 +99,7 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }: {
   const w = { sm: 'max-w-md', md: 'max-w-2xl', lg: 'max-w-4xl', xl: 'max-w-6xl' }[size];
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink-900/40 sm:items-center sm:p-4" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-      <div className={cx('flex max-h-[94vh] w-full flex-col rounded-t-2xl bg-white shadow-xl sm:rounded-2xl', w)}>
+      <div className={cx('flex max-h-[94vh] w-full flex-col rounded-t-3xl bg-white shadow-xl sm:rounded-3xl', w)}>
         <div className="flex items-center justify-between gap-3 border-b border-ink-100 px-5 py-3">
           <h3 className="text-[15px] font-semibold">{title}</h3><Button size="sm" onClick={onClose}>Đóng</Button>
         </div>
@@ -111,15 +111,15 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }: {
 }
 export function Tabs({ tabs, value, onChange }: { tabs: [string, React.ReactNode][]; value: string; onChange: (v: string) => void }) {
   return (
-    <div className="flex gap-1 overflow-x-auto border-b border-ink-200">
-      {tabs.map(([k, l]) => <button key={k} onClick={() => onChange(k)}
-        className={cx('-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm', value === k ? 'border-brand-600 font-medium text-brand-700' : 'border-transparent text-ink-500 hover:text-ink-800')}>{l}</button>)}
+    <div className="flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none]">
+      {tabs.map(([k, l]) => <button key={k} type="button" onClick={() => onChange(k)}
+        className={cx('whitespace-nowrap rounded-full border px-3.5 py-1.5 text-sm font-semibold transition', value === k ? 'border-ink-900 bg-ink-900 text-white' : 'border-ink-200 bg-white text-ink-600 hover:border-ink-400')}>{l}</button>)}
     </div>
   );
 }
 export function Stat({ label, value, sub, tone, onClick }: { label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: 'red' | 'amber' | 'green'; onClick?: () => void }) {
   return (
-    <button onClick={onClick} disabled={!onClick} className="rounded-xl border border-ink-200 bg-white p-4 text-left enabled:hover:border-ink-400">
+    <button onClick={onClick} disabled={!onClick} className="rounded-2xl border border-ink-200 bg-white p-4 text-left shadow-soft transition enabled:hover:-translate-y-0.5 enabled:hover:border-brand-200">
       <div className="text-xs text-ink-500">{label}</div>
       <div className={cx('mt-1 text-2xl font-semibold tabular-nums', tone === 'red' ? 'text-red-600' : tone === 'amber' ? 'text-amber-600' : tone === 'green' ? 'text-emerald-600' : 'text-ink-900')}>{value}</div>
       {sub && <div className="mt-0.5 text-xs text-ink-400">{sub}</div>}
@@ -130,7 +130,7 @@ export function Table({ head, children, className }: { head: React.ReactNode[]; 
   return (
     <div className={cx('overflow-x-auto', className)}>
       <table className="w-full text-sm">
-        <thead><tr className="border-b border-ink-200 text-left text-xs text-ink-500">{head.map((h, i) => <th key={i} className="whitespace-nowrap px-3 py-2 font-medium">{h}</th>)}</tr></thead>
+        <thead><tr className="border-b border-ink-200 bg-ink-50/60 text-left text-xs text-ink-500">{head.map((h, i) => <th key={i} className="whitespace-nowrap px-3 py-2 font-medium">{h}</th>)}</tr></thead>
         <tbody className="divide-y divide-ink-100">{children}</tbody>
       </table>
     </div>

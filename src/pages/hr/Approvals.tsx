@@ -4,7 +4,7 @@ import { Badge, Button, Card, Empty, Field, Input, Loading, Modal, Select, Table
 import { db } from '../../lib/sb';
 import { useApp, go } from '../../state';
 import { fmtDate, fmtDateTime, num, today, addDays } from '../../lib/format';
-import { NewLeave, LS } from './Leave';
+import { LS, whenText } from './Leave';
 
 const KIND: Record<string, string> = { cong_tac: 'Công tác', xac_nhan_cong: 'Xác nhận công', xin_muon_som: 'Xin muộn/sớm' };
 
@@ -19,17 +19,17 @@ export default function Approvals() {
     run(async () => { await db.rpc('decide_request', { p_table: table, p_id: id, p_approve: ok, p_note: note || null }); reload(); r2(); }, ok ? 'Đã duyệt' : 'Đã từ chối');
   };
   return (
-    <Layout title="Duyệt đơn" actions={<>{a.has('hcns', 'admin', 'bgd') && <Button onClick={() => setLeaveFor(true)}>Tạo đơn nghỉ hộ</Button>}<Button onClick={() => setDelOpen(true)}>Ủy quyền duyệt</Button></>}>
+    <Layout title="Duyệt đơn" actions={<><Button onClick={() => go('/hr/leave')}>Tạo đơn hộ</Button><Button onClick={() => setDelOpen(true)}>Ủy quyền duyệt</Button></>}>
       <div className="mb-3 flex items-center gap-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={hist} onChange={e => setHist(e.target.checked)} /> Xem đơn đã duyệt</label>
         {(a.isAdmin || a.has('tp_kd')) && <Button size="sm" onClick={() => go('/crm/quotes?status=cho_duyet')}>Báo giá chờ duyệt giá →</Button>}</div>
-      <Card title="Đơn nghỉ phép" bodyClass="p-0" className="mb-4">
+      <Card title="Đơn nghỉ · công tác · vắng theo giờ" bodyClass="p-0" className="mb-4">
         {loading ? <Loading /> : !(lv as any[])?.length ? <Empty>Không có đơn</Empty> : <Table head={['Nhân sự', 'Loại', 'Thời gian', 'Ngày', 'Lý do', 'Gửi lúc', '']}>{(lv as any[]).map(r => (
-          <tr key={r.id}><Td className="whitespace-nowrap font-medium">{a.personName(r.profile_id)}</Td><Td>{a.label('leave_type', r.leave_type)}</Td>
-            <Td className="whitespace-nowrap">{fmtDate(r.start_date)}{r.end_date !== r.start_date && ` – ${fmtDate(r.end_date)}`}{r.part !== 'full' && ` (${r.part === 'am' ? 'sáng' : 'chiều'})`}</Td><Td>{num(r.days, 1)}</Td>
-            <Td className="max-w-xs">{r.reason}</Td><Td className="whitespace-nowrap text-xs">{fmtDateTime(r.created_at)}</Td>
+          <tr key={r.id}><Td className="whitespace-nowrap font-medium">{a.personName(r.profile_id)}</Td><Td>{a.label('leave_type', r.leave_type)}{r.late_notice && <Badge color="amber" className="ml-1">báo gấp</Badge>}</Td>
+            <Td className="whitespace-nowrap">{whenText(r)}</Td><Td>{num(r.days, 1)}</Td>
+            <Td className="max-w-xs">{r.reason}{r.backup_id && <div className="text-xs text-ink-400">Hỗ trợ: {a.personName(r.backup_id)}</div>}{r.handover && <div className="text-xs text-ink-400">Bàn giao: {r.handover}</div>}</Td><Td className="whitespace-nowrap text-xs">{fmtDateTime(r.created_at)}</Td>
             <Td className="whitespace-nowrap">{r.status === 'cho_duyet' ? <><Button size="sm" variant="success" onClick={() => decide('leave', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('leave', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table>}
       </Card>
-      <Card title="Đơn công (công tác, xác nhận công, đi muộn/về sớm)" bodyClass="p-0" className="mb-4">
+      <Card title="Đơn xác nhận công (quên chấm)" bodyClass="p-0" className="mb-4">
         {!(ar as any[])?.length ? <Empty>Không có đơn</Empty> : <Table head={['Nhân sự', 'Loại', 'Ngày', 'Lý do', '']}>{(ar as any[]).map(r => (
           <tr key={r.id}><Td className="font-medium">{a.personName(r.profile_id)}</Td><Td>{KIND[r.kind]}{r.minutes && ` · ${r.minutes} phút`}</Td><Td>{fmtDate(r.work_date)}{r.part !== 'full' && ` (${r.part === 'am' ? 'sáng' : 'chiều'})`}</Td><Td>{r.reason}</Td>
             <Td className="whitespace-nowrap">{r.status === 'cho_duyet' ? <><Button size="sm" variant="success" onClick={() => decide('attendance', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('attendance', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table>}
@@ -39,7 +39,6 @@ export default function Approvals() {
           <tr key={d.id}><Td>{a.personName(d.delegator_id)}</Td><Td>{a.personName(d.delegate_id)}</Td><Td>{fmtDateTime(d.from_at)}</Td><Td>{fmtDateTime(d.to_at)}</Td><Td>{d.reason}</Td>
             <Td>{(d.delegator_id === a.me.id || a.isAdmin) && <Button size="sm" variant="ghost" onClick={() => run(async () => { await db.from('delegations').update({ revoked_at: new Date().toISOString() }).eq('id', d.id); r3(); }, 'Đã thu hồi')}>Thu hồi</Button>}</Td></tr>))}</Table>}
       </Card>
-      <NewLeave forPerson open={leaveFor} onClose={() => setLeaveFor(false)} onDone={() => { setLeaveFor(false); reload(); }} />
       <Delegate open={delOpen} onClose={() => setDelOpen(false)} onDone={() => { setDelOpen(false); r3(); }} />
     </Layout>
   );

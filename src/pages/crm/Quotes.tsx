@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Layout } from '../../components/Layout';
-import { Button, Empty, Input, Loading, Select, Table, Td, useLoad } from '../../components/ui';
+import { Button, cx, Empty, Input, Loading, Select, Table, Td, useLoad } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { fmtDate, money } from '../../lib/format';
@@ -9,6 +9,9 @@ import { QUOTE_STATUS, QuoteStatus } from './Customers';
 export default function Quotes() {
   const a = useApp(); const { query } = useRoute();
   const [status, setStatus] = useState(query.status || ''); const [q, setQ] = useState(''); const [sale, setSale] = useState('');
+  const { data: cnt } = useLoad(() => db.from('quotations').select('status,sale_id').neq('status', 'da_thay_the').limit(10000), []);
+  const counts: Record<string, number> = { all: 0 };
+  ((cnt as any[]) || []).filter(r => !sale || r.sale_id === sale).forEach(r => { counts[r.status] = (counts[r.status] || 0) + 1; counts.all++; });
   const { data, loading } = useLoad(async () => {
     let qq = db.from('quotations').select('id,code,version,status,total_after_vat,est_profit,created_at,sent_at,valid_until,order_code,sale_id,violations,customers(code,contact_name,company_name)')
       .neq('status', 'da_thay_the').order('created_at', { asc: false }).limit(300);
@@ -19,12 +22,15 @@ export default function Quotes() {
   }, [status, q, sale]);
   return (
     <Layout title="Báo giá" actions={<Button variant="dark" onClick={() => go('/crm/quote')}>Tạo báo giá</Button>}>
+      <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none]">
+        {[['', 'Tất cả'], ...Object.entries(QUOTE_STATUS).filter(([k]) => k !== 'da_thay_the').map(([k, v]) => [k, v[0]])].map(([k, l]) =>
+          <button key={k} onClick={() => setStatus(k)} className={cx('shrink-0 rounded-full border px-3 py-1.5 text-sm font-semibold', status === k ? 'border-ink-900 bg-ink-900 text-white' : 'border-ink-200 bg-white', k && !counts[k] && status !== k && 'opacity-50')}>{l} <span className="opacity-60">{k ? counts[k] || 0 : counts.all || 0}</span></button>)}
+      </div>
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
         <Input placeholder="Tìm mã báo giá…" value={q} onChange={e => setQ(e.target.value)} />
-        <Select options={Object.entries(QUOTE_STATUS).map(([k, v]) => [k, v[0]])} value={status} onChange={setStatus} placeholder="Mọi trạng thái" />
         {a.isLead && <Select options={a.people.map(p => [p.id, p.full_name])} value={sale} onChange={setSale} placeholder="Mọi nhân viên" />}
       </div>
-      <div className="rounded-xl border border-ink-200 bg-white">
+      <div className="rounded-2xl border border-ink-200 bg-white shadow-soft">
         {loading ? <Loading /> : !(data as any[])?.length ? <Empty>Chưa có báo giá</Empty> :
           <Table head={['Mã', 'Khách hàng', 'Ngày', 'Trạng thái', 'Tổng sau VAT', 'LN ước tính', 'Hiệu lực', 'Mã đơn', 'Sale']}>
             {(data as any[]).map(r => (

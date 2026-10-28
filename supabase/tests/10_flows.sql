@@ -93,21 +93,29 @@ select pg_temp.as_user('b@nt.vn');
 select pg_temp.check((public.check_duplicate('0888886812')->>'status') = 'owned_by_other', 'đã có chủ');
 select pg_temp.check((select count(*) from public.quotations) = 0, 'B không thấy báo giá của A');
 
--- 6. Nghỉ phép
-select pg_temp.as_user('a@nt.vn');
-select pg_temp.expect_error($$insert into public.leave_requests(leave_type, start_date, end_date) values ('phep_nam', current_date + 3, current_date + 3)$$, 'Phép năm còn');
+-- 6. Nghỉ phép (sổ phép năm nhập đầu kỳ)
 select pg_temp.as_user('hr@nt.vn');
-insert into public.leave_ledger(profile_id, kind, days, note) select id, 'opening', 5, 'Số dư đầu kỳ' from public.profiles where email = 'a@nt.vn';
+insert into public.leave_entitlements(profile_id, year, entitled, carried, used_before) select id, 2026, 1, 0, 0 from public.profiles where email = 'a@nt.vn';
 select pg_temp.as_user('a@nt.vn');
-insert into public.leave_requests(leave_type, start_date, end_date, reason) values ('phep_nam', date '2026-11-02', date '2026-11-03', 'Việc gia đình');
+select pg_temp.expect_error($$insert into public.leave_requests(leave_type, start_date, end_date) values ('phep_nam', date '2026-12-02', date '2026-12-03')$$, 'Phép năm còn');
+select pg_temp.as_user('hr@nt.vn');
+update public.leave_entitlements set entitled = 12, used_before = 7 where year = 2026;
+select pg_temp.as_user('a@nt.vn');
+insert into public.leave_requests(leave_type, start_date, end_date, reason, backup_id) values ('phep_nam', date '2026-12-02', date '2026-12-03', 'Việc gia đình', (select id from public.profiles where email='lead@nt.vn'));
 select pg_temp.check((select days from public.leave_requests) = 2, '2 ngày phép');
 select pg_temp.expect_error($$select public.decide_request('leave', (select id from public.leave_requests), true)$$, 'không có quyền');
+insert into public.leave_requests(leave_type, start_date, end_date, from_time, to_time, reason) values ('muon_som', date '2026-12-04', date '2026-12-04', '09:00', '10:30', 'Đi ngân hàng');
+select pg_temp.check((select part from public.leave_requests where leave_type='muon_som') = 'hours', 'đơn theo giờ');
 select pg_temp.as_user('b@nt.vn');
 select pg_temp.check((select count(*) from public.leave_requests) = 0, 'B không thấy đơn của A');
-select pg_temp.check((select count(*) from public.leave_board(date '2026-11-01', date '2026-11-30')) = 1, 'bảng ai nghỉ');
+select pg_temp.check((select count(*) from public.today_board(date '2026-12-01', date '2026-12-31')) = 3, 'bảng Hôm nay');
 select pg_temp.as_user('lead@nt.vn');
-select public.decide_request('leave', (select id from public.leave_requests), true, null);
-select pg_temp.check((public.leave_balance((select id from public.profiles where email='a@nt.vn'))->>'balance')::numeric = 3, 'trừ phép còn 3');
+select public.decide_request('leave', (select id from public.leave_requests where leave_type='phep_nam'), true, null);
+select pg_temp.check((public.leave_balance((select id from public.profiles where email='a@nt.vn'), 2026)->>'balance')::numeric = 3, 'còn 12-7-2=3');
+-- quản lý tạo hộ → duyệt luôn
+insert into public.leave_requests(profile_id, leave_type, start_date, end_date) select id, 'cong_tac', date '2026-12-07', date '2026-12-07' from public.profiles where email='a@nt.vn';
+select pg_temp.check((select status from public.leave_requests where leave_type='cong_tac') = 'da_duyet', 'đơn tạo hộ được duyệt ngay');
+select pg_temp.check((select count(*) from public.timesheet(date '2026-12-01')) >= 2, 'bảng công');
 
 -- 7. Chấm công
 select pg_temp.as_user('a@nt.vn');

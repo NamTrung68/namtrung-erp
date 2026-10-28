@@ -6,7 +6,7 @@ import { useApp } from '../../state';
 import { compressImage } from '../../lib/image';
 import { fmtDate, fmtTime, monthStart, monthEnd, today } from '../../lib/format';
 
-const REQ: [string, string][] = [['cong_tac', 'Đơn đi công tác / gặp khách'], ['xac_nhan_cong', 'Đơn xác nhận công (quên chấm)'], ['xin_muon_som', 'Xin đi muộn / về sớm']];
+const REQ: [string, string][] = [['xac_nhan_cong', 'Đơn xác nhận công (quên chấm)'], ['cong_tac', 'Đơn đi công tác / gặp khách'], ['xin_muon_som', 'Xin đi muộn / về sớm']];
 const RS: Record<string, [string, string]> = { cho_duyet: ['Chờ duyệt', 'amber'], da_duyet: ['Đã duyệt', 'green'], tu_choi: ['Từ chối', 'red'], huy: ['Đã hủy', 'gray'] };
 
 export default function Attendance() {
@@ -130,13 +130,14 @@ function Requests() {
   );
 }
 function NewReq({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
-  const a = useApp(); const [f, setF] = useState({ kind: 'cong_tac', work_date: today(), part: 'full', minutes: null as number | null, reason: '' }); const { busy, run } = useAction();
+  const a = useApp(); const [f, setF] = useState({ kind: 'xac_nhan_cong', work_date: today(), part: 'full', minutes: null as number | null, reason: '' }); const { busy, run } = useAction();
   return (
     <Modal open={open} onClose={onClose} title="Tạo đơn công" size="sm" footer={<Button variant="primary" loading={busy} onClick={() => run(async () => {
       await db.from('attendance_requests').insert({ ...f, profile_id: a.me.id, minutes: f.kind === 'xin_muon_som' ? f.minutes : null }); onDone();
     }, 'Đã gửi đơn — chờ quản lý duyệt')}>Gửi đơn</Button>}>
       <div className="space-y-3">
-        <Field label="Loại đơn"><Select options={REQ} value={f.kind} onChange={v => setF({ ...f, kind: v })} /></Field>
+        <p className="text-xs text-ink-500">Công tác, làm từ xa, đi muộn/về sớm: tạo ở mục <a className="text-brand-700 underline" href="#/hr/leave">Xin nghỉ</a>.</p>
+        <Field label="Loại đơn"><Select options={REQ.slice(0, 1)} value={f.kind} onChange={v => setF({ ...f, kind: v })} /></Field>
         <div className="grid grid-cols-2 gap-3"><Field label="Ngày"><Input type="date" value={f.work_date} onChange={e => setF({ ...f, work_date: e.target.value })} /></Field>
           {f.kind === 'xin_muon_som' ? <Field label="Số phút"><NumInput value={f.minutes} onChange={v => setF({ ...f, minutes: v })} /></Field>
             : <Field label="Buổi"><Select options={[['full', 'Cả ngày'], ['am', 'Sáng'], ['pm', 'Chiều']]} value={f.part} onChange={v => setF({ ...f, part: v })} /></Field>}</div>

@@ -3,6 +3,7 @@ import { useApp, go, useRoute } from '../state';
 import { auth, db } from '../lib/sb';
 import { Button, cx, toast } from './ui';
 import { fmtDateTime } from '../lib/format';
+import { DuplicateCheck, QuickCare } from './CrmModals';
 
 const P: Record<string, string> = {
   home: 'M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z',
@@ -35,31 +36,33 @@ interface NavItem { to: string; label: string; icon: string; show: boolean }
 export function useNav() {
   const a = useApp();
   const groups: [string, NavItem[]][] = [
-    ['', [{ to: '/', label: 'Tổng quan', icon: 'home', show: true }]],
-    ['Kinh doanh', [
-      { to: '/crm/customers', label: 'Khách hàng', icon: 'users', show: a.isSales },
-      { to: '/crm/quotes', label: 'Báo giá', icon: 'quote', show: a.isSales },
-      { to: '/crm/daily', label: 'Báo cáo ngày · Bài FB', icon: 'daily', show: a.isSales },
-      { to: '/crm/reports', label: 'Báo cáo CRM', icon: 'report', show: a.isSales },
-      { to: '/kpi', label: 'KPI · Phong Thần', icon: 'trophy', show: true },
-    ]],
-    ['Vận hành', [
-      { to: '/support', label: 'Gọi hỗ trợ', icon: 'help', show: true },
-      { to: '/docs', label: 'Chứng từ', icon: 'folder', show: a.canDocs },
-      { to: '/news', label: 'Bảng tin', icon: 'news', show: true },
-      { to: '/tickets', label: 'Ý tưởng · Lỗi', icon: 'ticket', show: true },
+    ['', [{ to: '/', label: 'Hôm nay', icon: '🌞', show: true }]],
+    ['Bán hàng', [
+      { to: '/dashboard', label: 'Bảng điều khiển', icon: '📊', show: true },
+      { to: '/crm/customers', label: 'Khách hàng', icon: '👥', show: a.isSales },
+      { to: '/crm/quotes', label: 'Báo giá', icon: '🧾', show: a.isSales },
+      { to: '/support', label: 'Hỗ trợ khách', icon: '🆘', show: true },
+      { to: '/crm/daily', label: 'Báo cáo ngày', icon: '📝', show: a.isSales },
+      { to: '/crm/reports', label: 'Báo cáo và KPI', icon: '📈', show: a.isSales },
+      { to: '/kpi', label: 'Bảng Phong Thần', icon: '🏆', show: true },
     ]],
     ['Nhân sự', [
-      { to: '/hr/attendance', label: 'Chấm công', icon: 'clock', show: true },
-      { to: '/hr/leave', label: 'Nghỉ phép · Đơn', icon: 'leave', show: true },
-      { to: '/hr/approvals', label: 'Duyệt đơn', icon: 'check', show: a.isLead || a.has('hcns') },
-      { to: '/hr/payslips', label: 'Phiếu lương', icon: 'money', show: true },
-      { to: '/hr/payroll', label: 'Bảng lương', icon: 'money', show: a.canHR },
+      { to: '/hr/attendance', label: 'Chấm công', icon: '📷', show: true },
+      { to: '/hr/leave', label: 'Xin nghỉ', icon: '🏖️', show: true },
+      { to: '/hr/timesheet', label: 'Bảng công · Chuyên cần', icon: '🗓️', show: true },
+      { to: '/hr/approvals', label: 'Duyệt đơn', icon: '✅', show: a.isLead || a.has('hcns') },
+      { to: '/hr/payslips', label: 'Phiếu lương', icon: '💰', show: true },
+      { to: '/hr/payroll', label: 'Bảng lương', icon: '💵', show: a.canHR },
+    ]],
+    ['Vận hành', [
+      { to: '/tickets', label: 'Claim & hỏi đáp', icon: '❓', show: true },
+      { to: '/news', label: 'Bảng tin', icon: '📢', show: true },
+      { to: '/docs', label: 'Chứng từ', icon: '📁', show: a.canDocs },
     ]],
     ['Quản trị', [
-      { to: '/admin/users', label: 'Nhân sự & quyền', icon: 'shield', show: a.isAdmin || a.has('hcns') },
-      { to: '/admin/settings', label: 'Cấu hình', icon: 'gear', show: a.isAdmin || a.has('hcns', 'ke_toan') },
-      { to: '/admin/data', label: 'Dữ liệu · Nhật ký', icon: 'db', show: a.isAdmin || a.has('hcns') },
+      { to: '/admin/users', label: 'Nhân sự & phân quyền', icon: '🛡️', show: a.isAdmin || a.has('hcns') },
+      { to: '/admin/settings', label: 'Cấu hình', icon: '⚙️', show: a.isAdmin || a.has('hcns', 'ke_toan') },
+      { to: '/admin/data', label: 'Dữ liệu · Nhật ký', icon: '🗄️', show: a.isAdmin || a.has('hcns') },
     ]],
   ];
   return groups.map(([g, items]) => [g, items.filter(i => i.show)] as [string, NavItem[]]).filter(([, i]) => i.length);
@@ -67,48 +70,53 @@ export function useNav() {
 
 export function Layout({ children, title, actions }: { children: React.ReactNode; title?: React.ReactNode; actions?: React.ReactNode }) {
   const a = useApp(); const { path } = useRoute(); const nav = useNav();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false); const [check, setCheck] = useState(false); const [care, setCare] = useState(false);
   useEffect(() => setOpen(false), [path]);
   const side = (
-    <nav className="flex h-full flex-col gap-4 overflow-y-auto px-3 py-4">
-      <a href="#/" className="flex items-center gap-2 px-2">
-        <span className="grid h-8 w-8 place-items-center rounded-lg bg-[#F07B3C] text-sm font-bold text-white">NT</span>
-        <span className="leading-tight"><b className="block text-[15px]">ERP Nam Trung</b><span className="text-[11px] text-ink-400">Quản trị nội bộ</span></span>
+    <nav className="flex h-full flex-col gap-3 overflow-y-auto px-3 py-4">
+      <a href="#/" className="mb-1 flex items-center gap-2.5 px-2">
+        <img src="logo-mark.png" alt="" className="h-10 w-10 rounded-xl bg-white object-contain p-0.5 ring-1 ring-ink-100" />
+        <span className="leading-tight"><b className="block text-[19px] font-extrabold tracking-tight">nt.team</b><span className="text-xs text-ink-400">Nam Trung Group</span></span>
       </a>
       {nav.map(([g, items]) => (
         <div key={g}>
-          {g && <div className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-wide text-ink-400">{g}</div>}
+          {g && <div className="mb-1 mt-1 px-3 text-[11px] font-bold uppercase tracking-wider text-ink-400">{g}</div>}
           {items.map(i => {
             const on = i.to === '/' ? path === '/' : path.startsWith(i.to);
-            return <a key={i.to} href={'#' + i.to} className={cx('flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm', on ? 'bg-brand-50 font-medium text-brand-700' : 'text-ink-700 hover:bg-ink-100')}>
-              <Icon name={i.icon} />{i.label}</a>;
+            return <a key={i.to} href={'#' + i.to} className={cx('mb-0.5 flex items-center gap-3 rounded-2xl px-3 py-2 text-[14.5px] transition', on ? 'bg-ink-900 font-bold text-white shadow-soft' : 'font-semibold text-ink-600 hover:bg-white hover:text-ink-900')}>
+              <span className="w-6 text-center text-[17px] leading-none">{i.icon}</span>{i.label}</a>;
           })}
         </div>
       ))}
-      <div className="mt-auto border-t border-ink-100 pt-3">
-        <a href="#/account" className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-ink-100">
-          <span className="grid h-7 w-7 place-items-center rounded-full bg-ink-900 text-xs text-white">{(a.me.full_name || a.me.email)[0]?.toUpperCase()}</span>
-          <span className="min-w-0 leading-tight"><span className="block truncate font-medium">{a.me.full_name}</span><span className="block truncate text-[11px] text-ink-400">{a.me.job_level_name || a.me.roles.join(', ')}</span></span>
+      <div className="mt-auto border-t border-ink-200 pt-3">
+        <a href="#/account" className="flex items-center gap-2 rounded-2xl px-2 py-1.5 text-sm hover:bg-white">
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-hot text-xs font-bold text-white">{(a.me.full_name || a.me.email)[0]?.toUpperCase()}</span>
+          <span className="min-w-0 leading-tight"><span className="block truncate font-semibold">{a.me.full_name}</span><span className="block truncate text-[11px] text-ink-400">{a.me.job_level_name || a.me.roles.join(', ')}</span></span>
         </a>
-        <button onClick={() => auth.signOut()} className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-ink-500 hover:bg-ink-100"><Icon name="logout" />Đăng xuất</button>
+        <button onClick={() => auth.signOut()} className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-sm text-ink-500 hover:bg-white"><Icon name="logout" />Đăng xuất</button>
       </div>
     </nav>
   );
   return (
-    <div className="min-h-screen bg-ink-50 lg:pl-60">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-ink-200 bg-white lg:block">{side}</aside>
-      {open && <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setOpen(false)}><div className="absolute inset-0 bg-ink-900/30" />
-        <aside className="absolute inset-y-0 left-0 w-72 bg-white" onClick={e => e.stopPropagation()}>{side}</aside></div>}
-      <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-ink-200 bg-white/95 px-3 backdrop-blur sm:px-5">
-        <button className="rounded-lg p-1.5 hover:bg-ink-100 lg:hidden" onClick={() => setOpen(true)} aria-label="Menu"><Icon name="menu" /></button>
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold sm:text-lg">{title}</h1>
+    <div className="min-h-screen bg-ink-50 lg:pl-64">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-ink-200/70 bg-ink-50 lg:block">{side}</aside>
+      {open && <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setOpen(false)}><div className="absolute inset-0 bg-ink-900/40 backdrop-blur-sm" />
+        <aside className="absolute inset-y-0 left-0 w-72 bg-ink-50" onClick={e => e.stopPropagation()}>{side}</aside></div>}
+      <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-ink-200/70 bg-white/80 px-3 backdrop-blur-xl sm:px-5">
+        <button className="rounded-xl p-1.5 hover:bg-ink-100 lg:hidden" onClick={() => setOpen(true)} aria-label="Menu"><Icon name="menu" /></button>
+        <h1 className="min-w-0 flex-1 truncate text-base font-extrabold tracking-tight sm:text-lg">{title}</h1>
         <div className="hidden items-center gap-2 md:flex">{actions}</div>
-        {a.isSales && <Button size="sm" className="hidden sm:inline-flex" onClick={() => go('/crm/customers?check=1')}>Kiểm tra SĐT / MST</Button>}
-        <span className="hidden text-xs text-ink-400 xl:inline">{new Date().toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+        {a.isSales && <>
+          <Button size="sm" className="hidden sm:inline-flex" onClick={() => setCheck(true)}>Kiểm tra SĐT / MST</Button>
+          <Button size="sm" variant="primary" onClick={() => setCare(true)}><span className="sm:hidden">+ Chăm sóc</span><span className="hidden sm:inline">Ghi chăm sóc nhanh</span></Button>
+        </>}
+        <span className="hidden text-xs font-medium text-ink-400 xl:inline">{new Date().toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
         <Bell />
       </header>
       {actions && <div className="flex flex-wrap gap-2 border-b border-ink-200 bg-white px-3 py-2 md:hidden">{actions}</div>}
       <main className="mx-auto max-w-[1600px] p-3 sm:p-5">{children}</main>
+      <DuplicateCheck open={check} onClose={() => setCheck(false)} />
+      <QuickCare open={care} onClose={() => setCare(false)} />
     </div>
   );
 }
@@ -134,7 +142,7 @@ function Bell() {
   const markAll = async () => { await db.from('notifications').update({ read_at: new Date().toISOString() }).is('read_at', null); load(); a.refreshMe(); };
   return (
     <div className="relative">
-      <button onClick={() => setOpen(o => !o)} className="relative rounded-lg p-2 hover:bg-ink-100" aria-label="Thông báo">
+      <button onClick={() => setOpen(o => !o)} className="relative rounded-xl p-2 hover:bg-ink-100" aria-label="Thông báo">
         <Icon name="bell" />{unread > 0 && <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white">{unread > 9 ? '9+' : unread}</span>}
       </button>
       {open && <div className="absolute right-0 top-11 z-50 w-[min(92vw,380px)] rounded-xl border border-ink-200 bg-white shadow-xl">

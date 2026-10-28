@@ -127,6 +127,9 @@ function AttendanceCfg() {
         <Field label="Quên chấm tối đa / tháng"><NumInput value={s.v.forgot_limit} onChange={s.set('forgot_limit')} /></Field>
         <Field label="Giữ ảnh selfie (ngày)"><NumInput value={s.v.selfie_retention_days} onChange={s.set('selfie_retention_days')} /></Field>
       </div>
+      <div className="mt-4 text-sm font-bold">Điểm chuyên cần (bắt đầu {s.v.chuyen_can?.start ?? 100})</div>
+      <div className="mt-2 grid gap-3 sm:grid-cols-4">{[['khong_phep', 'Trừ / ngày nghỉ không phép, vắng không đơn'], ['bao_gap', 'Trừ / đơn báo gấp'], ['quen_cham', 'Trừ / lần quên chấm'], ['moi_10_phut_vuot', 'Trừ / 10 phút vượt quỹ']].map(([k, l]) =>
+        <Field key={k} label={l}><NumInput value={s.v.chuyen_can?.[k]} onChange={x => s.set('chuyen_can')({ ...(s.v.chuyen_can || {}), [k]: x ?? 0 })} /></Field>)}</div>
       <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={s.v.require_selfie !== false} onChange={e => s.set('require_selfie')(e.target.checked)} /> Bắt buộc ảnh selfie</label>
       <Field label="IP mạng công ty (để trống = không kiểm tra IP)" className="mt-4" hint={`IP của bạn lúc này: ${my?.ip || '?'} — bấm "Thêm IP hiện tại" khi đang ngồi ở văn phòng.`}>
         <div className="flex flex-wrap gap-1.5">{list.map(x => <Badge key={x}>{x} <button className="ml-1 text-red-600" onClick={() => s.set('ip_whitelist')(list.filter(y => y !== x))}>✕</button></Badge>)}</div>

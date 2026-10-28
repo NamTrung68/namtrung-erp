@@ -25,10 +25,10 @@ export default function Login() {
     <div className="grid min-h-screen place-items-center bg-ink-50 p-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex items-center gap-3">
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#F07B3C] text-lg font-bold text-white">NT</span>
-          <div><div className="text-lg font-semibold">ERP Nam Trung</div><div className="text-xs text-ink-500">Hệ thống quản trị nội bộ</div></div>
+          <img src="logo-mark.png" alt="" className="h-14 w-14 rounded-2xl bg-white object-contain p-1 shadow-soft" />
+          <div><div className="text-2xl font-extrabold tracking-tight">nt.team</div><div className="text-xs text-ink-500">Nam Trung Group · Hệ thống quản trị nội bộ</div></div>
         </div>
-        <form onSubmit={submit} className="rounded-2xl border border-ink-200 bg-white p-5 shadow-sm">
+        <form onSubmit={submit} className="rounded-3xl border-2 border-ink-900 bg-white p-5 shadow-pop">
           <Tabs value={tab} onChange={t => { setTab(t); setMsg(null); }} tabs={[['login', 'Đăng nhập'], ['forgot', 'Quên mật khẩu']]} />
           <div className="mt-4 space-y-3">
             <Field label="Email công việc"><Input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} /></Field>

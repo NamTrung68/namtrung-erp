@@ -6,6 +6,8 @@ import { Toaster, Loading, Button } from './components/ui';
 import { Layout } from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import Today from './pages/Today';
+import Timesheet from './pages/hr/Timesheet';
 import Customers from './pages/crm/Customers';
 import Quotes from './pages/crm/Quotes';
 import QuoteEditor from './pages/crm/QuoteEditor';
@@ -26,7 +28,7 @@ import DataAdmin from './pages/admin/Data';
 import Account from './pages/Account';
 
 const routes: Record<string, React.FC> = {
-  '/': Dashboard,
+  '/': Today, '/dashboard': Dashboard, '/hr/timesheet': Timesheet,
   '/crm/customers': Customers, '/crm/customer': Customers,
   '/crm/quotes': Quotes, '/crm/quote': QuoteEditor,
   '/crm/daily': Daily, '/crm/reports': Reports,
