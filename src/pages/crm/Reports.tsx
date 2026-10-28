@@ -3,7 +3,7 @@ import { Layout } from '../../components/Layout';
 import { Badge, Button, cx, Empty, Input, Loading, Select, toast, ErrorBox } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { useApp } from '../../state';
-import { addDays, copyTable, daysBetween, fmtDateTime, money, monthStart, num, today, weekStart } from '../../lib/format';
+import { addDays, copyTable, daysBetween, fmtDate, fmtDateTime, money, monthStart, num, today, weekStart } from '../../lib/format';
 
 export function usePeriod(initial = 'month') {
   const [kind, setKind] = useState(initial); const [from, setFrom] = useState(monthStart()); const [to, setTo] = useState(today());
@@ -16,10 +16,10 @@ export function usePeriod(initial = 'month') {
     if (map[k]) { setFrom(map[k][0]); setTo(map[k][1]); }
   };
   const ui = (
-    <div className="flex flex-wrap items-center gap-2">
-      <Select className="w-36" options={[['today', 'Hôm nay'], ['yesterday', 'Hôm qua'], ['week', 'Tuần này'], ['lastweek', 'Tuần trước'], ['month', 'Tháng này'], ['lastmonth', 'Tháng trước'], ['quarter', 'Quý này'], ['year', 'Năm nay'], ['custom', 'Tùy chọn']]} value={kind} onChange={apply} />
-      <Input type="date" className="w-40" value={from} onChange={e => { setFrom(e.target.value); setKind('custom'); }} /><span className="text-xs text-ink-400">đến</span>
-      <Input type="date" className="w-40" value={to} onChange={e => { setTo(e.target.value); setKind('custom'); }} />
+    <div className="col-span-2 grid grid-cols-2 gap-2 sm:col-span-1 sm:flex sm:flex-wrap sm:items-center">
+      <Select className="col-span-2 sm:w-36" options={[['today', 'Hôm nay'], ['yesterday', 'Hôm qua'], ['week', 'Tuần này'], ['lastweek', 'Tuần trước'], ['month', 'Tháng này'], ['lastmonth', 'Tháng trước'], ['quarter', 'Quý này'], ['year', 'Năm nay'], ['custom', 'Tùy chọn']]} value={kind} onChange={apply} />
+      <Input type="date" className="sm:w-40" value={from} onChange={e => { setFrom(e.target.value); setKind('custom'); }} /><span className="hidden text-xs text-ink-400 sm:inline">đến</span>
+      <Input type="date" className="sm:w-40" value={to} onChange={e => { setTo(e.target.value); setKind('custom'); }} />
     </div>
   );
   return { from, to, ui };
@@ -29,6 +29,7 @@ const REPORTS: [string, string][] = [['tong_quan', 'Tổng quan kinh doanh'], ['
   ['pheu', 'Phễu theo nhân viên'], ['giu_khach', 'Giữ khách và mua lại'], ['nguon', 'Nguồn và chân dung khách'], ['fb', 'Bài đăng Facebook'], ['nop_bc', 'Nộp báo cáo ngày'],
   ['ho_tro', 'Hỗ trợ và chỉ đạo'], ['trung', 'Trùng khách đang chạy'], ['chuyen', 'Lịch sử chuyển khách']];
 
+const RICON: Record<string, string> = { tong_quan: '📊', kpi: '🎯', can_cham: '⏰', nhat_ky: '📞', bao_gia: '🧾', pheu: '🔻', giu_khach: '🔁', nguon: '🧭', fb: '📣', nop_bc: '📝', ho_tro: '🆘', trung: '⚠️', chuyen: '🔀' };
 type Row = (string | number | React.ReactNode)[];
 function Section({ title, head, rows, bar }: { title: string; head: string[]; rows: Row[]; bar?: number }) {
   const max = bar !== undefined ? Math.max(1, ...rows.map(r => Number(r[bar]) || 0)) : 1;
@@ -38,12 +39,12 @@ function Section({ title, head, rows, bar }: { title: string; head: string[]; ro
     <section className="mb-4 rounded-2xl border border-ink-200 bg-white shadow-soft">
       <header className="flex items-center justify-between gap-2 border-b border-ink-100 px-4 py-2.5">
         <h3 className="text-sm font-bold">{title} <span className="ml-1 text-xs font-normal text-ink-400">{rows.length} dòng</span></h3>
-        <Button size="sm" onClick={() => copyTable([head, ...rows.map(r => r.map(plain))]).then(() => toast.ok('Đã sao chép — dán vào Google Sheet'))}>Sao chép sang Sheet</Button>
+        <Button size="sm" className="shrink-0" onClick={() => copyTable([head, ...rows.map(r => r.map(plain))]).then(() => toast.ok('Đã sao chép — dán vào Google Sheet'))}>📋<span className="hidden sm:inline"> Sao chép sang Sheet</span></Button>
       </header>
       {!rows.length ? <Empty /> : <div className="max-h-[560px] overflow-auto"><table className="w-full text-sm">
-        <thead className="sticky top-0 bg-white"><tr className="border-b border-ink-200 text-left text-xs text-ink-500">{head.map((h, i) => <th key={i} className={cx('whitespace-nowrap px-3 py-2 font-semibold', i > 0 && 'text-right')}>{h}</th>)}{bar !== undefined && <th className="px-3 py-2 text-xs font-semibold text-ink-500">Tỷ trọng</th>}</tr></thead>
-        <tbody className="divide-y divide-ink-100">{rows.map((r, i) => <tr key={i} className="hover:bg-ink-50/60">{r.map((c, j) => <td key={j} className={cx('px-3 py-1.5', j > 0 && 'text-right tabular-nums')}>{c as any}</td>)}
-          {bar !== undefined && <td className="w-[38%] px-3"><div className="flex items-center gap-2"><div className="h-2 flex-1 rounded-full bg-ink-100"><div className="h-2 rounded-full bg-brand-500" style={{ width: `${(Number(r[bar]) || 0) / max * 100}%` }} /></div><span className="w-10 text-right text-xs text-ink-500">{total ? Math.round((Number(r[bar]) || 0) / total * 100) : 0}%</span></div></td>}</tr>)}</tbody>
+        <thead className="sticky top-0 bg-white"><tr className="border-b border-ink-200 text-left text-xs text-ink-500">{head.map((h, i) => <th key={i} className={cx('whitespace-nowrap px-3 py-2 font-semibold', i > 0 ? 'text-right' : 'sticky left-0 z-[1] bg-white')}>{h}</th>)}{bar !== undefined && <th className="px-3 py-2 text-xs font-semibold text-ink-500">Tỷ trọng</th>}</tr></thead>
+        <tbody className="divide-y divide-ink-100">{rows.map((r, i) => <tr key={i} className="hover:bg-ink-50/60">{r.map((c, j) => <td key={j} className={cx('px-3 py-1.5', j > 0 ? 'whitespace-nowrap text-right tabular-nums' : 'sticky left-0 min-w-[130px] bg-white font-medium')}>{c as any}</td>)}
+          {bar !== undefined && <td className="w-[38%] min-w-[120px] px-3"><div className="flex items-center gap-2"><div className="h-2 flex-1 rounded-full bg-ink-100"><div className="h-2 rounded-full bg-brand-500" style={{ width: `${(Number(r[bar]) || 0) / max * 100}%` }} /></div><span className="w-10 text-right text-xs text-ink-500">{total ? Math.round((Number(r[bar]) || 0) / total * 100) : 0}%</span></div></td>}</tr>)}</tbody>
       </table></div>}
     </section>
   );
@@ -197,18 +198,19 @@ export default function Reports() {
   };
   return (
     <Layout title="Báo cáo và KPI">
-      <div className="grid gap-4 lg:grid-cols-[210px_minmax(0,1fr)]">
-        <nav className="flex gap-1 overflow-x-auto rounded-2xl border border-ink-200 bg-white p-2 shadow-soft lg:block lg:self-start">
-          {REPORTS.map(([k, l]) => <button key={k} onClick={() => setRep(k)} className={cx('block shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-left text-sm lg:w-full', rep === k ? 'bg-brand-50 font-bold text-brand-700' : 'text-ink-700 hover:bg-ink-50')}>{l}</button>)}
+      <div className="grid gap-4 lg:grid-cols-[236px_minmax(0,1fr)]">
+        <nav className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] lg:mx-0 lg:block lg:space-y-0.5 lg:self-start lg:rounded-2xl lg:border lg:border-ink-200 lg:bg-white lg:p-2 lg:shadow-soft lg:sticky lg:top-16">
+          {REPORTS.map(([k, l]) => <button key={k} onClick={() => setRep(k)} className={cx('flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-left text-[13px] lg:w-full lg:rounded-xl lg:border-0 lg:py-2',
+            rep === k ? 'border-brand-600 bg-brand-600 font-bold text-white lg:bg-brand-50 lg:text-brand-700' : 'border-ink-200 bg-white text-ink-700 hover:bg-ink-50')}><span>{RICON[k]}</span>{l}</button>)}
         </nav>
         <div className="min-w-0">
-          <div className="mb-3 flex flex-wrap items-center gap-2">{p.ui}
-            {a.isLead && <Select className="w-40" options={a.units.filter(u => u.kind !== 'cong_ty').map(u => [u.id, u.name])} value={unit} onChange={setUnit} placeholder="Mọi nhóm" />}
-            {a.isLead && <Select className="w-44" options={((data?.kpi as any[]) || []).map(k => [k.profile_id, k.full_name])} value={sale} onChange={setSale} placeholder="Mọi nhân viên" />}
-            <Button variant="primary" loading={loading} onClick={load}>Xem báo cáo</Button>
+          <div className="mb-3 grid grid-cols-2 gap-2 rounded-2xl border border-ink-200 bg-white p-2.5 shadow-soft sm:flex sm:flex-wrap sm:items-center">{p.ui}
+            {a.isLead && <Select className="sm:w-40" options={a.units.filter(u => u.kind !== 'cong_ty').map(u => [u.id, u.name])} value={unit} onChange={setUnit} placeholder="Mọi nhóm" />}
+            {a.isLead && <Select className="sm:w-44" options={((data?.kpi as any[]) || []).map(k => [k.profile_id, k.full_name])} value={sale} onChange={setSale} placeholder="Mọi nhân viên" />}
+            <Button variant="primary" className="col-span-2 sm:ml-auto" loading={loading} onClick={load}>Xem báo cáo</Button>
           </div>
-          <h2 className="text-xl font-extrabold">{REPORTS.find(r => r[0] === rep)?.[1]}</h2>
-          <p className="mb-3 text-xs text-ink-500">Kỳ: {p.from} → {p.to}</p>
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3"><h2 className="text-xl font-extrabold">{RICON[rep]} {REPORTS.find(r => r[0] === rep)?.[1]}</h2>
+            <p className="text-xs text-ink-500">Kỳ {fmtDate(p.from)} → {fmtDate(p.to)}</p></div>
           <ErrorBox error={err} />
           {loading && !data ? <Loading /> : body()}
         </div>

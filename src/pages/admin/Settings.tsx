@@ -7,7 +7,7 @@ import { BANKS } from '../../lib/vietqr';
 import { fmtDate, fmtDateTime, money } from '../../lib/format';
 
 const TG_EVENTS: [string, string][] = [['leave_request', 'Đơn nghỉ / đơn công mới'], ['attendance_flag', 'Chấm công ngoài IP'], ['quote_approval', 'Báo giá chờ duyệt giá'], ['quote_won', 'Chốt đơn'],
-  ['support', 'Gọi hỗ trợ'], ['ticket', 'Ticket mới'], ['announcement', 'Bảng tin toàn công ty'], ['payroll', 'Chốt lương'], ['daily_summary', 'Tóm tắt 9h sáng'], ['report_missing', 'Sale chưa nộp báo cáo 18h'], ['test', 'Tin thử']];
+  ['support', 'Gọi hỗ trợ'], ['ticket', 'Ticket mới'], ['announcement', 'Bảng tin toàn công ty'], ['payroll', 'Chốt lương'], ['daily_summary', 'Tóm tắt 9h sáng'], ['report_missing', 'Sale chưa nộp báo cáo 18h'], ['hr', 'Hợp đồng lao động sắp hết hạn'], ['test', 'Tin thử']];
 
 function useSetting(key: string) {
   const a = useApp(); const [v, setV] = useState<any>(a.settings[key] || {}); const { busy, run } = useAction();

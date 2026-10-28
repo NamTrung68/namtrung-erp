@@ -39,3 +39,9 @@ export function downloadBlob(name: string, blob: Blob) {
 export async function copyTable(rows: any[][]) {
   await navigator.clipboard.writeText(rows.map(r => r.map(v => String(v ?? '').replace(/\t|\n/g, ' ')).join('\t')).join('\n'));
 }
+export async function copyText(s: string) {
+  try { await navigator.clipboard.writeText(s); }
+  catch { const t = document.createElement('textarea'); t.value = s; t.style.position = 'fixed'; t.style.opacity = '0'; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+}
+export const tsv = (rows: any[][]) => rows.map(r => r.map(v => String(v ?? '').replace(/\t|\r?\n/g, ' ')).join('\t')).join('\n');
+export const noAccent = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');

@@ -4,6 +4,7 @@ import { Badge, Button, Card, cx, Empty, Field, Input, Loading, NumInput, Table,
 import { db } from '../../lib/sb';
 import { useApp } from '../../state';
 import { addDays, fmtDate, fmtTime, num, today } from '../../lib/format';
+import { KpiStrip } from '../../components/KpiStrip';
 
 const scoreColor = (s: number) => s >= 100 ? 'bg-emerald-100 text-emerald-800' : s >= 85 ? 'bg-sky-100 text-sky-800' : s >= 70 ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700';
 
@@ -25,10 +26,12 @@ function Team() {
   const rows = ((kpi as any[]) || []).filter(k => k.profile_id !== a.me.id || a.isAdmin);
   const review = (r: any, patch: any) => run(async () => { await db.from('daily_reports').update(patch).eq('id', r.id); reload(); });
   const code = (id: string) => a.people.find(p => p.id === id)?.employee_code;
+  const target = (key: string, k: any) => Math.round(Number(a.settings.kpi?.metrics?.[key]?.day || 0) * (k.is_new ? Number(a.settings.kpi?.new_hire_factor ?? 0.7) : 1));
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-3"><span className="text-sm font-semibold">Ngày</span><Input type="date" className="w-44" value={d} onChange={e => setD(e.target.value)} />
         <span className="text-xs text-ink-500">Xác nhận bài FB đúng chủ đề chính ngạch, đăng công khai, đúng ngày. "Không đạt" sẽ trừ điểm FB của ngày đó.</span></div>
+      {rows.length > 0 && <div className="mb-3"><KpiStrip rows={rows} title={`KPI nhóm ngày ${fmtDate(d)}`} /></div>}
       <Card bodyClass="p-0">{loading ? <Loading /> : !rows.length ? <Empty>Không có nhân viên trong nhóm</Empty> :
         <Table head={['Nhân viên', 'Nộp lúc', 'Điểm', 'KH mới', 'Tiếp cận', 'Kết nối', 'Chăm cũ', 'BG', 'Gọi (nhật ký / tự khai)', 'Bài FB', 'Kế hoạch mai / khó khăn', 'FB', 'Nhận xét']}>
           {rows.map(k => {
@@ -37,7 +40,8 @@ function Team() {
               <Td className="whitespace-nowrap"><b>{k.full_name}</b><div className="text-xs text-ink-400">{code(k.profile_id)}</div></Td>
               <Td className="whitespace-nowrap">{r ? <>{fmtTime(r.submitted_at)}{!r.on_time && <Badge color="amber" className="ml-1">Trễ</Badge>}</> : <span className="text-red-600">Chưa nộp</span>}</Td>
               <Td><span className={cx('inline-block min-w-[2.5rem] rounded-md px-2 py-0.5 text-center text-sm font-bold', scoreColor(Number(k.score)))}>{num(k.score, 1)}</span></Td>
-              {['kh_moi', 'tiep_can', 'ket_noi', 'cham_cu', 'bao_gia'].map(x => <Td key={x} className="text-center tabular-nums">{m[x]}</Td>)}
+              {['kh_moi', 'tiep_can', 'ket_noi', 'cham_cu', 'bao_gia'].map(x => { const tg = target(x, k); return <Td key={x} className="text-center tabular-nums">
+                <span className={cx('font-semibold', tg && m[x] < tg ? 'text-orange-600' : 'text-emerald-700')}>{m[x]}</span><span className="text-[11px] text-ink-400">/{tg}</span></Td>; })}
               <Td className="whitespace-nowrap text-center">{m.cuoc_goi_nhat_ky} / {r ? r.calls : '–'}</Td>
               <Td className="text-xs">{r?.fb_links?.length ? r.fb_links.map((u: string, i: number) => <a key={i} className="block text-brand-700 underline" href={u} target="_blank" rel="noreferrer">Bài {i + 1}</a>) : '–'}</Td>
               <Td className="min-w-[200px] max-w-xs whitespace-pre-wrap text-xs">{r ? <>{r.plan_tomorrow}{r.content && <div className="mt-1 text-ink-500">{r.content}</div>}</> : ''}</Td>
@@ -68,14 +72,14 @@ function Mine() {
     if (cur) await db.from('daily_reports').update(body).eq('id', cur.id); else await db.from('daily_reports').insert(body);
     reload();
   }, cur ? 'Đã cập nhật báo cáo' : 'Đã nộp báo cáo ngày');
-  const m = me?.metrics || {};
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <Card title={`Báo cáo ngày ${fmtDate(d)}`} actions={cur && <Badge color={cur.on_time ? 'green' : 'amber'}>{cur.on_time ? 'Đã nộp đúng hạn' : 'Nộp trễ'} {fmtTime(cur.submitted_at)}</Badge>}>
-        <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
-          {[['KH mới', m.kh_moi], ['Tiếp cận', m.tiep_can], ['Kết nối', m.ket_noi], ['Chăm cũ', m.cham_cu], ['Báo giá', m.bao_gia], ['Điểm', num(me?.score, 1)]].map(([l, v]) =>
-            <div key={l as string} className="rounded-xl bg-ink-50 p-2 text-center"><div className="text-lg font-extrabold">{v ?? 0}</div><div className="text-[11px] text-ink-500">{l}</div></div>)}
-        </div>
+    <div className="space-y-4">
+      <div>
+        <KpiStrip rows={me ? [me] : []} compact title="Điểm KPI hôm nay của bạn" />
+        <p className="mt-1.5 text-xs text-ink-500">Số liệu tự đếm từ nhật ký chăm sóc và báo giá, cập nhật liên tục. Bài FB chỉ được tính khi quản lý bấm “Đạt”{cur?.fb_links?.length ? ` (bạn đã nộp ${cur.fb_links.length} link)` : ''}.</p>
+      </div>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+      <Card className="min-w-0" title={`Báo cáo ngày ${fmtDate(d)}`} actions={cur && <Badge color={cur.on_time ? 'green' : 'amber'}>{cur.on_time ? 'Đã nộp đúng hạn' : 'Nộp trễ'} {fmtTime(cur.submitted_at)}</Badge>}>
         {cur?.reviewed_by ? <p className="text-sm text-ink-600">Quản lý đã nhận xét — báo cáo đã khóa.</p> : <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3"><Field label="Cuộc gọi (tự khai)"><NumInput value={f.calls} onChange={v => setF({ ...f, calls: v })} /></Field>
             <Field label="Tin nhắn (tự khai)"><NumInput value={f.messages} onChange={v => setF({ ...f, messages: v })} /></Field></div>
@@ -86,11 +90,12 @@ function Mine() {
           <Button variant="primary" loading={busy} onClick={save}>{cur ? 'Cập nhật báo cáo' : 'Nộp báo cáo'}</Button>
         </div>}
       </Card>
-      <Card title="14 ngày gần nhất" bodyClass="p-0">{!(reps as any[])?.length ? <Empty /> :
+      <Card className="min-w-0" title="14 ngày gần nhất" bodyClass="p-0">{!(reps as any[])?.length ? <Empty /> :
         <Table head={['Ngày', 'Nộp', 'FB', 'Nhận xét']}>{(reps as any[]).map(r => <tr key={r.id}><Td className="whitespace-nowrap">{fmtDate(r.report_date)}</Td>
           <Td><Badge color={r.on_time ? 'green' : 'amber'}>{r.on_time ? 'Đúng hạn' : 'Trễ'}</Badge></Td>
           <Td>{r.fb_links?.length || 0} bài {r.fb_status && <Badge color={r.fb_status === 'dat' ? 'green' : 'red'}>{r.fb_status === 'dat' ? 'Đạt' : 'Không đạt'}</Badge>}</Td>
           <Td className="text-xs">{r.review_note}</Td></tr>)}</Table>}</Card>
+    </div>
     </div>
   );
 }

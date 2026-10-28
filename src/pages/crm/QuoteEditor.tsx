@@ -8,6 +8,8 @@ import { fmtDate, money, num, today, addDays } from '../../lib/format';
 import { QuoteStatus } from './Customers';
 import { vietQrUrl } from '../../lib/vietqr';
 import { CustomerPicker } from '../../components/CustomerPicker';
+import { AptSheet } from '../../components/AptSheet';
+import { noAccent } from '../../lib/format';
 
 const LOCKED = ['da_chot', 'tu_choi', 'het_han', 'da_thay_the'];
 const emptyLine = (): QuoteLine => ({ name: '', spec: '', hs_code: '', unit: 'Chiếc', qty: 0, unit_price_cny: 0, duty_pct: 0, vat_pct: null, freight_pct: null, manual_price: null });
@@ -21,7 +23,7 @@ export default function QuoteEditor() {
   const [h, setH] = useState<QuoteHeader>(() => defaultHeader(qd));
   const [lines, setLines] = useState<QuoteLine[]>([emptyLine()]);
   const [note, setNote] = useState('');
-  const [printOpen, setPrintOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false); const [aptOpen, setAptOpen] = useState(false);
   const { busy, run } = useAction();
   const rates = useRef<{ ban?: number; san?: number; von?: number }>({});
 
@@ -44,6 +46,7 @@ export default function QuoteEditor() {
     setLoading(false);
   };
   useEffect(() => { load(query.id); }, [query.id]);
+  useEffect(() => { if (query.print === '1' && quote) setPrintOpen(true); }, [query.print, quote?.id]);
 
   const result = useMemo(() => calcQuote(h, lines, { tyLeCoc: qd.tyLeCoc ?? 80 }), [h, lines]);
   const t = result.totals;
@@ -82,7 +85,7 @@ export default function QuoteEditor() {
     const st = await ask({ title: 'Cập nhật kết quả báo giá', input: { label: 'Kết quả', required: true, options: [['can_nhac', 'Khách đang cân nhắc'], ['da_chot', 'Đã chốt đơn'], ['tu_choi', 'Khách từ chối']] } });
     if (!st) return;
     let order = null, reason = null, rnote = null;
-    if (st === 'da_chot') { order = await ask({ title: 'Mã đơn hệ thống', input: { label: 'Mã đơn (VD: MD1534)', required: true } }); if (!order) return; }
+    if (st === 'da_chot') { order = await ask({ title: 'Mã đơn hệ thống', input: { label: 'Mã đơn (VD: NT1234)', required: true, value: h.maDonHeThong || '' } }); if (!order) return; }
     if (st === 'tu_choi') { reason = await ask({ title: 'Lý do từ chối', input: { label: 'Lý do', required: true, options: a.opts('reject_reason') } }); if (!reason) return; rnote = await ask({ title: 'Ghi chú thêm', input: { label: 'Ghi chú' } }); }
     run(async () => { await db.rpc('quote_set_status', { p_id: quote.id, p_status: st, p_order_code: order, p_reason: reason, p_note: rnote }); load(quote.id); }, 'Đã cập nhật');
   };
@@ -105,7 +108,7 @@ export default function QuoteEditor() {
             </div>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
               <Field label="Khách hàng" required className="col-span-2 md:col-span-3"><CustomerPicker value={customer} onChange={setCustomer} disabled={dis || !!quote} /></Field>
-              <Field label="Mã đơn hệ thống"><Input disabled={dis} value={h.maDonHeThong || ''} onChange={e => set('maDonHeThong')(e.target.value)} /></Field>
+              <Field label="Mã đơn hệ thống"><Input disabled={dis} placeholder="VD: NT1234" value={h.maDonHeThong || ''} onChange={e => set('maDonHeThong')(e.target.value.toUpperCase())} /></Field>
               <Field label="Tỷ giá RMB/VND" required><NumInput disabled={dis} value={h.tyGia} onChange={set('tyGia')} /></Field>
               <Field label="Kho nhận"><Select disabled={dis} options={a.opts('warehouse')} value={h.khoNhan} onChange={set('khoNhan')} /></Field>
               <Field label="Hình thức nhập khẩu" className="col-span-2"><Select disabled={dis} options={a.opts('import_method')} value={h.hinhThucNK || ''} onChange={set('hinhThucNK')} placeholder="— Chọn —" /></Field>
@@ -191,6 +194,10 @@ export default function QuoteEditor() {
               <Row l="Số tiền thu của khách (gồm VAT)" sub="tiền hàng + ship + cước + phí + thuế NK + VAT" v={t.soThu} />
               <Row l="Chênh hóa đơn so với số thu" sub={h.cheDoXuat === 'du' ? 'do làm tròn đơn giá xuất' : 'do xuất thấp/cao'} v={t.chenh} cls={t.chenh < 0 ? 'text-red-600' : 'text-emerald-700'} />
               <Row l="Tờ khai APT" sub="giá xuất × 0,9425 ÷ (1 + thuế NK)" v={t.toKhai} />
+              <div className="-mt-0.5 mb-1 flex flex-wrap gap-1.5">
+                <button className="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-100" onClick={() => setAptOpen(true)}>📋 Bảng khai gửi APT</button>
+                <button className="rounded-full bg-[#e8f0fa] px-2.5 py-1 text-xs font-semibold text-[#2f6db5] hover:bg-[#d8e6f7]" onClick={() => setAptOpen(true)}>⇪ Dán lên hệ thống kê khai</button>
+              </div>
               <Row l="LN ước tính (nội bộ, chưa gồm đàm phán NCC)" v={t.lnUocTinh} cls="text-emerald-700" />
               <div className="pl-2 text-[11px] text-ink-400">Tỷ giá {money(t.lnChiTiet.tyGia)} · Cước {money(t.lnChiTiet.cuoc)} · UT {money(t.lnChiTiet.uyThac)} · DV {money(t.lnChiTiet.phiDV)} · Làm tròn {money(t.lnChiTiet.lamTron)}</div>
             </div>
@@ -211,6 +218,8 @@ export default function QuoteEditor() {
           </section>
         </aside>
       </div>
+      <AptSheet open={aptOpen} onClose={() => setAptOpen(false)} code={quote?.code || 'Báo giá mới'} maDon={h.maDonHeThong} h={h} totals={t}
+        rows={lines.map((l, i) => ({ l, r: result.lines.find(x => x.idx === i) })).filter(x => x.r && x.l.name.trim()) as any} />
       {quote && <QuotePrint open={printOpen} onClose={() => setPrintOpen(false)} quote={quote} customer={customer} h={h} lines={lines} />}
     </Layout>
   );
@@ -227,7 +236,9 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
   const t = r.totals;
   const [salePhone, setSalePhone] = useState('');
   useEffect(() => { db.from('profiles').select('phone').eq('id', quote.sale_id).maybeSingle().then((p: any) => setSalePhone(p?.phone || ''), () => {}); }, [quote.sale_id]);
-  const [content, setContent] = useState(''); const [mode, setMode] = useState('coc'); const [pct, setPct] = useState<number>(qd.tyLeCoc ?? 80); const [custom, setCustom] = useState<number | null>(null);
+  const defContent = noAccent(`${customer?.contact_name || customer?.company_name || ''} TT tien hang ${h.maDonHeThong || 'NT'}`).replace(/\s+/g, ' ').trim().slice(0, 50);
+  const [content, setContent] = useState(defContent); useEffect(() => { if (open) setContent(defContent); }, [open]);
+  const [mode, setMode] = useState('coc'); const [pct, setPct] = useState<number>(qd.tyLeCoc ?? 80); const [custom, setCustom] = useState<number | null>(null);
   const amount = mode === 'coc' ? Math.ceil(((t.tienHang + t.phiDV) * pct / 100) / 1000) * 1000 : mode === 'all' ? t.soThu : (custom ?? 0);
   const validUntil = quote.valid_until || addDays(today(), qd.hieuLuc ?? 5);
   const doPrint = () => { document.body.classList.add('print-mode'); setTimeout(() => { window.print(); document.body.classList.remove('print-mode'); }, 50); };
@@ -239,7 +250,7 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
     <Modal open={open} onClose={onClose} title={`Xem trước báo giá ${quote.code}`} size="lg"
       footer={<><span className="mr-auto text-xs text-ink-400">Kiểm tra nội dung và số tiền chuyển khoản trước khi gửi khách.</span><Button variant="primary" onClick={doPrint}>In / Lưu PDF từ trình duyệt</Button></>}>
       <div className="mb-3 grid gap-2 rounded-xl border border-orange-200 bg-orange-50 p-3 sm:grid-cols-4">
-        <Field label="Nội dung chuyển khoản" className="sm:col-span-2"><Input placeholder={`${quote.code} ${customer?.code || ''} coc`} value={content} onChange={e => setContent(e.target.value)} maxLength={50} /></Field>
+        <Field label="Nội dung chuyển khoản" hint="Mặc định: Tên khách TT tien hang + mã NT. Sale kiểm tra, sửa nếu cần." className="sm:col-span-2"><Input placeholder="Ten khach TT tien hang NT1234" value={content} onChange={e => setContent(e.target.value)} maxLength={50} /></Field>
         <Field label="Khách chuyển"><Select options={[['coc', 'Cọc theo tiền hàng + phí dịch vụ'], ['all', 'Toàn bộ đơn'], ['custom', 'Tự nhập số tiền']]} value={mode} onChange={setMode} /></Field>
         {mode === 'coc' ? <Field label="% cọc"><NumInput value={pct} onChange={v => setPct(v ?? 0)} /></Field> : mode === 'custom' ? <Field label="Số tiền (0 = QR không số tiền)"><NumInput value={custom} onChange={setCustom} /></Field> : <Field label="Số tiền"><Input disabled value={money(amount)} /></Field>}
       </div>

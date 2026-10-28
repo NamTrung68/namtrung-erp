@@ -36,7 +36,7 @@ interface NavItem { to: string; label: string; icon: string; show: boolean }
 export function useNav() {
   const a = useApp();
   const groups: [string, NavItem[]][] = [
-    ['', [{ to: '/', label: 'Hôm nay', icon: '🌞', show: true }]],
+    ['', [{ to: '/', label: 'Hôm nay', icon: '🌞', show: true }, { to: '/news', label: 'Bảng tin', icon: '📢', show: true }]],
     ['Bán hàng', [
       { to: '/dashboard', label: 'Bảng điều khiển', icon: '📊', show: true },
       { to: '/crm/customers', label: 'Khách hàng', icon: '👥', show: a.isSales },
@@ -53,10 +53,10 @@ export function useNav() {
       { to: '/hr/approvals', label: 'Duyệt đơn', icon: '✅', show: a.isLead || a.has('hcns') },
       { to: '/hr/payslips', label: 'Phiếu lương', icon: '💰', show: true },
       { to: '/hr/payroll', label: 'Bảng lương', icon: '💵', show: a.canHR },
+      { to: '/hr/staff', label: a.isAdmin || a.has('hcns', 'bgd') ? 'Hồ sơ nhân sự' : 'Hồ sơ của tôi', icon: '🗂️', show: true },
     ]],
     ['Vận hành', [
       { to: '/tickets', label: 'Claim & hỏi đáp', icon: '❓', show: true },
-      { to: '/news', label: 'Bảng tin', icon: '📢', show: true },
       { to: '/docs', label: 'Chứng từ', icon: '📁', show: a.canDocs },
     ]],
     ['Quản trị', [

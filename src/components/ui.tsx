@@ -80,7 +80,33 @@ export function Card({ title, actions, children, className, bodyClass }: { title
 const badgeColors: Record<string, string> = {
   gray: 'bg-ink-100 text-ink-700', blue: 'bg-blue-50 text-blue-700', green: 'bg-emerald-50 text-emerald-700', red: 'bg-red-50 text-red-700',
   amber: 'bg-amber-50 text-amber-800', purple: 'bg-brand-50 text-brand-700', orange: 'bg-orange-50 text-orange-700', solidred: 'bg-red-600 text-white', solidamber: 'bg-amber-500 text-white',
+  sky: 'bg-sky-50 text-sky-700', indigo: 'bg-indigo-50 text-indigo-700', pink: 'bg-pink-50 text-pink-700', teal: 'bg-teal-50 text-teal-700', slate: 'bg-slate-100 text-slate-600', yellow: 'bg-yellow-50 text-yellow-800',
 };
+// Thẻ trạng thái có màu: [mã, nhãn, số lượng, tông]
+const chipTone: Record<string, [string, string, string]> = {
+  gray: ['border-ink-200 bg-white text-ink-600', 'bg-ink-100 text-ink-600', 'border-ink-700 bg-ink-700 text-white'],
+  slate: ['border-slate-200 bg-slate-50 text-slate-600', 'bg-slate-200 text-slate-700', 'border-slate-600 bg-slate-600 text-white'],
+  sky: ['border-sky-200 bg-sky-50 text-sky-700', 'bg-sky-100 text-sky-800', 'border-sky-600 bg-sky-600 text-white'],
+  blue: ['border-blue-200 bg-blue-50 text-blue-700', 'bg-blue-100 text-blue-800', 'border-blue-600 bg-blue-600 text-white'],
+  indigo: ['border-indigo-200 bg-indigo-50 text-indigo-700', 'bg-indigo-100 text-indigo-800', 'border-indigo-600 bg-indigo-600 text-white'],
+  purple: ['border-brand-200 bg-brand-50 text-brand-700', 'bg-brand-100 text-brand-800', 'border-brand-600 bg-brand-600 text-white'],
+  pink: ['border-pink-200 bg-pink-50 text-pink-700', 'bg-pink-100 text-pink-800', 'border-pink-600 bg-pink-600 text-white'],
+  amber: ['border-amber-200 bg-amber-50 text-amber-800', 'bg-amber-100 text-amber-900', 'border-amber-500 bg-amber-500 text-white'],
+  yellow: ['border-yellow-200 bg-yellow-50 text-yellow-800', 'bg-yellow-100 text-yellow-900', 'border-yellow-500 bg-yellow-500 text-white'],
+  orange: ['border-orange-200 bg-orange-50 text-orange-700', 'bg-orange-100 text-orange-800', 'border-orange-500 bg-orange-500 text-white'],
+  teal: ['border-teal-200 bg-teal-50 text-teal-700', 'bg-teal-100 text-teal-800', 'border-teal-600 bg-teal-600 text-white'],
+  green: ['border-emerald-200 bg-emerald-50 text-emerald-700', 'bg-emerald-100 text-emerald-800', 'border-emerald-600 bg-emerald-600 text-white'],
+  red: ['border-red-200 bg-red-50 text-red-700', 'bg-red-100 text-red-800', 'border-red-600 bg-red-600 text-white'],
+  dark: ['border-ink-200 bg-white text-ink-800', 'bg-ink-100 text-ink-700', 'border-ink-900 bg-ink-900 text-white'],
+};
+export function StatusChips({ items, value, onChange }: { items: [string, string, number, string][]; value: string; onChange: (v: string) => void }) {
+  return <div className="-mx-1 mb-3 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none]">
+    {items.map(([k, l, n, tone]) => { const t = chipTone[tone] || chipTone.gray; const on = value === k;
+      return <button key={k || 'all'} onClick={() => onChange(on && k ? '' : k)}
+        className={cx('inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition', on ? t[2] + ' shadow-sm' : t[0], !n && !on && k && 'opacity-60 hover:opacity-100')}>
+        {l}<span className={cx('min-w-[1.25rem] rounded-full px-1.5 text-center text-[11px] tabular-nums', on ? 'bg-white/25' : t[1])}>{n}</span></button>; })}
+  </div>;
+}
 export function Badge({ color = 'gray', children, className }: { color?: string; children: React.ReactNode; className?: string }) {
   return <span className={cx('inline-flex items-center rounded-md px-1.5 py-0.5 text-[12px] font-medium whitespace-nowrap', badgeColors[color] || badgeColors.gray, className)}>{children}</span>;
 }
@@ -165,12 +191,12 @@ export const toast = {
 };
 
 // ---------- Hộp thoại xác nhận / nhập liệu ----------
-export function ask(o: { title: string; message?: React.ReactNode; input?: { label: string; placeholder?: string; required?: boolean; options?: [string, string][] }; ok?: string; danger?: boolean }): Promise<string | null> {
+export function ask(o: { title: string; message?: React.ReactNode; input?: { label: string; placeholder?: string; required?: boolean; options?: [string, string][]; value?: string }; ok?: string; danger?: boolean }): Promise<string | null> {
   return new Promise(resolve => {
     const host = document.createElement('div'); document.body.appendChild(host); const root = createRoot(host);
     const done = (v: string | null) => { root.unmount(); host.remove(); resolve(v); };
     function Dlg() {
-      const [v, setV] = useState(''); const [err, setErr] = useState('');
+      const [v, setV] = useState(o.input?.value || ''); const [err, setErr] = useState('');
       const submit = () => { if (o.input?.required && !v.trim()) { setErr('Bắt buộc nhập'); return; } done(o.input ? v : 'ok'); };
       return (
         <Modal open onClose={() => done(null)} title={o.title} size="sm"

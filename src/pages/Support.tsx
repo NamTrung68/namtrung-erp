@@ -3,7 +3,8 @@ import { Layout } from '../components/Layout';
 import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, Select, Tabs, Textarea, useAction, useLoad } from '../components/ui';
 import { db } from '../lib/sb';
 import { go, useApp, useRoute } from '../state';
-import { fmtDate, fmtDateTime } from '../lib/format';
+import { fmtDate, fmtDateTime, money } from '../lib/format';
+import { STAGE_TONE, QuoteStatus } from './crm/Customers';
 import { PRIORITY } from '../components/CrmModals';
 
 const ST: Record<string, [string, string]> = { moi: ['Mới', 'red'], da_nhan: ['Đã nhận', 'amber'], dang_xu_ly: ['Đang xử lý', 'blue'], xong: ['Đã xong', 'green'], dong: ['Đóng', 'gray'] };
@@ -36,7 +37,7 @@ export default function Support() {
   return (
     <Layout title="Hỗ trợ khách" actions={<Button variant="dark" onClick={() => setNewOpen(true)}>🆘 Gọi hỗ trợ</Button>}>
       <div className="mb-3"><Tabs value={tab} onChange={setTab} tabs={[['todo', `Cần tôi xử lý ${lists.todo.length}`], ['sent', `Tôi đã gửi ${lists.sent.length}`], ['chi_dao', `Chỉ đạo ${lists.chi_dao.length}`], ['done', 'Đã xong'], ['all', 'Tất cả']]} /></div>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)]">
         <Card bodyClass="p-0" className={cx(sel && 'hidden lg:block')}>
           {loading ? <Loading /> : !rows.length ? <Empty>Không có mục nào</Empty> :
             <ul className="divide-y divide-ink-100">{rows.map(r => <li key={r.id}>
@@ -89,7 +90,7 @@ function Thread({ req, customer, onChanged }: { req: any; customer: string; onCh
       {handler && ['moi', 'da_nhan'].includes(req.status) && <Button size="sm" onClick={() => setStatus('dang_xu_ly')}>Đang xử lý</Button>}
       {req.requester_id === a.me.id && req.status === 'xong' && <Button size="sm" onClick={() => setStatus('dong')}>Đóng</Button>}</>}>
       <div className="mb-3 text-xs text-ink-500">{req.code} · {a.personName(req.requester_id)} → {a.personName(req.assignee_id) || 'phòng ban'} · {fmtDateTime(req.created_at)}{req.due_date && ` · hạn ${fmtDate(req.due_date)}`}</div>
-      {req.customer_id && <a className="mb-3 inline-block rounded-lg bg-brand-50 px-3 py-1.5 text-sm font-semibold text-brand-700" href={`#/crm/customer?id=${req.customer_id}`}>👤 {customer || 'Mở hồ sơ khách'}</a>}
+      {req.customer_id && <CustomerBrief reqId={req.id} />}
       {req.content && <p className="mb-3 whitespace-pre-wrap rounded-xl bg-ink-50 p-3 text-sm">{req.content}</p>}
       {(handler || req.response) && <div className="mb-3 rounded-xl border border-ink-200 p-3">
         <div className="mb-1 text-xs font-semibold text-ink-500">{req.kind === 'chi_dao' ? 'Kết quả sale báo lại' : 'Kết quả xử lý'}</div>
@@ -101,5 +102,47 @@ function Thread({ req, customer, onChanged }: { req: any; customer: string; onCh
       {req.status !== 'dong' && <div className="mt-3 flex gap-2"><Input placeholder="Nhắn trao đổi…" value={msg} onChange={e => setMsg(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()} />
         <Button variant="dark" loading={busy} onClick={send}>Gửi</Button></div>}
     </Card>
+  );
+}
+
+function CustomerBrief({ reqId }: { reqId: string }) {
+  const a = useApp(); const [tab, setTab] = useState('care');
+  const { data: c, loading } = useLoad(() => db.rpc<any>('support_customer', { p_req: reqId }), [reqId]);
+  if (loading) return <Loading />;
+  if (!c) return null;
+  const I = ({ l, children }: { l: string; children: React.ReactNode }) => <><dt className="text-ink-400">{l}</dt><dd className="min-w-0 font-medium text-ink-800">{children || '—'}</dd></>;
+  return (
+    <div className="mb-3 overflow-hidden rounded-2xl border border-ink-200">
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-ink-50 px-3 py-2">
+        <div className="min-w-0"><b className="text-brand-700">{c.company_name || c.contact_name}</b> <span className="text-xs text-ink-500">({c.code})</span></div>
+        <div className="flex flex-wrap items-center gap-1.5"><Badge color={STAGE_TONE[c.stage]}>{a.label('stage', c.stage)}</Badge>
+          <span className={cx('text-xs font-semibold', c.temperature === 'nong' ? 'text-red-600' : c.temperature === 'am' ? 'text-amber-600' : 'text-sky-600')}>● {a.label('temperature', c.temperature)}</span>
+          {c.can_open && <a className="rounded-lg bg-white px-2 py-0.5 text-xs font-semibold text-brand-700 ring-1 ring-ink-200" href={`#/crm/customer?id=${c.id}`}>Mở hồ sơ ↗</a>}</div>
+      </div>
+      <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1 px-3 py-2.5 text-sm sm:grid-cols-[110px_1fr_110px_1fr]">
+        <I l="Sale phụ trách">{c.owner_name}</I>
+        <I l="Liên hệ">{c.contact_name}{c.position && ` (${c.position})`} – <a className="text-brand-700" href={`tel:${c.phone || ''}`}>{c.phone || c.zalo}</a></I>
+        <I l="Loại / ngành">{[a.label('customer_type', c.customer_type), a.label('industry', c.industry)].filter(Boolean).join(' / ')}</I>
+        <I l="Mặt hàng">{c.goods}</I>
+        <I l="Hình thức NK">{a.label('import_method', c.import_method)}</I>
+        <I l="Giá trị / tháng">{a.label('monthly_value', c.monthly_value)}</I>
+        <I l="Đang dùng">{c.current_provider}</I>
+        <I l="Chăm / BG / đơn">{c.care_count} / {c.quote_count} / <b>{c.order_count}</b></I>
+        <I l="Tỉnh / MST">{[c.province, c.tax_code].filter(Boolean).join(' · ')}</I>
+        <I l="Hẹn chăm">{fmtDate(c.next_care_date)}</I>
+        {c.note && <><dt className="text-ink-400">Ghi chú</dt><dd className="whitespace-pre-wrap sm:col-span-3">{c.note}</dd></>}
+      </dl>
+      <div className="border-t border-ink-100 px-3 pt-2"><Tabs value={tab} onChange={setTab} tabs={[['care', `Lịch sử trao đổi (${c.care.length})`], ['quotes', `Báo giá (${c.quotes.length})`]]} /></div>
+      <div className="max-h-[300px] overflow-y-auto px-3 py-2">
+        {tab === 'care' ? (!c.care.length ? <Empty>Chưa có lần chăm sóc nào</Empty> : <ol className="relative space-y-2.5 border-l-2 border-brand-100 pl-4">{c.care.map((l: any) => (
+          <li key={l.id} className="relative text-sm"><span className={cx('absolute -left-[22px] top-1 h-2.5 w-2.5 rounded-full ring-2 ring-white', l.is_connected ? 'bg-emerald-500' : 'bg-ink-300')} />
+            <div className="text-xs text-ink-500"><b className="text-ink-800">{fmtDateTime(l.created_at)}</b> · {a.label('channel', l.channel)} · {a.label('care_result', l.result)} · {l.sale_name}</div>
+            {l.content && <div className="whitespace-pre-wrap">{l.content}</div>}
+            <div className="text-[11px] text-ink-400">→ {a.label('stage', l.stage_after)}{l.next_care_date && ` · hẹn ${fmtDate(l.next_care_date)}`}{l.quotation_code && ` · ${l.quotation_code}`}</div></li>))}</ol>)
+        : (!c.quotes.length ? <Empty>Chưa có báo giá</Empty> : <ul className="divide-y divide-ink-100 text-sm">{c.quotes.map((q: any) => <li key={q.id} className="flex items-center justify-between gap-2 py-1.5">
+            <span><b>{q.code}</b>{q.version > 1 && ` v${q.version}`} <span className="text-xs text-ink-400">{fmtDate(q.created_at)}{q.order_code && ` · ${q.order_code}`}</span></span>
+            <span className="flex items-center gap-2"><QuoteStatus s={q.status} /><b className="tabular-nums">{money(q.total_after_vat)}</b></span></li>)}</ul>)}
+      </div>
+    </div>
   );
 }

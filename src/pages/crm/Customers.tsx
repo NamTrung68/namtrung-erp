@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Layout } from '../../components/Layout';
-import { Badge, Button, Chips, cx, Empty, Field, Input, Loading, Modal, Select, Tabs, Textarea, toast, useAction, useLoad, Table, Td, ask } from '../../components/ui';
+import { Badge, Button, Chips, cx, Empty, Field, Input, Loading, Modal, Select, Tabs, Textarea, toast, useAction, useLoad, Table, Td, ask, StatusChips } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { addDays, daysBetween, fmtDate, fmtDateTime, money, today } from '../../lib/format';
@@ -13,6 +13,14 @@ const EMPTY = {
   next_care_date: today(), birthday: '', note: '', group_root_id: null as string | null,
 };
 
+export const STAGE_TONE: Record<string, string> = {
+  moi: 'gray', tiep_can: 'sky', khai_thac: 'indigo', da_bao_gia: 'purple', dam_phan: 'pink', don_dau: 'teal',
+  hoat_dong: 'green', vip: 'amber', kho_ngu: 'slate', mat_khach: 'red', khong_tiem_nang: 'slate',
+};
+export const STAGE_BAR: Record<string, string> = {
+  moi: 'bg-ink-400', tiep_can: 'bg-sky-500', khai_thac: 'bg-indigo-500', da_bao_gia: 'bg-brand-500', dam_phan: 'bg-pink-500', don_dau: 'bg-teal-500',
+  hoat_dong: 'bg-emerald-500', vip: 'bg-amber-500', kho_ngu: 'bg-slate-400', mat_khach: 'bg-red-500', khong_tiem_nang: 'bg-slate-300',
+};
 export function careBadge(d: string | null, t = today()) {
   if (!d) return null;
   const n = daysBetween(d, t);
@@ -30,7 +38,7 @@ export default function Customers() {
   const [checkOpen, setCheckOpen] = useState(query.check === '1');
   useEffect(() => { setSel(query.id || null); if (query.check === '1') setCheckOpen(true); if (query.new === '1') setCreating(true); }, [query.id, query.check, query.new]);
   const { data, loading, reload } = useLoad(async () => {
-    let qq = db.from('customers').select('id,code,contact_name,company_name,phone,zalo,tax_code,customer_type,industry,import_method,stage,temperature,next_care_date,owner_id,ownership,last_contact_at,last_result,care_count,quote_count,order_count')
+    let qq = db.from('customers').select(CUSTOMER_COLS)
       .is('deleted_at', null).order('next_care_date', { nulls: 'last' }).order('created_at', { asc: false }).limit(300);
     if (q.trim()) { const s = q.trim().replace(/[(),]/g, ' '); qq = qq.or(`contact_name.ilike.*${s}*,company_name.ilike.*${s}*,phone_norm.ilike.*${s.replace(/\D/g, '') || s}*,code.ilike.*${s}*,tax_code.ilike.*${s}*`); }
     if (stage) qq = qq.eq('stage', stage); if (temp) qq = qq.eq('temperature', temp); if (type) qq = qq.eq('customer_type', type);
@@ -46,18 +54,13 @@ export default function Customers() {
   const close = () => { setCreating(false); go('/crm/customers'); };
   const rows = (data as any[]) || [];
   const [careFor, setCareFor] = useState<any>(null);
-  const tempDot = (t: string) => <span className={cx('whitespace-nowrap text-sm', t === 'nong' ? 'text-red-600' : t === 'am' ? 'text-amber-600' : 'text-sky-600')}>● {a.label('temperature', t)}</span>;
   const quickCare = async (e: React.MouseEvent, id: string) => { e.stopPropagation(); setCareFor(await db.from('customers').select('*').eq('id', id).maybeSingle()); };
   return (
     <Layout title="Khách hàng" actions={<>
       <Button variant="dark" onClick={() => { setCreating(true); setSel(null); }}>Thêm khách hàng</Button>
       <Button onClick={() => { reload(); reloadCounts(); }}>Tải lại</Button></>}>
       <div className={cx((sel || creating) && 'hidden xl:block')}>
-        <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none]">
-          <button onClick={() => setStage('')} className={cx('shrink-0 rounded-full border px-3 py-1.5 text-sm font-semibold', !stage ? 'border-ink-900 bg-ink-900 text-white' : 'border-ink-200 bg-white')}>Tất cả <span className="opacity-60">{total}</span></button>
-          {a.opts('stage').map(([k, l]) => <button key={k} onClick={() => setStage(stage === k ? '' : k)}
-            className={cx('shrink-0 rounded-full border px-3 py-1.5 text-sm font-semibold', stage === k ? 'border-ink-900 bg-ink-900 text-white' : 'border-ink-200 bg-white', !cmap.get(k) && stage !== k && 'opacity-50')}>{l} <span className="opacity-60">{cmap.get(k) || 0}</span></button>)}
-        </div>
+        <StatusChips value={stage} onChange={setStage} items={[['', 'Tất cả', total, 'dark'], ...a.opts('stage').map(([k, l]) => [k, l, cmap.get(k) || 0, STAGE_TONE[k] || 'gray'] as [string, string, number, string])]} />
         <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-6">
           <Input className="col-span-2" placeholder="Tìm tên, SĐT, MST, mã KH…" value={q} onChange={e => setQ(e.target.value)} />
           <Select options={a.opts('temperature')} value={temp} onChange={setTemp} placeholder="Mọi mức độ" />
@@ -69,32 +72,7 @@ export default function Customers() {
       <div className="flex gap-4">
         <div className={cx('min-w-0 flex-1 rounded-2xl border border-ink-200 bg-white shadow-soft', (sel || creating) && 'hidden xl:block')}>
           {loading ? <Loading /> : rows.length === 0 ? <Empty>Không có khách phù hợp</Empty> : <>
-            <ul className="divide-y divide-ink-100 md:hidden">{rows.map(c => (
-              <li key={c.id} onClick={() => open(c.id)} className="flex gap-3 px-3 py-3 active:bg-ink-50">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2"><b className="leading-snug">{c.company_name || c.contact_name}</b>{careBadge(c.next_care_date)}</div>
-                  <div className="text-xs text-ink-500">{c.code} · {c.phone || c.zalo} · {a.personName(c.owner_id)}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-1.5"><Badge color="green">{a.label('stage', c.stage)}</Badge>{tempDot(c.temperature)}
-                    <span className="text-xs text-ink-400">{c.care_count}/{c.quote_count}/{c.order_count}</span></div>
-                </div>
-                <Button size="sm" onClick={e => quickCare(e, c.id)}>Ghi</Button>
-              </li>))}</ul>
-            <Table className="hidden md:block" head={['Hẹn chăm', 'Khách hàng', 'Liên hệ', 'Loại / Ngành', 'Hình thức NK', 'Giai đoạn', 'Mức độ', 'Kết quả gần nhất', 'Chăm / BG / Đơn', 'Sale', '']}>
-              {rows.map(c => (
-                <tr key={c.id} onClick={() => open(c.id)} className={cx('cursor-pointer hover:bg-ink-50', sel === c.id && 'bg-brand-50')}>
-                  <Td className="w-24">{careBadge(c.next_care_date)}{c.next_care_date && c.next_care_date <= today() && <div className="text-[11px] text-ink-400">{fmtDate(c.next_care_date).slice(0, 5)}</div>}</Td>
-                  <Td className="min-w-[180px]"><div className="font-semibold">{c.company_name || c.contact_name}</div><div className="text-xs text-ink-400">{c.code}{c.company_name ? ` – ${c.contact_name}` : ''}{c.ownership === 'owned' && ' · 👑'}</div></Td>
-                  <Td><div className="whitespace-nowrap">{c.phone || c.zalo}</div><div className="text-xs text-ink-400">{c.last_contact_at ? 'LH ' + fmtDate(c.last_contact_at).slice(0, 5) : 'Chưa liên hệ'}</div></Td>
-                  <Td><div>{a.label('customer_type', c.customer_type)}</div><div className="text-xs text-ink-400">{a.label('industry', c.industry)}</div></Td>
-                  <Td className="max-w-[200px] text-xs">{a.label('import_method', c.import_method)}</Td>
-                  <Td><Badge color={['don_dau', 'hoat_dong', 'vip'].includes(c.stage) ? 'green' : c.stage === 'moi' ? 'gray' : ['kho_ngu', 'mat_khach'].includes(c.stage) ? 'red' : 'purple'}>{a.label('stage', c.stage)}</Badge></Td>
-                  <Td>{tempDot(c.temperature)}</Td>
-                  <Td className="max-w-[160px] text-xs">{a.label('care_result', c.last_result)}</Td>
-                  <Td className="whitespace-nowrap text-center tabular-nums">{c.care_count} / {c.quote_count} / <b>{c.order_count}</b></Td>
-                  <Td className="whitespace-nowrap text-xs">{a.personName(c.owner_id)}</Td>
-                  <Td className="whitespace-nowrap" onClick={e => e.stopPropagation()}><div className="flex gap-1"><Button size="sm" onClick={e => quickCare(e, c.id)}>Ghi chăm sóc</Button><Button size="sm" onClick={() => go(`/crm/quote?customer=${c.id}`)}>Báo giá</Button></div></Td>
-                </tr>))}
-            </Table></>}
+            <CustomerTable rows={rows} sel={sel} onOpen={open} onCare={quickCare} /></>}
           {rows.length >= 300 && <div className="p-3 text-center text-xs text-ink-400">Hiển thị 300 khách đầu — dùng bộ lọc để thu hẹp</div>}
         </div>
         {(sel || creating) && <div className="fixed inset-0 z-30 overflow-y-auto bg-ink-50 p-2 xl:static xl:z-auto xl:w-[52%] xl:max-w-[920px] xl:overflow-visible xl:bg-transparent xl:p-0">
@@ -105,6 +83,41 @@ export default function Customers() {
       <DuplicateCheck open={checkOpen} onClose={() => { setCheckOpen(false); if (query.check) go('/crm/customers'); }} />
     </Layout>
   );
+}
+
+export const CUSTOMER_COLS = 'id,code,contact_name,company_name,phone,zalo,tax_code,customer_type,industry,import_method,stage,temperature,next_care_date,owner_id,ownership,last_contact_at,last_result,care_count,quote_count,order_count';
+export function CustomerTable({ rows, sel, onOpen, onCare, compact }: { rows: any[]; sel?: string | null; onOpen: (id: string) => void; onCare: (e: React.MouseEvent, id: string) => void; compact?: boolean }) {
+  const a = useApp();
+  const tempDot = (t: string) => <span className={cx('whitespace-nowrap text-sm', t === 'nong' ? 'text-red-600' : t === 'am' ? 'text-amber-600' : 'text-sky-600')}>● {a.label('temperature', t)}</span>;
+  const open = onOpen; const quickCare = onCare;
+  return <>
+            <ul className="divide-y divide-ink-100 md:hidden">{rows.map(c => (
+              <li key={c.id} onClick={() => open(c.id)} className="flex gap-3 px-3 py-3 active:bg-ink-50">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2"><b className="leading-snug">{c.company_name || c.contact_name}</b>{careBadge(c.next_care_date)}</div>
+                  <div className="text-xs text-ink-500">{c.code} · {c.phone || c.zalo} · {a.personName(c.owner_id)}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5"><Badge color={STAGE_TONE[c.stage]}>{a.label('stage', c.stage)}</Badge>{tempDot(c.temperature)}
+                    <span className="text-xs text-ink-400">{c.care_count}/{c.quote_count}/{c.order_count}</span></div>
+                </div>
+                <Button size="sm" onClick={e => quickCare(e, c.id)}>Ghi</Button>
+              </li>))}</ul>
+            <Table className="hidden md:block" head={['Hẹn chăm', 'Khách hàng', 'Liên hệ', ...(compact ? [] : ['Loại / Ngành', 'Hình thức NK']), 'Giai đoạn', 'Mức độ', 'Kết quả gần nhất', 'Chăm / BG / Đơn', 'Sale', '']}>
+              {rows.map(c => (
+                <tr key={c.id} onClick={() => open(c.id)} className={cx('cursor-pointer hover:bg-ink-50', sel === c.id && 'bg-brand-50')}>
+                  <Td className="w-24">{careBadge(c.next_care_date)}{c.next_care_date && c.next_care_date <= today() && <div className="text-[11px] text-ink-400">{fmtDate(c.next_care_date).slice(0, 5)}</div>}</Td>
+                  <Td className="min-w-[180px]"><div className="font-semibold">{c.company_name || c.contact_name}</div><div className="text-xs text-ink-400">{c.code}{c.company_name ? ` – ${c.contact_name}` : ''}{c.ownership === 'owned' && ' · 👑'}</div></Td>
+                  <Td><div className="whitespace-nowrap">{c.phone || c.zalo}</div><div className="text-xs text-ink-400">{c.last_contact_at ? 'LH ' + fmtDate(c.last_contact_at).slice(0, 5) : 'Chưa liên hệ'}</div></Td>
+                  {!compact && <Td><div>{a.label('customer_type', c.customer_type)}</div><div className="text-xs text-ink-400">{a.label('industry', c.industry)}</div></Td>}
+                  {!compact && <Td className="max-w-[200px] text-xs">{a.label('import_method', c.import_method)}</Td>}
+                  <Td><Badge color={STAGE_TONE[c.stage]}>{a.label('stage', c.stage)}</Badge></Td>
+                  <Td>{tempDot(c.temperature)}</Td>
+                  <Td className="max-w-[160px] text-xs">{a.label('care_result', c.last_result)}</Td>
+                  <Td className="whitespace-nowrap text-center tabular-nums">{c.care_count} / {c.quote_count} / <b>{c.order_count}</b></Td>
+                  <Td className="whitespace-nowrap text-xs">{a.personName(c.owner_id)}</Td>
+                  <Td className="whitespace-nowrap" onClick={e => e.stopPropagation()}><div className="flex gap-1"><Button size="sm" onClick={e => quickCare(e, c.id)}>Ghi chăm sóc</Button><Button size="sm" onClick={() => go(`/crm/quote?customer=${c.id}`)}>Báo giá</Button></div></Td>
+                </tr>))}
+            </Table>
+  </>;
 }
 
 function CustomerPanel({ id, onClose, onSaved }: { id: string | null; onClose: () => void; onSaved: (id: string) => void }) {
@@ -142,7 +155,7 @@ function CustomerPanel({ id, onClose, onSaved }: { id: string | null; onClose: (
         <div className="min-w-0">
           <h2 className="truncate text-lg font-semibold">{c ? (c.company_name || c.contact_name) : 'Khách hàng mới'}</h2>
           {c && <div className="flex flex-wrap items-center gap-1.5 text-xs text-ink-500">{c.code} – {c.contact_name} – {c.phone || c.zalo}
-            <Badge color="green">{a.label('stage', c.stage)}</Badge>
+            <Badge color={STAGE_TONE[c.stage]}>{a.label('stage', c.stage)}</Badge>
             <span className={c.temperature === 'nong' ? 'text-red-600' : c.temperature === 'am' ? 'text-amber-600' : 'text-blue-600'}>● {a.label('temperature', c.temperature)}</span>
             {careBadge(c.next_care_date)}
             <Badge>{c.ownership === 'owned' ? 'Chủ khách' : 'Đang theo'}: {a.personName(c.owner_id)}</Badge></div>}
@@ -276,6 +289,6 @@ export function AuditHistory({ table, id }: { table: string; id: string }) {
 
 export const QUOTE_STATUS: Record<string, [string, string]> = {
   nhap: ['Nháp', 'gray'], cho_duyet: ['Chờ duyệt giá', 'amber'], da_gui: ['Đã gửi', 'blue'], can_nhac: ['Khách đang cân nhắc', 'purple'],
-  da_chot: ['Đã chốt đơn', 'green'], tu_choi: ['Khách từ chối', 'red'], het_han: ['Hết hạn', 'gray'], da_thay_the: ['Đã thay thế', 'gray'],
+  da_chot: ['Đã chốt đơn', 'green'], tu_choi: ['Khách từ chối', 'red'], het_han: ['Hết hạn', 'slate'], da_thay_the: ['Đã thay thế', 'gray'],
 };
 export const QuoteStatus = ({ s }: { s: string }) => <Badge color={QUOTE_STATUS[s]?.[1]}>{QUOTE_STATUS[s]?.[0] || s}</Badge>;

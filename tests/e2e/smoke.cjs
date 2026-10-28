@@ -1,5 +1,5 @@
 // Kiểm thử giao diện: đăng nhập, mở từng trang, chạy luồng chính, ghi lỗi console
-const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwright');
+const { chromium } = require('playwright');
 const BASE = 'http://localhost:8080/';
 const SHOTS = process.env.SHOTS || '/tmp/claude-0/-home-claude/35bb19b3-0ac5-5cc1-996a-06924576031f/scratchpad/shots';
 const errors = [];

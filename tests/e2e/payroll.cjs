@@ -1,5 +1,5 @@
 // Kiểm thử luồng lương: mở kỳ, nhập file BC Lợi nhuận thật, tính lương, gửi xác nhận, chốt
-const { chromium } = require('/home/claude/.npm-global/lib/node_modules/playwright');
+const { chromium } = require('playwright');
 const BASE = 'http://localhost:8080/'; const FILE = process.argv[2];
 const SHOTS = '/tmp/claude-0/-home-claude/35bb19b3-0ac5-5cc1-996a-06924576031f/scratchpad/shots';
 const errors = [];
@@ -7,7 +7,7 @@ const errors = [];
   const browser = await chromium.launch(); const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } }); const page = await ctx.newPage();
   page.on('pageerror', e => errors.push('PAGEERROR ' + e.message)); page.on('console', m => m.type() === 'error' && !/fonts|vietqr|Failed to load/.test(m.text()) && errors.push(m.text()));
   await page.goto(BASE); await page.fill('input[type=email]', 'namtrung20266@gmail.com'); await page.fill('input[type=password]', 'Test1234!'); await page.click('button[type=submit]');
-  await page.waitForSelector('text=Xin chào');
+  await page.waitForSelector('h2.display');
   // lương cơ bản cho sale A
   await page.goto(BASE + '#/hr/payroll'); await page.waitForTimeout(800);
   await page.fill('input[type=month]', '2026-10'); await page.waitForTimeout(800);
