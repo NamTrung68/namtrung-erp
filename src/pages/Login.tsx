@@ -29,7 +29,7 @@ export default function Login() {
           <div><div className="text-lg font-semibold">ERP Nam Trung</div><div className="text-xs text-ink-500">Hệ thống quản trị nội bộ</div></div>
         </div>
         <form onSubmit={submit} className="rounded-2xl border border-ink-200 bg-white p-5 shadow-sm">
-          <Tabs value={tab} onChange={t => { setTab(t); setMsg(null); }} tabs={[['login', 'Đăng nhập'], ['signup', 'Kích hoạt tài khoản'], ['forgot', 'Quên mật khẩu']]} />
+          <Tabs value={tab} onChange={t => { setTab(t); setMsg(null); }} tabs={[['login', 'Đăng nhập'], ['forgot', 'Quên mật khẩu']]} />
           <div className="mt-4 space-y-3">
             <Field label="Email công việc"><Input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} /></Field>
             {tab !== 'forgot' && <Field label="Mật khẩu"><Input type="password" autoComplete={tab === 'login' ? 'current-password' : 'new-password'} required value={pw} onChange={e => setPw(e.target.value)} /></Field>}
@@ -38,7 +38,8 @@ export default function Login() {
             <Button variant="dark" className="w-full" loading={busy} type="submit">{tab === 'login' ? 'Đăng nhập' : tab === 'signup' ? 'Kích hoạt' : 'Gửi email đặt lại'}</Button>
           </div>
         </form>
-        <p className="mt-4 text-center text-xs text-ink-400">© Công ty TNHH DV&TM Quốc tế Nam Trung</p>
+        <p className="mt-3 text-center text-xs text-ink-500">Chưa có tài khoản? Liên hệ HCNS/Admin để được cấp.</p>
+        <p className="mt-2 text-center text-xs text-ink-400">© Công ty TNHH DV&TM Quốc tế Nam Trung</p>
       </div>
     </div>
   );

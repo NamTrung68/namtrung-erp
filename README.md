@@ -21,7 +21,7 @@ Hệ thống quản trị nội bộ Công ty TNHH DV&TM Quốc tế Nam Trung: 
    **Authentication → URL Configuration**: *Site URL* = địa chỉ GitHub Pages của app.
 3. **Project Settings → API**: lấy *Project URL* và *anon public key*, ghi vào `public/config.js` (hoặc biến repo `SUPABASE_URL`, `SUPABASE_ANON_KEY`). Không bao giờ dùng `service_role` key ở frontend.
 4. **GitHub** → *Settings → Pages → Source: GitHub Actions*. Mỗi lần push lên `main`, workflow chạy test rồi deploy.
-5. Mở app → *Kích hoạt tài khoản* bằng email quản trị đã được mời sẵn (`namtrung20266@gmail.com`, `hatrieuphong93@gmail.com`) → vào *Nhân sự & quyền* mời các nhân sự khác.
+5. Tài khoản Admin đầu tiên: Supabase → Authentication → Users → Invite user (email đã có trong lời mời sẵn) → mở email, đặt mật khẩu. Sau đó Admin tạo tài khoản nhân sự trong *Nhân sự & quyền* (kèm mật khẩu tạm). Không có tự đăng ký.
 6. *Cấu hình → Chấm công*: bấm "Thêm IP hiện tại" khi đang ở văn phòng. *Cấu hình → Telegram*: dán token bot + chat id nhóm, bấm *Gửi tin thử*.
 
 Cập nhật database sau này: tạo file migration mới `supabase/migrations/00NN_*.sql`, chạy trong SQL Editor, commit.

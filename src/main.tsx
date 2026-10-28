@@ -63,6 +63,6 @@ function App() {
 }
 
 const recovery = auth.consumeUrlToken();
-if (recovery === 'recovery') sessionStorage.setItem('nt_recovery', '1');
+if (recovery === 'recovery' || recovery === 'invite' || recovery === 'signup') sessionStorage.setItem('nt_recovery', '1');
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 createRoot(document.getElementById('root')!).render(<><App /><Toaster /></>);

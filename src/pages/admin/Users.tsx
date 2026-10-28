@@ -16,7 +16,7 @@ export default function Users() {
   const { run } = useAction();
   const rows = ((data as any[]) || []).filter(p => !q || (p.full_name + p.email + (p.employee_code || '')).toLowerCase().includes(q.toLowerCase()));
   return (
-    <Layout title="Nhân sự & phân quyền" actions={<Button variant="dark" onClick={() => setInv(true)}>Mời nhân sự</Button>}>
+    <Layout title="Nhân sự & phân quyền" actions={<Button variant="dark" onClick={() => setInv(true)}>Tạo tài khoản nhân sự</Button>}>
       <div className="mb-3 flex gap-2"><Input className="max-w-xs" placeholder="Tìm tên, email, mã NV…" value={q} onChange={e => setQ(e.target.value)} /></div>
       <Card bodyClass="p-0">{loading ? <Loading /> : <Table head={['Mã', 'Họ tên', 'Email', 'Cấp bậc', 'Vai trò', 'Quản lý trực tiếp', 'Phòng', 'Lịch', 'Trạng thái']}>
         {rows.map(p => <tr key={p.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setEdit(p)}>
@@ -28,7 +28,7 @@ export default function Users() {
       {((invites as any[]) || []).length > 0 && <Card title="Lời mời chưa kích hoạt" className="mt-4" bodyClass="p-0"><Table head={['Email', 'Họ tên', 'Vai trò', 'Ngày mời', '']}>{(invites as any[]).map(i => (
         <tr key={i.email}><Td>{i.email}</Td><Td>{i.full_name}</Td><Td>{i.roles.join(', ')}</Td><Td>{fmtDate(i.created_at)}</Td>
           <Td><Button size="sm" variant="ghost" onClick={() => run(async () => { await db.from('invites').delete().eq('email', i.email); ri(); }, 'Đã hủy lời mời')}>Hủy</Button></Td></tr>))}</Table>
-        <p className="px-4 py-2 text-xs text-ink-500">Gửi link ứng dụng cho nhân sự → chọn "Kích hoạt tài khoản" → nhập đúng email được mời và đặt mật khẩu.</p></Card>}
+        <p className="px-4 py-2 text-xs text-ink-500">Lời mời chưa có tài khoản: bấm Hủy rồi tạo lại kèm mật khẩu tạm.</p></Card>}
       {inv && <Invite onClose={() => setInv(false)} onDone={() => { setInv(false); ri(); }} />}
       {edit && <EditUser p={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); a.reload(); }} />}
     </Layout>
@@ -39,12 +39,14 @@ function Invite({ onClose, onDone }: { onClose: () => void; onDone: () => void }
   const a = useApp(); const [f, setF] = useState({ email: '', full_name: '', roles: ['sale'], job_level: 'nhan_vien', manager: '', org: '', schedule: 'office', code: '', pw: '' }); const { busy, run } = useAction();
   const roleOpts = a.isAdmin ? ROLES : ROLES.filter(r => !['admin', 'bgd'].includes(r[0]));
   return (
-    <Modal open onClose={onClose} title="Mời nhân sự" footer={<Button variant="primary" loading={busy} onClick={() => run(async () => {
+    <Modal open onClose={onClose} title="Tạo tài khoản nhân sự" footer={<Button variant="primary" loading={busy} onClick={() => run(async () => {
       if (!/^\S+@\S+\.\S+$/.test(f.email)) throw new Error('Email không hợp lệ');
       await db.rpc('invite_user', { p_email: f.email, p_full_name: f.full_name, p_roles: f.roles, p_job_level: f.job_level || null, p_manager: f.manager || null, p_org: f.org || null, p_schedule: f.schedule, p_code: f.code || null });
-      if (f.pw) { if (f.pw.length < 8) throw new Error('Mật khẩu tạm tối thiểu 8 ký tự'); await auth.signUp(f.email, f.pw, false); toast.ok('Đã tạo tài khoản. Gửi email + mật khẩu tạm cho nhân sự.'); }
+      if (f.pw.length < 8) throw new Error('Mật khẩu tạm tối thiểu 8 ký tự');
+      await auth.signUp(f.email, f.pw, false);
+      toast.ok('Đã tạo tài khoản. Gửi email + mật khẩu tạm cho nhân sự, nhắc đổi mật khẩu ở mục Tài khoản.');
       onDone();
-    }, 'Đã tạo lời mời')}>Lưu</Button>}>
+    })}>Tạo tài khoản</Button>}>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Email đăng nhập" required><Input value={f.email} onChange={e => setF({ ...f, email: e.target.value })} /></Field>
         <Field label="Họ tên" required><Input value={f.full_name} onChange={e => setF({ ...f, full_name: e.target.value })} /></Field>
@@ -54,7 +56,8 @@ function Invite({ onClose, onDone }: { onClose: () => void; onDone: () => void }
         <Field label="Phòng ban"><Select options={a.units.map(u => [u.id, u.name])} value={f.org} onChange={v => setF({ ...f, org: v })} placeholder="— Chọn —" /></Field>
         <Field label="Lịch làm việc" className="sm:col-span-2"><Select options={SCHED} value={f.schedule} onChange={v => setF({ ...f, schedule: v })} /></Field>
         <Field label="Vai trò" className="sm:col-span-2"><Chips options={roleOpts} value={f.roles} onChange={v => setF({ ...f, roles: v })} /></Field>
-        <Field label="Tạo luôn tài khoản với mật khẩu tạm (không bắt buộc)" className="sm:col-span-2" hint="Để trống: nhân sự tự kích hoạt trên màn hình đăng nhập."><Input type="text" value={f.pw} onChange={e => setF({ ...f, pw: e.target.value })} /></Field>
+        <Field label="Mật khẩu tạm" required className="sm:col-span-2" hint="Tối thiểu 8 ký tự. Nhân sự đăng nhập rồi tự đổi ở mục Tài khoản."><div className="flex gap-2"><Input type="text" value={f.pw} onChange={e => setF({ ...f, pw: e.target.value })} />
+          <Button type="button" onClick={() => setF({ ...f, pw: 'NT' + Math.random().toString(36).slice(2, 8) + Math.floor(10 + Math.random() * 89) })}>Tạo ngẫu nhiên</Button></div></Field>
       </div>
     </Modal>
   );
