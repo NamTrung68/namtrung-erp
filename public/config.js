@@ -1,5 +1,5 @@
-// Cấu hình kết nối Supabase (anon key là khóa công khai, được bảo vệ bằng RLS)
+// Cấu hình kết nối Supabase. Khóa publishable là khóa công khai, dữ liệu được bảo vệ bằng RLS.
 window.NT_CONFIG = {
-  supabaseUrl: 'https://YOUR_PROJECT.supabase.co',
-  supabaseAnonKey: 'YOUR_ANON_KEY',
+  supabaseUrl: 'https://iggpwbsugfjhtnhgsyoz.supabase.co',
+  supabaseAnonKey: 'sb_publishable_BNbhKgyFPqzAySLmfdYa-Q_bjURrK5Q',
 };

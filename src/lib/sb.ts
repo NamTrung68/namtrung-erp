@@ -44,7 +44,9 @@ async function raw(path: string, init: RequestInit & { auth?: boolean } = {}) {
   headers.set('apikey', c.supabaseAnonKey);
   if (init.auth !== false) {
     await ensureFresh();
-    headers.set('Authorization', `Bearer ${session?.access_token || c.supabaseAnonKey}`);
+    // Khóa publishable (sb_publishable_…) chỉ đi ở header apikey; Authorization chỉ mang JWT phiên đăng nhập
+    if (session?.access_token) headers.set('Authorization', `Bearer ${session.access_token}`);
+    else if (c.supabaseAnonKey.startsWith('eyJ')) headers.set('Authorization', `Bearer ${c.supabaseAnonKey}`);
   }
   let res: Response;
   try { res = await fetch(c.supabaseUrl + path, { ...init, headers }); }
