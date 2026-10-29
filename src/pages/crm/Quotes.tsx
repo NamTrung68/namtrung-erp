@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Button, Empty, Input, Loading, Select, StatusChips, Table, Td, toast, useLoad } from '../../components/ui';
 import { db } from '../../lib/sb';
@@ -9,22 +9,18 @@ import { writeXlsx } from '../../lib/xlsx';
 
 export default function Quotes() {
   const a = useApp(); const { query } = useRoute();
-  const [status, setStatus] = useState(query.status || ''); const [q, setQ] = useState(''); const [dq, setDq] = useState(''); useEffect(() => { const t = setTimeout(() => setDq(q), 350); return () => clearTimeout(t); }, [q]); const [sale, setSale] = useState('');
+  const [status, setStatus] = useState(query.status || ''); const [q, setQ] = useState(''); const [sale, setSale] = useState('');
   const { data: cnt } = useLoad(() => db.from('quotations').select('status,sale_id').neq('status', 'da_thay_the').limit(10000), []);
   const counts: Record<string, number> = { all: 0 };
   ((cnt as any[]) || []).filter(r => !sale || r.sale_id === sale).forEach(r => { counts[r.status] = (counts[r.status] || 0) + 1; counts.all++; });
   const { data, loading } = useLoad(async () => {
-    let qq = db.from('quotations').select('id,code,version,status,total_after_vat,est_profit,created_at,sent_at,valid_until,order_code,sale_id,violations,inventory_flags,ma_don:header->>maDonHeThong,customers(code,sys_code,sys_username,contact_name,company_name)')
+    let qq = db.from('quotations').select('id,code,version,status,total_after_vat,est_profit,created_at,sent_at,valid_until,order_code,sale_id,violations,inventory_flags,ma_don:header->>maDonHeThong,customers(code,contact_name,company_name)')
       .neq('status', 'da_thay_the').order('created_at', { asc: false }).limit(300);
     if (status) qq = qq.eq('status', status);
     if (sale) qq = qq.eq('sale_id', sale);
-    const t = dq.trim().replace(/[(),*]/g, ' ').trim();
-    if (t) {
-      const cs: any[] = await db.from('customers').select('id').or(`contact_name.ilike.*${t}*,company_name.ilike.*${t}*,code.ilike.*${t}*,sys_code.ilike.*${t}*,sys_username.ilike.*${t}*,tax_code.ilike.*${t}*,phone_norm.ilike.*${t.replace(/\D/g, '') || t}*`).limit(200);
-      qq = qq.or([`code.ilike.*${t}*`, `order_code.ilike.*${t}*`, `header->>maDonHeThong.ilike.*${t}*`, ...(cs.length ? [`customer_id.in.(${cs.map(c => c.id).join(',')})`] : [])].join(','));
-    }
+    if (q.trim()) qq = qq.ilike('code', q.trim());
     return qq;
-  }, [status, dq, sale]);
+  }, [status, q, sale]);
   const exportXlsx = async () => {
     try {
       const ids = ((data as any[]) || []).map(r => r.id); if (!ids.length) throw new Error('Không có báo giá để xuất');
@@ -43,7 +39,7 @@ export default function Quotes() {
       <StatusChips value={status} onChange={setStatus} items={[['', 'Tất cả', counts.all || 0, 'dark'],
         ...Object.entries(QUOTE_STATUS).filter(([k]) => k !== 'da_thay_the').map(([k, v]) => [k, v[0], counts[k] || 0, v[1]] as [string, string, number, string])]} />
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-        <Input className="col-span-2" placeholder="Tìm mã BG, khách, mã KH / username HT, MST, mã đơn…" value={q} onChange={e => setQ(e.target.value)} />
+        <Input placeholder="Tìm mã báo giá…" value={q} onChange={e => setQ(e.target.value)} />
         {a.isLead && <Select options={a.people.map(p => [p.id, p.full_name])} value={sale} onChange={setSale} placeholder="Mọi nhân viên" />}
       </div>
       <div className="rounded-2xl border border-ink-200 bg-white shadow-soft">
@@ -65,7 +61,7 @@ export default function Quotes() {
                     <button className="rounded-md border border-ink-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-ink-600 hover:border-brand-300 hover:text-brand-700" onClick={() => go(`/crm/quote?id=${r.id}&print=1`)}>🖨 In</button>
                     <button className="rounded-md border border-ink-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-ink-600 hover:border-brand-300 hover:text-brand-700" onClick={() => clone(r.id)}>⧉ Nhân bản</button>
                   </div></Td>
-                <Td>{r.customers?.company_name || r.customers?.contact_name}<div className="text-xs text-ink-400">{r.customers?.sys_code || r.customers?.code}{r.customers?.sys_username && ` · @${r.customers.sys_username}`}</div></Td>
+                <Td>{r.customers?.company_name || r.customers?.contact_name}<div className="text-xs text-ink-400">{r.customers?.code}</div></Td>
                 <Td className="whitespace-nowrap">{fmtDate(r.created_at)}</Td>
                 <Td><QuoteStatus s={r.status} />{r.violations?.length > 0 && r.status === 'nhap' && <div className="text-[11px] text-amber-700">Phá khung</div>}{r.inventory_flags?.length > 0 && <div className="text-[11px] font-semibold text-amber-700">📦 Giống tồn kho</div>}</Td>
                 <Td className="text-right tabular-nums">{money(r.total_after_vat)}</Td>

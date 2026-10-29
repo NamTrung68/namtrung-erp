@@ -9,12 +9,12 @@ import { downloadBlob, fmtDate, fmtDateTime, today, monthEnd } from '../../lib/f
 
 export default function DataAdmin() {
   const a = useApp();
-  const tabs: [string, string][] = [['selfie', 'Ảnh chấm công'], ...(a.isAdmin ? [['backup', 'Sao lưu & khôi phục'], ['company', 'KH đang chạy của công ty'], ['audit', 'Nhật ký hệ thống']] as [string, string][] : [['audit', 'Nhật ký']] as [string, string][])];
+  const tabs: [string, string][] = [['selfie', 'Ảnh chấm công'], ...(a.isAdmin ? [['company', 'KH đang chạy của công ty'], ['audit', 'Nhật ký hệ thống']] as [string, string][] : [['audit', 'Nhật ký']] as [string, string][])];
   const [tab, setTab] = useState(tabs[0][0]);
   return (
     <Layout title="Dữ liệu · Nhật ký">
       <Tabs value={tab} onChange={setTab} tabs={tabs} />
-      <div className="mt-4">{tab === 'backup' ? <Backups /> : tab === 'company' ? <CompanyImport /> : tab === 'selfie' ? <Selfies /> : <Audit />}</div>
+      <div className="mt-4">{tab === 'company' ? <CompanyImport /> : tab === 'selfie' ? <Selfies /> : <Audit />}</div>
     </Layout>
   );
 }
@@ -91,36 +91,4 @@ function Audit() {
           <Td>{l.action}</Td><Td>{l.table_name}</Td><Td className="max-w-[120px] truncate text-xs">{l.record_id}</Td><Td className="max-w-md text-xs"><code className="line-clamp-3 break-all">{JSON.stringify(l.diff)}</code></Td></tr>)}</Table>}
     </Card>
   );
-}
-
-const BACKUP_TABLES = ['profiles', 'org_units', 'job_levels', 'settings', 'lookups', 'customers', 'care_logs', 'customer_transfers', 'quotations', 'quotation_lines', 'quote_archive',
-  'support_requests', 'support_messages', 'daily_reports', 'leave_requests', 'leave_entitlements', 'attendance_events', 'attendance_requests', 'holidays', 'tickets', 'announcements',
-  'documents', 'hr_records', 'hr_contracts', 'hr_agreements', 'hr_documents', 'inventory_items', 'exchange_rates', 'kpi_snapshots', 'payroll_periods', 'payslips', 'order_results'];
-function Backups() {
-  const { data, loading, reload } = useLoad(() => db.rpc<any[]>('backup_list'), []); const { busy, run } = useAction(); const [dl, setDl] = useState('');
-  const create = async () => { const note = await ask({ title: 'Tạo bản sao lưu', input: { label: 'Ghi chú', placeholder: 'VD: Trước khi nhập file khách tháng 11' }, ok: 'Sao lưu' }); if (note === null) return;
-    run(async () => { await db.rpc('backup_create', { p_note: note || 'Sao lưu thủ công' }); reload(); }, 'Đã sao lưu'); };
-  const download = () => run(async () => {
-    const files: { name: string; data: Blob }[] = [];
-    for (const t of BACKUP_TABLES) { setDl(t); try { const rows = await db.from(t).select('*').limit(100000); files.push({ name: `${t}.json`, data: new Blob([JSON.stringify(rows)], { type: 'application/json' }) }); } catch { /* bảng không có quyền / không tồn tại */ } }
-    setDl(''); downloadBlob(`erp-namtrung-saoluu-${today()}.zip`, await makeZip(files));
-  }, 'Đã tải bản sao lưu về máy');
-  const latest = (data as any[])?.[0]?.name || 'bk_YYYYMMDD_HHMMSS';
-  return <div className="max-w-4xl space-y-4">
-    <Card title="Bản sao lưu trong database" actions={<Button variant="dark" loading={busy && !dl} onClick={create}>+ Sao lưu ngay</Button>} bodyClass="p-0">
-      {loading ? <Loading /> : !(data as any[])?.length ? <Empty>Chưa có bản sao lưu</Empty> :
-        <Table head={['Bản sao lưu', 'Ghi chú', 'Số bảng', 'Số dòng', 'Dung lượng']}>{(data as any[]).map(b => <tr key={b.name}><Td className="font-mono text-xs">{b.name}</Td><Td>{b.note}</Td><Td>{b.tables}</Td><Td>{Number(b.rows_total).toLocaleString('vi-VN')}</Td><Td>{b.size_mb} MB</Td></tr>)}</Table>}
-      <p className="border-t border-ink-100 px-4 py-3 text-xs text-ink-500">Hệ thống giữ 5 bản gần nhất (bản cũ hơn tự xóa để tiết kiệm dung lượng). Mỗi lần nâng cấp phần mềm em đều tạo 1 bản trước khi thay đổi.</p>
-    </Card>
-    <Card title="Tải bản sao lưu về máy"><p className="mb-3 text-sm text-ink-600">Tải toàn bộ dữ liệu (khách hàng, báo giá, chấm công, nhân sự…) thành 1 file .zip để cất ở Google Drive. Nên tải mỗi tuần.</p>
-      <Button variant="primary" loading={busy && !!dl} onClick={download}>⬇ Tải file sao lưu (.zip)</Button>{dl && <span className="ml-3 text-xs text-ink-500">Đang lấy {dl}…</span>}</Card>
-    <Card title="Khôi phục khi có sự cố">
-      <ol className="list-decimal space-y-1.5 pl-5 text-sm text-ink-700">
-        <li>Vào Supabase → <b>SQL Editor</b> → New query.</li>
-        <li>Khôi phục 1 bảng (ví dụ khách hàng) về đúng lúc sao lưu: <code className="block rounded-lg bg-ink-900 px-3 py-2 text-xs text-emerald-300">select public.backup_restore_table('{latest}', 'customers');</code></li>
-        <li>Dòng có trong bản sao lưu được trả lại nguyên trạng; dòng tạo sau thời điểm sao lưu vẫn giữ.</li>
-        <li>Phần mềm (giao diện): mỗi bản đều lưu 1 nhánh <b>backup-ban-N</b> trên GitHub — nhắn em “quay lại bản N” là em đưa về ngay.</li>
-      </ol>
-    </Card>
-  </div>;
 }

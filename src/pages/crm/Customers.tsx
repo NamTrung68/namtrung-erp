@@ -12,7 +12,7 @@ const EMPTY = {
   contact_name: '', position: '', company_name: '', phone: '', zalo: '', tax_code: '', email: '', facebook: '', province: '', address: '',
   customer_type: '', source: '', industry: '', goods: '', current_provider: '', import_method: '', legal_entity: '', invoice_need: '',
   frequency: '', monthly_value: '', stage: 'moi', temperature: 'lanh', services: [] as string[], goods_traits: [] as string[],
-  next_care_date: today(), birthday: '', note: '', group_root_id: null as string | null, sys_code: '', sys_username: '', sys_warehouse: '', salutation: '', legal_rep: '', legal_address: '',
+  next_care_date: today(), birthday: '', note: '', group_root_id: null as string | null, sys_code: '',
 };
 
 export const STAGE_TONE: Record<string, string> = {
@@ -28,28 +28,20 @@ export function noOrder(c: any) {
   return <div className={cx('text-[11px] font-semibold', n > 60 ? 'text-red-600' : n > 30 ? 'text-amber-600' : 'text-emerald-600')}>Không đơn {n} ngày</div>;
 }
 const CUSTOMER_IMPORT: ImportField[] = [
-  { key: 'sys_username', label: 'Username hệ thống', aliases: ['username', 'tên đăng nhập', 'user'] },
-  { key: 'sys_code', label: 'Mã khách hàng', aliases: ['mã kh hệ thống', 'mã kh', 'customer code'] },
-  { key: 'last_name', label: 'Họ' }, { key: 'first_name', label: 'Tên' },
-  { key: 'phone', label: 'Điện thoại', aliases: ['số điện thoại', 'sđt', 'phone', 'mobile'] },
-  { key: 'email', label: 'Email' }, { key: 'address', label: 'Địa chỉ' },
-  { key: 'sys_warehouse', label: 'Kho VN', aliases: ['kho', 'kho nhận'] },
-  { key: 'sale', label: 'Nhân viên Sale', aliases: ['nhân viên kinh doanh', 'nvkd', 'sale'], hint: 'tên, email hoặc mã NV' },
-  { key: 'salutation', label: 'Ông/Bà', aliases: ['danh xưng'] },
-  { key: 'legal_rep', label: 'Người Đại Diện', aliases: ['người đại diện pháp luật'] },
-  { key: 'position', label: 'Chức danh', aliases: ['chức vụ'] },
-  { key: 'tax_code', label: 'Mã Số Thuế', aliases: ['mst'] },
-  { key: 'company_name', label: 'Tên Đơn Vị/Công Ty', aliases: ['tên công ty', 'công ty', 'tên đơn vị', 'công ty / shop'] },
-  { key: 'legal_address', label: 'Địa Chỉ Pháp nhân', aliases: ['địa chỉ pháp lý', 'địa chỉ công ty'] },
-  { key: 'sys_created_date', label: 'Ngày tạo tài khoản', type: 'date' },
-  { key: 'first_order_date', label: 'Ngày cọc đơn lần đầu', type: 'date', aliases: ['ngày cọc đầu', 'đơn đầu tiên'] },
-  { key: 'last_order_date', label: 'Ngày cọc đơn gần nhất', type: 'date', aliases: ['ngày đơn cuối', 'đơn gần nhất'] },
-  { key: 'days_no_order', label: 'Số ngày không có đơn', type: 'number', hint: 'dùng khi không có ngày cọc gần nhất' },
-  { key: 'contact_name', label: 'Người liên hệ', hint: 'khi file không tách Họ / Tên' },
-  { key: 'zalo', label: 'Zalo' }, { key: 'customer_type', label: 'Loại khách' }, { key: 'source', label: 'Nguồn khách' },
-  { key: 'industry', label: 'Ngành hàng' }, { key: 'goods', label: 'Mặt hàng' }, { key: 'province', label: 'Tỉnh / thành' }, { key: 'note', label: 'Ghi chú' },
+  { key: 'sys_code', label: 'Mã KH hệ thống', aliases: ['mã khách hàng', 'mã kh', 'ma khach', 'customer code', 'mã khách'] },
+  { key: 'phone', label: 'Số điện thoại', aliases: ['sđt', 'điện thoại', 'phone', 'mobile', 'số đt', 'sdt khách'] },
+  { key: 'contact_name', label: 'Người liên hệ', aliases: ['tên khách hàng', 'tên khách', 'khách hàng', 'họ tên', 'tên kh'] },
+  { key: 'company_name', label: 'Công ty / shop', aliases: ['tên công ty', 'công ty', 'shop', 'doanh nghiệp'] },
+  { key: 'days_no_order', label: 'Số ngày không có đơn', type: 'number', aliases: ['số ngày không đơn', 'ngày không có đơn', 'không có đơn', 'so ngay khong co don'] },
+  { key: 'last_order_date', label: 'Ngày đơn cuối', type: 'date', aliases: ['đơn cuối', 'ngày đặt cuối', 'last order'] },
+  { key: 'order_count', label: 'Số đơn', type: 'number', aliases: ['tổng đơn', 'số lượng đơn'] },
+  { key: 'revenue', label: 'Doanh số', type: 'number', aliases: ['doanh thu', 'tổng tiền'] },
+  { key: 'zalo', label: 'Zalo' }, { key: 'tax_code', label: 'Mã số thuế', aliases: ['mst'] }, { key: 'email', label: 'Email' },
+  { key: 'sale', label: 'Nhân viên kinh doanh', aliases: ['sale', 'nvkd', 'nhân viên', 'người phụ trách'], hint: 'tên, email hoặc mã NV' },
+  { key: 'customer_type', label: 'Loại khách' }, { key: 'source', label: 'Nguồn khách', aliases: ['nguồn'] }, { key: 'industry', label: 'Ngành hàng' },
+  { key: 'goods', label: 'Mặt hàng', aliases: ['mặt hàng cụ thể', 'sản phẩm'] }, { key: 'province', label: 'Tỉnh / thành', aliases: ['tỉnh', 'thành phố'] },
+  { key: 'address', label: 'Địa chỉ' }, { key: 'note', label: 'Ghi chú' },
 ];
-
 export function careBadge(d: string | null, t = today()) {
   if (!d) return null;
   const n = daysBetween(d, t);
@@ -69,7 +61,7 @@ export default function Customers() {
   const { data, loading, reload } = useLoad(async () => {
     let qq = db.from('customers').select(CUSTOMER_COLS)
       .is('deleted_at', null).order('next_care_date', { nulls: 'last' }).order('created_at', { asc: false }).limit(300);
-    if (q.trim()) { const s = q.trim().replace(/[(),]/g, ' '); qq = qq.or(`contact_name.ilike.*${s}*,company_name.ilike.*${s}*,phone_norm.ilike.*${s.replace(/\D/g, '') || s}*,code.ilike.*${s}*,sys_code.ilike.*${s}*,sys_username.ilike.*${s}*,tax_code.ilike.*${s}*`); }
+    if (q.trim()) { const s = q.trim().replace(/[(),]/g, ' '); qq = qq.or(`contact_name.ilike.*${s}*,company_name.ilike.*${s}*,phone_norm.ilike.*${s.replace(/\D/g, '') || s}*,code.ilike.*${s}*,sys_code.ilike.*${s}*,tax_code.ilike.*${s}*`); }
     if (stage) qq = qq.eq('stage', stage); if (temp) qq = qq.eq('temperature', temp); if (type) qq = qq.eq('customer_type', type);
     if (owner) qq = qq.eq('owner_id', owner); else if (!a.isLead) qq = qq.eq('owner_id', a.me.id);
     if (due) qq = qq.lte('next_care_date', today()).neq('stage', 'khong_tiem_nang');
@@ -98,7 +90,7 @@ export default function Customers() {
       <div className={cx((sel || creating) && 'hidden xl:block')}>
         <StatusChips value={stage} onChange={setStage} items={[['', 'Tất cả', total, 'dark'], ...a.opts('stage').map(([k, l]) => [k, l, cmap.get(k) || 0, STAGE_TONE[k] || 'gray'] as [string, string, number, string])]} />
         <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-6">
-          <Input className="col-span-2" placeholder="Tìm tên, SĐT, MST, mã KH, username HT…" value={q} onChange={e => setQ(e.target.value)} />
+          <Input className="col-span-2" placeholder="Tìm tên, SĐT, MST, mã KH…" value={q} onChange={e => setQ(e.target.value)} />
           <Select options={a.opts('temperature')} value={temp} onChange={setTemp} placeholder="Mọi mức độ" />
           <Select options={a.opts('customer_type')} value={type} onChange={setType} placeholder="Mọi loại khách" />
           {a.isLead ? <Select options={salesOpts} value={owner} onChange={setOwner} placeholder="Mọi nhân viên" /> : <span className="hidden md:block" />}
@@ -118,11 +110,10 @@ export default function Customers() {
       {careFor && <CareModal open customer={careFor} onClose={() => setCareFor(null)} onSaved={() => { setCareFor(null); reload(); }} />}
       <ImportWizard open={impOpen} onClose={() => setImpOpen(false)} title="Nhập / đồng bộ khách hàng từ hệ thống" fields={CUSTOMER_IMPORT} sampleName="mau-nhap-khach-hang"
         options={<label className="ml-auto flex items-center gap-2 rounded-lg bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-900"><input type="checkbox" checked={createNew} onChange={e => setCreateNew(e.target.checked)} /> Tạo khách mới nếu chưa có trên CRM</label>}
-        note={<>Dùng thẳng file <b>Danh sách khách hàng xuất từ hệ thống</b>. Khớp khách theo <b>Mã KH → Username → SĐT → MST</b>. Khách đã có: cập nhật mã, username, kho, ngày cọc đầu / gần nhất (tự tính số ngày chưa mua mới) và điền các ô đang trống — không đổi sale đang chăm.
-          Bật “Tạo khách mới” để nhập khách chưa có; khách không có SĐT / MST vẫn nhập được nếu có Mã KH hoặc Username. Khách nhập từ file không tính vào KPI “KH mới”.</>}
+        note={<>Khớp khách theo <b>Mã KH hệ thống → SĐT → MST</b>. Khách đã có: chỉ cập nhật mã hệ thống, ngày đơn cuối (từ “Số ngày không có đơn”), số đơn, doanh số — không đổi thông tin sale đang chăm.
+          Bật “Tạo khách mới” để nhập dữ liệu khách cũ; hệ thống vẫn chặn trùng SĐT/MST như khi nhập tay.</>}
         onImport={async rs => { let u = 0, n = 0, k = 0; const errs: any[] = [];
-          const rows2 = rs.map(r => ({ ...r, phone: /^\d{9}$/.test(String(r.phone || '').trim()) ? '0' + String(r.phone).trim() : r.phone, tax_code: /^\d{9}$|^\d{11}$/.test(String(r.tax_code || '').trim()) ? '0' + String(r.tax_code).trim() : r.tax_code }));
-          for (let i = 0; i < rows2.length; i += 400) { const r: any = await db.rpc('import_customers', { p_rows: rows2.slice(i, i + 400), p_create: createNew }); u += r.updated; n += r.created; k += r.skipped; errs.push(...[...r.errors, ...(r.warnings || [])].map((e: any) => ({ ...e, row: e.row + i + 1 }))); }
+          for (let i = 0; i < rs.length; i += 400) { const r: any = await db.rpc('import_customers', { p_rows: rs.slice(i, i + 400), p_create: createNew }); u += r.updated; n += r.created; k += r.skipped; errs.push(...r.errors.map((e: any) => ({ ...e, row: e.row + i }))); }
           reload(); reloadCounts();
           return <div><b>Cập nhật {u} · tạo mới {n} · bỏ qua {k}</b>{errs.length > 0 && <ul className="mt-1 max-h-32 list-disc overflow-auto pl-5 text-xs text-ink-600">{errs.slice(0, 50).map((e, i) => <li key={i}>Dòng {e.row}: {e.msg}</li>)}</ul>}</div>; }} />
       <DuplicateCheck open={checkOpen} onClose={() => { setCheckOpen(false); if (query.check) go('/crm/customers'); }} />
@@ -130,7 +121,7 @@ export default function Customers() {
   );
 }
 
-export const CUSTOMER_COLS = 'id,code,contact_name,company_name,phone,zalo,tax_code,customer_type,industry,import_method,stage,temperature,next_care_date,owner_id,ownership,last_contact_at,last_result,care_count,quote_count,order_count,sys_code,sys_username,sys_last_order_date';
+export const CUSTOMER_COLS = 'id,code,contact_name,company_name,phone,zalo,tax_code,customer_type,industry,import_method,stage,temperature,next_care_date,owner_id,ownership,last_contact_at,last_result,care_count,quote_count,order_count,sys_code,sys_last_order_date';
 export function CustomerTable({ rows, sel, onOpen, onCare, compact }: { rows: any[]; sel?: string | null; onOpen: (id: string) => void; onCare: (e: React.MouseEvent, id: string) => void; compact?: boolean }) {
   const a = useApp();
   const tempDot = (t: string) => <span className={cx('whitespace-nowrap text-sm', t === 'nong' ? 'text-red-600' : t === 'am' ? 'text-amber-600' : 'text-sky-600')}>● {a.label('temperature', t)}</span>;
@@ -140,7 +131,7 @@ export function CustomerTable({ rows, sel, onOpen, onCare, compact }: { rows: an
               <li key={c.id} onClick={() => open(c.id)} className="flex gap-3 px-3 py-3 active:bg-ink-50">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2"><b className="leading-snug">{c.company_name || c.contact_name}</b>{careBadge(c.next_care_date)}</div>
-                  <div className="text-xs text-ink-500">{c.code}{c.sys_code && <b className="text-brand-700"> · {c.sys_code}</b>}{c.sys_username && ` · @${c.sys_username}`} · {c.phone || c.zalo} · {a.personName(c.owner_id)}</div>
+                  <div className="text-xs text-ink-500">{c.code} · {c.phone || c.zalo} · {a.personName(c.owner_id)}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5"><Badge color={STAGE_TONE[c.stage]}>{a.label('stage', c.stage)}</Badge>{tempDot(c.temperature)}
                     <span className="text-xs text-ink-400">{c.care_count}/{c.quote_count}/{c.order_count}</span></div>
                 </div>
@@ -150,7 +141,7 @@ export function CustomerTable({ rows, sel, onOpen, onCare, compact }: { rows: an
               {rows.map(c => (
                 <tr key={c.id} onClick={() => open(c.id)} className={cx('cursor-pointer hover:bg-ink-50', sel === c.id && 'bg-brand-50')}>
                   <Td className="w-24">{careBadge(c.next_care_date)}{c.next_care_date && c.next_care_date <= today() && <div className="text-[11px] text-ink-400">{fmtDate(c.next_care_date).slice(0, 5)}</div>}</Td>
-                  <Td className="min-w-[180px]"><div className="font-semibold">{c.company_name || c.contact_name}</div><div className="text-xs text-ink-400">{c.code}{c.sys_code && <b className="text-brand-700"> · {c.sys_code}</b>}{c.sys_username && <span className="text-ink-500"> · @{c.sys_username}</span>}{c.company_name ? ` – ${c.contact_name}` : ''}{c.ownership === 'owned' && ' · 👑'}</div></Td>
+                  <Td className="min-w-[180px]"><div className="font-semibold">{c.company_name || c.contact_name}</div><div className="text-xs text-ink-400">{c.code}{c.sys_code && <b className="text-brand-700"> · {c.sys_code}</b>}{c.company_name ? ` – ${c.contact_name}` : ''}{c.ownership === 'owned' && ' · 👑'}</div></Td>
                   <Td><div className="whitespace-nowrap">{c.phone || c.zalo}</div><div className="text-xs text-ink-400">{c.last_contact_at ? 'LH ' + fmtDate(c.last_contact_at).slice(0, 5) : 'Chưa liên hệ'}</div></Td>
                   {!compact && <Td><div>{a.label('customer_type', c.customer_type)}</div><div className="text-xs text-ink-400">{a.label('industry', c.industry)}</div></Td>}
                   {!compact && <Td className="max-w-[200px] text-xs">{a.label('import_method', c.import_method)}</Td>}
@@ -182,12 +173,11 @@ function CustomerPanel({ id, onClose, onSaved }: { id: string | null; onClose: (
   };
   const save = () => run(async () => {
     const payload: any = { ...f };
-    ['id', 'code', 'phone_norm', 'zalo_norm', 'owner_id', 'sys_last_order_date', 'sys_order_count', 'sys_revenue', 'sys_synced_at', 'sys_first_order_date', 'sys_created_date', 'ownership', 'owned_at', 'care_count', 'quote_count', 'order_count', 'first_order_code', 'first_order_at', 'last_order_at',
+    ['id', 'code', 'phone_norm', 'zalo_norm', 'owner_id', 'sys_last_order_date', 'sys_order_count', 'sys_revenue', 'sys_synced_at', 'ownership', 'owned_at', 'care_count', 'quote_count', 'order_count', 'first_order_code', 'first_order_at', 'last_order_at',
       'last_contact_at', 'last_result', 'created_by', 'created_at', 'updated_at', 'deleted_at'].forEach(k => delete payload[k]);
     for (const k of Object.keys(payload)) if (payload[k] === '') payload[k] = null;
     if (!payload.contact_name || !payload.customer_type || !payload.source) throw new Error('Nhập đủ: Người liên hệ, Loại khách, Nguồn khách');
-    if (!payload.phone && !payload.zalo && !payload.sys_code && !payload.sys_username) throw new Error('Cần ít nhất SĐT, Zalo, Mã KH hoặc Username hệ thống');
-    if (payload.tax_code && !/^(\d{10}(-\d{3})?|\d{12})$/.test(String(payload.tax_code).replace(/[^\d-]/g, ''))) throw new Error('Mã số thuế phải 10 số, 10-3 số hoặc 12 số');
+    if (!payload.phone && !payload.zalo) throw new Error('Cần ít nhất SĐT hoặc Zalo');
     if (id) { await db.from('customers').update(payload).eq('id', id); toast.ok('Đã lưu khách hàng'); reload(); }
     else { const r: any[] = await db.from('customers').insert(payload); toast.ok(`Đã tạo ${r[0].code}`); onSaved(r[0].id); }
   });
@@ -225,17 +215,12 @@ function CustomerPanel({ id, onClose, onSaved }: { id: string | null; onClose: (
             <Field label="Tên công ty / shop"><Input value={f.company_name} onChange={ev('company_name')} /></Field>
             <Field label="Số điện thoại" required><Input value={f.phone} onChange={ev('phone')} onBlur={check} inputMode="tel" /></Field>
             <Field label="Zalo (SĐT hoặc link)"><Input value={f.zalo} onChange={ev('zalo')} onBlur={check} /></Field>
-            <Field label="Mã số thuế" hint="10 số, 10-3 số, hoặc 12 số (cá nhân / hộ KD)"><Input value={f.tax_code} onChange={ev('tax_code')} onBlur={check} inputMode="numeric" /></Field>
-            <Field label="Username hệ thống" hint="Tên đăng nhập của khách trên hệ thống đơn hàng"><Input value={f.sys_username} onChange={ev('sys_username')} placeholder="VD: luongit" /></Field>
-            <Field label="Kho VN"><Input value={f.sys_warehouse} onChange={ev('sys_warehouse')} placeholder="Kho Hà Nội / Kho HCM" /></Field>
-            <Field label="Mã KH hệ thống" hint={c?.sys_last_order_date ? `${c.sys_first_order_date ? `Cọc đầu ${fmtDate(c.sys_first_order_date)} · ` : ''}cọc gần nhất ${fmtDate(c.sys_last_order_date)} · chưa mua mới ${daysBetween(c.sys_last_order_date, today())} ngày` : 'Mã khách trên hệ thống đơn hàng, dùng cho nội dung QR'}><Input value={f.sys_code} onChange={e => set('sys_code')(e.target.value.toUpperCase())} placeholder="VD: KH1234" /></Field>
+            <Field label="Mã số thuế"><Input value={f.tax_code} onChange={ev('tax_code')} onBlur={check} /></Field>
+            <Field label="Mã KH hệ thống" hint={c?.sys_last_order_date ? `Đơn cuối ${fmtDate(c.sys_last_order_date)} · không đơn ${daysBetween(c.sys_last_order_date, today())} ngày${c.sys_order_count ? ` · ${c.sys_order_count} đơn` : ''}` : 'Mã khách trên hệ thống đơn hàng, dùng cho nội dung QR'}><Input value={f.sys_code} onChange={e => set('sys_code')(e.target.value.toUpperCase())} placeholder="VD: KH1234" /></Field>
             <Field label="Email"><Input value={f.email} onChange={ev('email')} /></Field>
             <Field label="Facebook (link)"><Input value={f.facebook} onChange={ev('facebook')} /></Field>
             <Field label="Tỉnh / thành phố"><Input value={f.province} onChange={ev('province')} /></Field>
             <Field label="Địa chỉ" className="sm:col-span-2"><Input value={f.address} onChange={ev('address')} /></Field>
-            <Field label="Ông / Bà"><Select options={[['Ông', 'Ông'], ['Bà', 'Bà'], ['Anh', 'Anh'], ['Chị', 'Chị']]} value={f.salutation} onChange={set('salutation')} placeholder="—" /></Field>
-            <Field label="Người đại diện pháp luật"><Input value={f.legal_rep} onChange={ev('legal_rep')} /></Field>
-            <Field label="Địa chỉ pháp nhân" className="sm:col-span-2"><Input value={f.legal_address} onChange={ev('legal_address')} /></Field>
             <Field label="Loại khách" required><Select options={a.opts('customer_type')} value={f.customer_type} onChange={set('customer_type')} placeholder="— Chọn —" /></Field>
             <Field label="Nguồn khách" required><Select options={a.opts('source')} value={f.source} onChange={set('source')} placeholder="— Chọn —" /></Field>
             <Field label="Ngành hàng"><Select options={a.opts('industry')} value={f.industry} onChange={set('industry')} placeholder="— Chọn —" /></Field>

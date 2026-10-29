@@ -1,7 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { Modal } from '../../components/ui';
-import { CustomerPicker } from '../../components/CustomerPicker';
-import { go } from '../../state';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Empty, Input, Loading, StatusChips, toast } from '../../components/ui';
 import { db } from '../../lib/sb';
@@ -13,8 +10,7 @@ import { QUOTE_STATUS } from './Customers';
 
 const ARCH: ImportField[] = [
   { key: 'item_name', label: 'Tên hàng', required: true, aliases: ['tên sản phẩm', 'sản phẩm', 'tên sp', 'hàng hóa', 'mô tả'] },
-  { key: 'src_code', label: 'Mã báo giá', aliases: ['mã bg', 'số báo giá'] },
-  { key: 'order_code', label: 'Mã đơn', aliases: ['mã đơn hệ thống', 'mã đơn hàng'] },
+  { key: 'src_code', label: 'Mã báo giá', aliases: ['mã bg', 'số báo giá', 'mã đơn'] },
   { key: 'quote_date', label: 'Ngày báo giá', type: 'date', aliases: ['ngày', 'ngày lập'] },
   { key: 'hs_code', label: 'Mã HS', aliases: ['hs', 'hs code'] }, { key: 'unit', label: 'ĐVT', aliases: ['đơn vị', 'đơn vị tính'] },
   { key: 'qty', label: 'Số lượng', type: 'number', aliases: ['sl'] }, { key: 'price_cny', label: 'Đơn giá ¥', type: 'number', aliases: ['đơn giá ncc', 'giá tệ', 'đơn giá tệ', 'đơn giá cny'] },
@@ -26,32 +22,31 @@ const ARCH: ImportField[] = [
 
 export default function Library() {
   const a = useApp(); const [q, setQ] = useState(''); const [src, setSrc] = useState(''); const [rows, setRows] = useState<any[] | null>(null); const [page, setPage] = useState(0);
-  const [imp, setImp] = useState(false); const [tpl, setTpl] = useState<any>(null); const canImport = a.isAdmin || a.has('bgd', 'tp_kd');
+  const [imp, setImp] = useState(false); const canImport = a.isAdmin || a.has('bgd', 'tp_kd');
   const total = rows?.[0] ? Number(rows[0].total) : 0; const PER = 100;
   const load = async (p = 0) => { try { setRows(await db.rpc<any[]>('quote_library', { p_q: q.trim() || null, p_source: src || null, p_limit: PER, p_offset: p * PER })); setPage(p); } catch (e) { toast.err(e); setRows([]); } };
   useEffect(() => { const t = setTimeout(() => load(0), 400); return () => clearTimeout(t); }, [q, src]);
   const exportAll = async () => {
     try { const all = await db.rpc<any[]>('quote_library', { p_q: q.trim() || null, p_source: src || null, p_limit: 2000, p_offset: 0 });
-      await writeXlsx(`kho-bao-gia-${new Date().toISOString().slice(0, 10)}`, [['Nguồn', 'Mã BG', 'Mã đơn', 'Ngày', 'Trạng thái', 'Tên hàng', 'HS', 'ĐVT', 'SL', 'Đơn giá ¥', 'Thuế NK %', 'VAT %', 'Giá xuất / ĐV', 'Tỷ giá', 'Hình thức NK', 'Kho', 'Cước', 'Sale'],
-        ...all.map(r => [r.source === 'he_thong' ? 'Hệ thống' : 'Lưu trữ', r.code, r.order_code, r.quote_date, QUOTE_STATUS[r.status]?.[0] || '', r.item_name, r.hs_code, r.unit, num0(r.qty), num0(r.price_cny), num0(r.duty_pct), num0(r.vat_pct), num0(r.export_price), num0(r.rate), a.label('import_method', r.import_method) || r.import_method, r.warehouse, r.freight, r.sale_name])], 'Kho báo giá');
+      await writeXlsx(`kho-bao-gia-${new Date().toISOString().slice(0, 10)}`, [['Nguồn', 'Mã BG', 'Ngày', 'Trạng thái', 'Tên hàng', 'HS', 'ĐVT', 'SL', 'Đơn giá ¥', 'Thuế NK %', 'VAT %', 'Giá xuất / ĐV', 'Tỷ giá', 'Hình thức NK', 'Kho', 'Cước', 'Sale'],
+        ...all.map(r => [r.source === 'he_thong' ? 'Hệ thống' : 'Lưu trữ', r.code, r.quote_date, QUOTE_STATUS[r.status]?.[0] || '', r.item_name, r.hs_code, r.unit, num0(r.qty), num0(r.price_cny), num0(r.duty_pct), num0(r.vat_pct), num0(r.export_price), num0(r.rate), a.label('import_method', r.import_method) || r.import_method, r.warehouse, r.freight, r.sale_name])], 'Kho báo giá');
     } catch (e) { toast.err(e); }
   };
   return (
     <Layout title="Kho báo giá tham khảo" actions={<>{canImport && <Button onClick={() => setImp(true)}>⇪ Nhập báo giá cũ</Button>}<Button onClick={exportAll}>⬇ Xuất Excel</Button></>}>
-      <p className="mb-3 text-sm text-ink-500">Các mặt hàng thuộc <b>báo giá đã chốt đơn</b> (hệ thống + dữ liệu cũ) để Sale, CSKH, XNK tham khảo HS, thuế, giá xuất. <b>Không hiển thị thông tin khách hàng.</b> Bấm <b>Tạo BG tương tự</b> để làm báo giá mới cho khách khác.</p>
+      <p className="mb-3 text-sm text-ink-500">Toàn bộ dòng hàng đã từng báo giá (hệ thống + dữ liệu cũ) để Sale, CSKH, XNK tham khảo HS, thuế, giá xuất. <b>Không hiển thị thông tin khách hàng.</b></p>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Input className="max-w-md flex-1" placeholder="🔎 Tên hàng (không cần dấu), mã HS, mã BG hoặc mã đơn…" value={q} onChange={e => setQ(e.target.value)} />
-        <StatusChips value={src} onChange={setSrc} items={[['', 'Tất cả', total && !src ? total : 0, 'dark'], ['he_thong', 'Đã chốt trên hệ thống', src === 'he_thong' ? total : 0, 'purple'], ['luu_tru', 'Dữ liệu cũ', src === 'luu_tru' ? total : 0, 'teal']]} />
+        <Input className="max-w-md flex-1" placeholder="🔎 Gõ tên hàng (không cần dấu) hoặc mã HS…" value={q} onChange={e => setQ(e.target.value)} />
+        <StatusChips value={src} onChange={setSrc} items={[['', 'Tất cả', total && !src ? total : 0, 'dark'], ['he_thong', 'Báo giá trên hệ thống', src === 'he_thong' ? total : 0, 'purple'], ['luu_tru', 'Dữ liệu cũ', src === 'luu_tru' ? total : 0, 'teal']]} />
       </div>
       <div className="rounded-2xl border border-ink-200 bg-white shadow-soft">
         {!rows ? <Loading /> : !rows.length ? <Empty>Không tìm thấy dòng hàng phù hợp</Empty> : <>
           <ul className="divide-y divide-ink-100 md:hidden">{rows.map((r, i) => <li key={i} className="px-3 py-2.5 text-sm">
             <div className="font-semibold leading-snug">{r.item_name}</div>
             <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-ink-500"><span>HS <b className="text-ink-800">{r.hs_code || '—'}</b></span><span>NK {num(r.duty_pct)}% · VAT {num(r.vat_pct)}%</span><span>¥{num(r.price_cny)}</span><span>Xuất <b className="text-ink-800">{money(r.export_price)}</b></span></div>
-            <div className="flex items-center justify-between gap-2"><span className="text-[11px] text-ink-400">{r.code}{r.order_code && <b className="text-brand-700"> · {r.order_code}</b>} · {fmtDate(r.quote_date)} · {r.sale_name}</span>
-              <button className="shrink-0 rounded-lg border border-brand-200 px-2 py-0.5 text-[11px] font-semibold text-brand-700" onClick={() => setTpl(r)}>+ Tạo BG tương tự</button></div>{r.freight && <div className="text-[11px] text-ink-500">Cước {r.freight}</div>}</li>)}</ul>
+            <div className="text-[11px] text-ink-400">{r.code} · {fmtDate(r.quote_date)} · {r.sale_name}</div></li>)}</ul>
           <div className="hidden overflow-x-auto md:block"><table className="w-full text-sm">
-            <thead><tr className="border-b border-ink-200 bg-ink-50 text-left text-xs text-ink-500">{['Tên hàng', 'HS', 'ĐVT', 'SL', 'Đơn giá ¥', 'Thuế NK', 'VAT', 'Giá xuất / ĐV', 'Tỷ giá', 'Hình thức · kho · cước', 'Báo giá · mã đơn'].map(h => <th key={h} className="whitespace-nowrap px-3 py-2 font-semibold">{h}</th>)}</tr></thead>
+            <thead><tr className="border-b border-ink-200 bg-ink-50 text-left text-xs text-ink-500">{['Tên hàng', 'HS', 'ĐVT', 'SL', 'Đơn giá ¥', 'Thuế NK', 'VAT', 'Giá xuất / ĐV', 'Tỷ giá', 'Hình thức · kho · cước', 'Báo giá'].map(h => <th key={h} className="whitespace-nowrap px-3 py-2 font-semibold">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-ink-100">{rows.map((r, i) => <tr key={i} className="align-top hover:bg-ink-50/60">
               <td className="min-w-[280px] max-w-[420px] px-3 py-2">{r.item_name}{q && r.score < 0.99 && <span className="ml-1 text-[10px] text-ink-300">{Math.round(r.score * 100)}%</span>}</td>
               <td className="whitespace-nowrap px-3 py-2 font-semibold">{r.hs_code}</td><td className="px-3 py-2">{r.unit}</td>
@@ -59,15 +54,13 @@ export default function Library() {
               <td className="px-3 py-2 text-right">{r.duty_pct !== null && `${num(r.duty_pct)}%`}</td><td className="px-3 py-2 text-right">{r.vat_pct !== null && `${num(r.vat_pct)}%`}</td>
               <td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums">{money(r.export_price)}</td><td className="px-3 py-2 text-right tabular-nums">{money(r.rate)}</td>
               <td className="max-w-[220px] px-3 py-2 text-xs text-ink-600">{[a.label('import_method', r.import_method) || r.import_method, r.warehouse, r.freight].filter(Boolean).join(' · ')}</td>
-              <td className="whitespace-nowrap px-3 py-2 text-xs"><Badge color={r.source === 'he_thong' ? 'purple' : 'teal'}>{r.source === 'he_thong' ? r.code : (r.code || 'Lưu trữ')}</Badge>{r.order_code && <div className="mt-0.5 font-bold text-brand-700">{r.order_code}</div>}
-                <div className="mt-0.5 text-ink-400">{fmtDate(r.quote_date)}{r.sale_name && ` · ${r.sale_name}`}</div>
-                <button className="mt-1 whitespace-nowrap rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-100" onClick={() => setTpl(r)}>+ Tạo BG tương tự</button></td>
+              <td className="whitespace-nowrap px-3 py-2 text-xs"><Badge color={r.source === 'he_thong' ? 'purple' : 'teal'}>{r.source === 'he_thong' ? r.code : (r.code || 'Lưu trữ')}</Badge>
+                <div className="mt-0.5 text-ink-400">{fmtDate(r.quote_date)}{r.sale_name && ` · ${r.sale_name}`}</div></td>
             </tr>)}</tbody></table></div>
           <div className="flex items-center justify-between border-t border-ink-100 px-4 py-2 text-xs text-ink-500"><span>{num(total)} dòng · trang {page + 1}/{Math.max(1, Math.ceil(total / PER))}</span>
             <span className="flex gap-1"><Button size="sm" disabled={page === 0} onClick={() => load(page - 1)}>‹ Trước</Button><Button size="sm" disabled={(page + 1) * PER >= total} onClick={() => load(page + 1)}>Sau ›</Button></span></div>
         </>}
       </div>
-      {tpl && <SimilarQuote row={tpl} onClose={() => setTpl(null)} />}
       <ImportWizard open={imp} onClose={() => setImp(false)} title="Nhập dữ liệu báo giá cũ vào kho tham khảo" fields={ARCH} sampleName="mau-bao-gia-cu"
         note={<>Mỗi dòng là một mặt hàng đã báo giá. <b>Không nhập thông tin khách hàng</b> — kho này mọi nhân sự đều xem được.</>}
         onImport={async rs => { for (let i = 0; i < rs.length; i += 500) await db.from('quote_archive').insert(rs.slice(i, i + 500).map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v === '' ? null : v])))); load(0); return <b>Đã nhập {rs.length} dòng vào kho báo giá.</b>; }} />
@@ -75,23 +68,3 @@ export default function Library() {
   );
 }
 const num0 = (v: any) => (v === null || v === undefined || v === '' ? '' : Number(v));
-
-function SimilarQuote({ row, onClose }: { row: any; onClose: () => void }) {
-  const [c, setC] = useState<any>(null); const [all, setAll] = useState(false); const [busy, setBusy] = useState(false);
-  const make = async () => {
-    if (!c) { toast.err('Chọn khách hàng'); return; }
-    setBusy(true);
-    try { const t = await db.rpc('quote_template', { p_source: row.source, p_ref: row.ref, p_all: all }); sessionStorage.setItem('nt_tpl', JSON.stringify(t)); go(`/crm/quote?customer=${c.id}&tpl=1`); }
-    catch (e) { toast.err(e); setBusy(false); }
-  };
-  return (
-    <Modal open onClose={onClose} title="Tạo báo giá tương tự" size="sm" footer={<Button variant="primary" loading={busy} onClick={make}>Tạo báo giá</Button>}>
-      <div className="space-y-3 text-sm">
-        <div className="rounded-xl bg-ink-50 p-3"><div className="font-semibold">{row.item_name}</div><div className="text-xs text-ink-500">Từ {row.code}{row.order_code && ` · đơn ${row.order_code}`} · HS {row.hs_code || '—'}</div></div>
-        <div><div className="mb-1 text-xs font-semibold text-ink-600">Báo giá cho khách</div><CustomerPicker value={c} onChange={setC} /></div>
-        {row.source === 'he_thong' && <label className="flex items-center gap-2"><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} /> Lấy tất cả mặt hàng của báo giá {row.code}</label>}
-        <p className="text-xs text-ink-500">Hệ thống lấy tham số báo giá cũ (hình thức NK, phí, cước…) và dòng hàng; tỷ giá lấy theo hôm nay. Sale kiểm tra lại số lượng, giá NCC, cân nặng trước khi gửi.</p>
-      </div>
-    </Modal>
-  );
-}

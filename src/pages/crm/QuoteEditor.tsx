@@ -12,7 +12,6 @@ import { AptSheet } from '../../components/AptSheet';
 import { noAccent } from '../../lib/format';
 
 const LOCKED = ['da_chot', 'tu_choi', 'het_han', 'da_thay_the'];
-export const khoOf = (w?: string | null) => !w ? '' : /hcm|ho chi minh|hồ chí minh|sài gòn|sai gon/i.test(w) ? 'HCM' : /hà nội|ha noi|hn\b/i.test(w) ? 'HN' : '';
 const emptyLine = (): QuoteLine => ({ name: '', spec: '', hs_code: '', unit: 'Chiếc', qty: 0, unit_price_cny: 0, duty_pct: 0, vat_pct: null, freight_pct: null, manual_price: null });
 
 export default function QuoteEditor() {
@@ -35,25 +34,14 @@ export default function QuoteEditor() {
       const q = await db.from('quotations').select('*').eq('id', id).maybeSingle();
       if (!q) { toast.err('Không tìm thấy báo giá'); go('/crm/quotes'); return; }
       const ls: any[] = await db.from('quotation_lines').select('*').eq('quotation_id', id).order('line_no');
-      const c = await db.from('customers').select('id,code,sys_code,sys_username,sys_warehouse,contact_name,company_name,phone,zalo,import_method').eq('id', q.customer_id).maybeSingle();
+      const c = await db.from('customers').select('id,code,sys_code,contact_name,company_name,phone,zalo,import_method').eq('id', q.customer_id).maybeSingle();
       setQuote(q); setCustomer(c); setH({ ...defaultHeader(qd), ...q.header }); setNote(q.note || '');
       setLines(ls.length ? ls.map(l => ({ name: l.name, spec: l.spec, hs_code: l.hs_code, unit: l.unit, qty: Number(l.qty), unit_price_cny: Number(l.unit_price_cny), duty_pct: Number(l.duty_pct), vat_pct: l.vat_pct === null ? null : Number(l.vat_pct), freight_pct: l.freight_pct === null ? null : Number(l.freight_pct), manual_price: l.manual_price === null ? null : Number(l.manual_price) })) : [emptyLine()]);
     } else {
       setQuote(null); setLines([emptyLine()]); setNote('');
       setH({ ...defaultHeader(qd), tyGia: rates.current.ban || qd.tyGia || 4015, tyGiaVon: rates.current.von || 3955 });
-      if (query.customer) { const c = await db.from('customers').select('id,code,sys_code,sys_username,sys_warehouse,contact_name,company_name,phone,zalo,import_method').eq('id', query.customer).maybeSingle(); setCustomer(c); if (c?.import_method) setH(x => ({ ...x, hinhThucNK: c.import_method })); const k = khoOf(c?.sys_warehouse); if (k) setH(x => ({ ...x, khoNhan: k })); }
-      if (query.tpl === '1') {
-        try {
-          const tpl = JSON.parse(sessionStorage.getItem('nt_tpl') || 'null'); sessionStorage.removeItem('nt_tpl');
-          if (tpl) {
-            setH(x => ({ ...x, ...tpl.header, tyGia: x.tyGia, tyGiaVon: x.tyGiaVon, maDonHeThong: '', khoNhan: x.khoNhan || tpl.header?.khoNhan }));
-            setLines((tpl.lines || []).map((l: any) => ({ ...emptyLine(), ...l, qty: Number(l.qty) || 0, unit_price_cny: Number(l.unit_price_cny) || 0, duty_pct: Number(l.duty_pct) || 0,
-              vat_pct: l.vat_pct === null || l.vat_pct === undefined ? null : Number(l.vat_pct), freight_pct: l.freight_pct === null || l.freight_pct === undefined ? null : Number(l.freight_pct) })));
-            setNote(`Tham khảo ${tpl.from}`); toast.ok(`Đã lấy dữ liệu từ ${tpl.from} — kiểm tra lại số lượng, giá, cân nặng trước khi gửi`);
-          }
-        } catch { /* */ }
-      }
-      if (!query.customer) setCustomer(null);
+      if (query.customer) { const c = await db.from('customers').select('id,code,sys_code,contact_name,company_name,phone,zalo,import_method').eq('id', query.customer).maybeSingle(); setCustomer(c); if (c?.import_method) setH(x => ({ ...x, hinhThucNK: c.import_method })); }
+      else setCustomer(null);
     }
     setLoading(false);
   };
@@ -129,7 +117,7 @@ export default function QuoteEditor() {
               <span className="ml-auto" /><Button size="sm" onClick={() => go('/crm/quotes')}>Về danh sách</Button>
             </div>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
-              <Field label="Khách hàng" required className="col-span-2 md:col-span-3"><CustomerPicker value={customer} onChange={c => { setCustomer(c); const k = khoOf(c?.sys_warehouse); if (k) setH(x => ({ ...x, khoNhan: k })); }} disabled={dis || !!quote} /></Field>
+              <Field label="Khách hàng" required className="col-span-2 md:col-span-3"><CustomerPicker value={customer} onChange={setCustomer} disabled={dis || !!quote} /></Field>
               <Field label="Mã đơn hệ thống"><Input disabled={dis} placeholder="VD: NT1234" value={h.maDonHeThong || ''} onChange={e => set('maDonHeThong')(e.target.value.toUpperCase())} /></Field>
               <Field label="Tỷ giá RMB/VND" required><NumInput disabled={dis} value={h.tyGia} onChange={set('tyGia')} /></Field>
               <Field label="Kho nhận"><Select disabled={dis} options={a.opts('warehouse')} value={h.khoNhan} onChange={set('khoNhan')} /></Field>
