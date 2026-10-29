@@ -47,7 +47,7 @@ export default function Tickets() {
 function NewTicket({ onClose, onDone }: { onClose: () => void; onDone: (id: string) => void }) {
   const a = useApp(); const [f, setF] = useState({ type: '', priority: 'binh_thuong', title: '', description: '', customer_text: '', order_code: '' });
   const [imgs, setImgs] = useState<Blob[]>([]); const { busy, run } = useAction();
-  const addFiles = async (files: FileList | File[]) => { const out: Blob[] = []; for (const f of Array.from(files)) if (f.type.startsWith('image/')) out.push(await compressImage(f, 1600, 400)); setImgs(x => [...x, ...out].slice(0, 5)); };
+  const addFiles = async (files: FileList | File[]) => { const out: Blob[] = []; for (const f of Array.from(files)) if (f.type.startsWith('image/')) out.push(await compressImage(f, 1600, 190)); setImgs(x => [...x, ...out].slice(0, 5)); };
   const send = () => run(async () => {
     if (!f.type || !f.title.trim() || f.description.trim().length < 5) throw new Error('Chọn loại, nhập tiêu đề và nội dung');
     const paths: string[] = [];

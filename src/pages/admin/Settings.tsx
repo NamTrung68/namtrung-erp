@@ -3,6 +3,8 @@ import { Layout } from '../../components/Layout';
 import { Badge, Button, Card, Chips, Empty, Field, Input, NumInput, Select, Table, Td, Tabs, toast, useAction, useLoad } from '../../components/ui';
 import { db, storage } from '../../lib/sb';
 import { CARD_COLORS, LoginCard, LoginContent } from '../../lib/greeting';
+import { ROLES } from './Users';
+import { prepareUpload } from '../../lib/image';
 import { useApp } from '../../state';
 import { BANKS } from '../../lib/vietqr';
 import { fmtDate, fmtDateTime, money } from '../../lib/format';
@@ -30,7 +32,7 @@ export default function Settings() {
     <Layout title="Cấu hình hệ thống">
       <Tabs value={tab} onChange={setTab} tabs={tabs} />
       <div className="mt-4 max-w-4xl">
-        {tab === 'telegram' && <Telegram />}{tab === 'quote' && <QuoteCfg />}{tab === 'company' && <Company />}{tab === 'attendance' && <AttendanceCfg />}
+        {tab === 'telegram' && <Telegram />}{tab === 'quote' && <QuoteCfg />}{tab === 'quote' && a.isAdmin && <LibraryCfg />}{tab === 'company' && <Company />}{tab === 'attendance' && <AttendanceCfg />}
         {tab === 'holidays' && <Holidays />}{tab === 'payroll' && <PayrollCfg />}{tab === 'crm' && <CrmCfg />}{tab === 'lookups' && <Lookups />}{tab === 'org' && <Org />}{tab === 'login' && <LoginCfg />}{tab === 'payroll' && <InventoryCfg />}
       </div>
     </Layout>
@@ -139,7 +141,9 @@ function AttendanceCfg() {
           <Button onClick={() => { if (ip.trim()) { s.set('ip_whitelist')([...list, ip.trim()]); setIp(''); } }}>Thêm</Button>
           {my?.ip && <Button onClick={() => !list.includes(my.ip) && s.set('ip_whitelist')([...list, my.ip])}>Thêm IP hiện tại</Button>}</div>
       </Field>
-      <p className="mt-3 text-xs text-ink-500">Chấm ngoài IP vẫn được ghi nhận nhưng gắn cờ chờ quản lý xác nhận (không chặn), vì IP nhà mạng có thể đổi. Quỹ phút vượt mức: phần vượt không tính lương — không có phạt tiền.</p>
+      <Field label="Khi chấm công ngoài IP công ty" className="mt-4 max-w-md">
+        <Select options={[['block', '⛔ Chặn — phải ở mạng văn phòng mới chấm được'], ['flag', '⏳ Cho chấm, chờ quản lý xác nhận (không chặn)']]} value={s.v.outside_ip || 'flag'} onChange={s.set('outside_ip')} /></Field>
+      <p className="mt-2 text-xs text-ink-500">{(s.v.outside_ip || 'flag') === 'block' ? 'Nhân viên ngoài mạng công ty sẽ thấy thông báo và không chấm được. Lưu ý: IP nhà mạng có thể đổi — khi đổi mạng, vào đây bấm "Thêm IP hiện tại". Đi công tác / gặp khách tạo đơn ở mục Xin nghỉ.' : 'Chấm ngoài IP vẫn được ghi nhận nhưng gắn cờ, quản lý xác nhận ✓ hoặc từ chối ✕ ở Bảng chấm công nhân sự.'} Chỉ áp dụng khi đã khai báo IP ở trên. Quỹ phút vượt mức: phần vượt không tính lương — không có phạt tiền.</p>
       <Button className="mt-4" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>
     </Card>
   );
@@ -259,7 +263,7 @@ function LoginCfg() {
   const [ms, setMs] = useState((a.settings.login_screen?.messages || []).join('\n'));
   const cards: LoginCard[] = v.cards || [];
   const setCard = (i: number, patch: Partial<LoginCard>) => setV(x => ({ ...x, cards: cards.map((c, j) => j === i ? { ...c, ...patch } : c) }));
-  const upload = async (file: File) => { const path = `login/${Date.now()}-${file.name.replace(/[^\w.\-]/g, '_')}`; await storage.upload('branding', path, file); return storage.publicUrl('branding', path); };
+  const upload = async (raw: File) => { const file = await prepareUpload(raw); const path = `login/${Date.now()}-${file.name.replace(/[^\w.\-]/g, '_')}`; await storage.upload('branding', path, file); return storage.publicUrl('branding', path); };
   const lines = (t: string) => t.split('\n').map(x => x.trim()).filter(Boolean);
   const save = () => run(async () => { await db.rpc('set_login_screen', { p_value: { ...v, headlines: lines(hl), messages: lines(ms) } }); await a.reload(); }, 'Đã lưu màn hình đăng nhập');
   return (
@@ -304,4 +308,13 @@ function InventoryCfg() {
   return <Card title="Cảnh báo trùng hàng tồn kho"><div className="grid gap-3 sm:grid-cols-3">
     <Field label="Ngưỡng giống nhau (0–1)" hint="0,5 = khá giống. Tăng lên để ít cảnh báo hơn, giảm xuống để bắt rộng hơn."><NumInput value={s.v.match_threshold} onChange={s.set('match_threshold')} /></Field>
   </div><Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button></Card>;
+}
+
+function LibraryCfg() {
+  const s = useSetting('library'); const roles: string[] = s.v.freight_roles || [];
+  return <Card title="Kho báo giá tham khảo · quyền xem cước" className="mt-4">
+    <p className="mb-2 text-xs text-ink-500">Chọn vai trò được xem cột Cước (đơn giá kg / m³) và lấy cước khi “Tạo báo giá tương tự”. Admin luôn xem được.</p>
+    <Chips options={ROLES.filter(r => r[0] !== 'admin')} value={roles} onChange={s.set('freight_roles')} />
+    <Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>
+  </Card>;
 }

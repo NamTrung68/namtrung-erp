@@ -49,3 +49,10 @@ npm run build            # → dist/
 - Duyệt phá khung giá: Trưởng phòng KD trở lên. Duyệt nghỉ/đơn công: quản lý trực tiếp hoặc người được ủy quyền, HCNS.
 - Lương: chính chủ, quản lý cấp trên, HCNS, Kế toán, BGĐ.
 - Chứng từ: Chuyên viên trở lên và Kế toán. Nhân viên, Thử việc không xem.
+
+## Sao lưu & khôi phục
+
+- **Database**: *Dữ liệu · Nhật ký → Sao lưu & khôi phục*. Mỗi bản sao lưu là 1 schema `bk_YYYYMMDD_HHMMSS` (giữ 5 bản gần nhất). Mỗi migration nâng cấp tự tạo 1 bản trước khi thay đổi.
+  Khôi phục 1 bảng: SQL Editor → `select public.backup_restore_table('bk_…', 'customers');`
+- **Tải về máy**: nút "Tải file sao lưu (.zip)" — JSON từng bảng, nên cất lên Google Drive hằng tuần.
+- **Phần mềm**: mỗi bản có nhánh `backup-ban-N` trên GitHub. Quay lại: chạy lại workflow *Test & Deploy* trên nhánh đó, hoặc `git revert` các commit sau nó.

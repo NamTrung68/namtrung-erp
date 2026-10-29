@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, cx, Empty, Field, Input, Loading, Modal, NumInput, Select, StatusChips, Tabs, Textarea, toast, useAction, useLoad, ask } from '../../components/ui';
 import { db, storage } from '../../lib/sb';
+import { isUrl, prepareUpload } from '../../lib/image';
 import { go, useApp, useRoute } from '../../state';
 import { addDays, daysBetween, fmtDate, money, today } from '../../lib/format';
 
@@ -135,7 +136,8 @@ function InfoTab({ id, can, onChanged }: { id: string; can: boolean; onChanged: 
 }
 
 async function openFile(path: string) { try { window.open(await storage.signedUrl('hr', path, 300), '_blank'); } catch (e) { toast.err(e); } }
-async function uploadHr(id: string, file: File) { const path = `${id}/${Date.now()}-${file.name.replace(/[^\w.\-]/g, '_')}`; await storage.upload('hr', path, file); return path; }
+async function uploadHr(id: string, raw: File) { const file = await prepareUpload(raw); const path = `${id}/${Date.now()}-${file.name.replace(/[^\w.\-]/g, '_')}`; await storage.upload('hr', path, file); return path; }
+const LinkBtn = ({ url }: { url?: string | null }) => url ? <a className="inline-flex items-center rounded-lg border border-ink-200 px-2.5 py-1 text-xs font-semibold text-brand-700 hover:bg-ink-50" href={url} target="_blank" rel="noreferrer">🔗 Mở link</a> : null;
 
 function Contracts({ id, can, onChanged }: { id: string; can: boolean; onChanged: () => void }) {
   const { data, loading, reload } = useLoad(() => db.from('hr_contracts').select('*').eq('profile_id', id).order('start_date', { asc: false }), [id]);
@@ -149,7 +151,7 @@ function Contracts({ id, can, onChanged }: { id: string; can: boolean; onChanged
       return <div key={c.id} className={cx('rounded-2xl border p-3', c.status === 'hieu_luc' ? 'border-emerald-200 bg-emerald-50/40' : 'border-ink-200')}>
         <div className="flex flex-wrap items-center gap-2"><b>{CT[c.contract_type]}</b>{c.contract_no && <span className="text-sm text-ink-500">số {c.contract_no}</span>}<Badge color={CST[c.status][1]}>{CST[c.status][0]}</Badge>
           {c.status === 'hieu_luc' && left !== null && left <= 30 && <Badge color="solidred">Còn {left} ngày</Badge>}
-          <span className="ml-auto flex gap-1">{c.file_path && <Button size="sm" onClick={() => openFile(c.file_path)}>Xem file</Button>}{can && <Button size="sm" onClick={() => setEdit(c)}>Sửa</Button>}</span></div>
+          <span className="ml-auto flex gap-1"><LinkBtn url={c.file_url} />{c.file_path && <Button size="sm" onClick={() => openFile(c.file_path)}>Xem file</Button>}{can && <Button size="sm" onClick={() => setEdit(c)}>Sửa</Button>}</span></div>
         {c.title && <div className="text-sm">{c.title}</div>}
         <div className="mt-1 grid grid-cols-2 gap-x-4 text-sm sm:grid-cols-4">
           <span><span className="text-xs text-ink-400">Hiệu lực</span><br />{fmtDate(c.start_date)} → {c.end_date ? fmtDate(c.end_date) : 'không thời hạn'}</span>
@@ -169,6 +171,7 @@ function ContractModal({ id, c, onClose, onSaved }: { id: string; c: any; onClos
   const setType = (t: string) => setF((x: any) => ({ ...x, contract_type: t, end_date: x.id ? x.end_date : endFor(t, x.start_date) }));
   const save = () => run(async () => {
     if (!f.start_date) throw new Error('Nhập ngày bắt đầu');
+    if (f.file_url && !isUrl(f.file_url)) throw new Error('Link không hợp lệ (phải bắt đầu bằng https://)');
     const body: any = { ...f, profile_id: id }; ['created_at', 'updated_at', 'created_by'].forEach(k => delete body[k]);
     for (const k of Object.keys(body)) if (body[k] === '') body[k] = null;
     if (file) body.file_path = await uploadHr(id, file);
@@ -189,7 +192,8 @@ function ContractModal({ id, c, onClose, onSaved }: { id: string; c: any; onClos
       <Field label="Lương đóng bảo hiểm"><NumInput value={f.insurance_salary} onChange={s('insurance_salary')} /></Field>
       <Field label="Phụ cấp"><NumInput value={f.allowance} onChange={s('allowance')} /></Field>
       <Field label="Trạng thái"><Select options={Object.entries(CST).map(([k, v]) => [k, v[0]])} value={f.status} onChange={s('status')} /></Field>
-      <Field label="File hợp đồng đã ký (PDF/ảnh)" className="sm:col-span-2" hint={f.file_path ? 'Đã có file — chọn file mới để thay' : undefined}><input type="file" accept=".pdf,image/*,.doc,.docx" onChange={e => setFile(e.target.files?.[0] || null)} className="text-sm" /></Field>
+      <Field label="Link hợp đồng trên Google Drive" className="sm:col-span-2" hint="Khuyên dùng: tải bản scan lên Drive rồi dán link — tiết kiệm dung lượng"><Input value={f.file_url || ''} onChange={e => s('file_url')(e.target.value.trim())} placeholder="https://drive.google.com/…" /></Field>
+      <Field label="Hoặc tải file (ảnh tự nén ~200 KB, PDF tối đa 5 MB)" className="sm:col-span-2" hint={f.file_path ? 'Đã có file — chọn file mới để thay' : undefined}><input type="file" accept=".pdf,image/*,.doc,.docx" onChange={e => setFile(e.target.files?.[0] || null)} className="text-sm" /></Field>
       <Field label="Ghi chú" className="sm:col-span-2"><Textarea rows={2} value={f.note || ''} onChange={e => s('note')(e.target.value)} /></Field>
     </div>
     <p className="mt-2 text-xs text-ink-500">Hệ thống tự nhắc HCNS trước 30 và 7 ngày khi hợp đồng sắp hết hạn. Lương trong hợp đồng chỉ để lưu hồ sơ; lương tính phiếu lương vẫn lấy ở Nhân sự & phân quyền.</p>
@@ -203,6 +207,7 @@ function Agreements({ id, can }: { id: string; can: boolean }) {
   const s = (k: string) => (v: any) => setEdit((x: any) => ({ ...x, [k]: v }));
   const save = () => run(async () => {
     if (!edit.title?.trim()) throw new Error('Nhập tiêu đề thỏa thuận');
+    if (edit.file_url && !isUrl(edit.file_url)) throw new Error('Link không hợp lệ (phải bắt đầu bằng https://)');
     const body: any = { ...edit, profile_id: id }; ['created_at', 'updated_at', 'created_by'].forEach(k => delete body[k]);
     for (const k of Object.keys(body)) if (body[k] === '') body[k] = null;
     if (!top) body.confidential = false;
@@ -218,7 +223,7 @@ function Agreements({ id, can }: { id: string; can: boolean }) {
     {!rows.length ? <Empty>Chưa có thỏa thuận riêng</Empty> : rows.map(x => { const active = !x.effective_to || x.effective_to >= today();
       return <div key={x.id} className={cx('rounded-2xl border p-3', active ? 'border-brand-200 bg-brand-50/40' : 'border-ink-200 opacity-70')}>
         <div className="flex flex-wrap items-center gap-2"><Badge color="purple">{AK[x.kind]}</Badge><b>{x.title}</b>{x.confidential && <Badge color="red">🔒 Mật</Badge>}{!active && <Badge>Hết hiệu lực</Badge>}
-          <span className="ml-auto flex gap-1">{x.file_path && <Button size="sm" onClick={() => openFile(x.file_path)}>Xem file</Button>}{can && (top || !x.confidential) && <Button size="sm" onClick={() => { setFile(null); setEdit(x); }}>Sửa</Button>}</span></div>
+          <span className="ml-auto flex gap-1"><LinkBtn url={x.file_url} />{x.file_path && <Button size="sm" onClick={() => openFile(x.file_path)}>Xem file</Button>}{can && (top || !x.confidential) && <Button size="sm" onClick={() => { setFile(null); setEdit(x); }}>Sửa</Button>}</span></div>
         <div className="mt-1 text-xs text-ink-500">{x.effective_from ? `Từ ${fmtDate(x.effective_from)}` : ''}{x.effective_to ? ` đến ${fmtDate(x.effective_to)}` : x.effective_from ? ' · không thời hạn' : ''}{x.amount ? <> · Giá trị <b className="text-ink-800">{money(x.amount)}</b></> : ''} · lập bởi {a.personName(x.created_by)}</div>
         {x.content && <p className="mt-1 whitespace-pre-wrap text-sm">{x.content}</p>}
       </div>; })}
@@ -231,7 +236,8 @@ function Agreements({ id, can }: { id: string; can: boolean }) {
         <Field label="Nội dung thỏa thuận" className="sm:col-span-2"><Textarea rows={4} value={edit.content || ''} onChange={e => s('content')(e.target.value)} /></Field>
         <Field label="Hiệu lực từ"><Input type="date" value={edit.effective_from || ''} onChange={e => s('effective_from')(e.target.value)} /></Field>
         <Field label="Đến (để trống = không thời hạn)"><Input type="date" value={edit.effective_to || ''} onChange={e => s('effective_to')(e.target.value)} /></Field>
-        <Field label="File đính kèm" className="sm:col-span-2"><input type="file" onChange={e => setFile(e.target.files?.[0] || null)} className="text-sm" /></Field>
+        <Field label="Link Google Drive" className="sm:col-span-2"><Input value={edit.file_url || ''} onChange={e => s('file_url')(e.target.value.trim())} placeholder="https://drive.google.com/…" /></Field>
+        <Field label="Hoặc tải file (ảnh tự nén ~200 KB)" className="sm:col-span-2"><input type="file" accept=".pdf,image/*,.doc,.docx" onChange={e => setFile(e.target.files?.[0] || null)} className="text-sm" /></Field>
         {top && <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={!!edit.confidential} onChange={e => s('confidential')(e.target.checked)} /> 🔒 Mật — HCNS không xem được, chỉ BGĐ/Admin và nhân viên</label>}
       </div>
     </Modal>}
@@ -244,10 +250,15 @@ function Docs({ id, can, onChanged }: { id: string; can: boolean; onChanged: () 
   const types = a.opts('hr_doc'); const meta = (code: string) => a.lookups.find(l => l.category === 'hr_doc' && l.code === code)?.extra || {};
   const rows = (data as any[]) || [];
   const up = (type: string, files: FileList | null) => files?.length && run(async () => {
-    for (const file of Array.from(files)) { const path = await uploadHr(id, file); await db.from('hr_documents').insert({ profile_id: id, doc_type: type, file_path: path, file_name: file.name, title: a.label('hr_doc', type) }); }
+    for (const file of Array.from(files)) { const path = await uploadHr(id, file); await db.from('hr_documents').insert({ profile_id: id, doc_type: type, file_path: path, file_name: path.split('/').pop()!.replace(/^\d+-/, ''), title: a.label('hr_doc', type) }); }
     reload(); onChanged();
   }, 'Đã tải lên');
-  const del = async (d: any) => { if (await ask({ title: `Xóa ${d.file_name}?`, danger: true, ok: 'Xóa' })) run(async () => { await storage.remove('hr', [d.file_path]).catch(() => {}); await db.from('hr_documents').delete().eq('id', d.id); reload(); onChanged(); }, 'Đã xóa'); };
+  const addLink = async (type: string) => {
+    const url = await ask({ title: `Thêm link · ${a.label('hr_doc', type)}`, input: { label: 'Link Google Drive', placeholder: 'https://drive.google.com/…', required: true } });
+    if (!url) return; if (!isUrl(url)) { toast.err('Link không hợp lệ'); return; }
+    run(async () => { await db.from('hr_documents').insert({ profile_id: id, doc_type: type, file_url: url.trim(), file_name: 'Link Drive', title: a.label('hr_doc', type) }); reload(); onChanged(); }, 'Đã thêm link');
+  };
+  const del = async (d: any) => { if (await ask({ title: `Xóa ${d.file_name}?`, danger: true, ok: 'Xóa' })) run(async () => { if (d.file_path) await storage.remove('hr', [d.file_path]).catch(() => {}); await db.from('hr_documents').delete().eq('id', d.id); reload(); onChanged(); }, 'Đã xóa'); };
   if (loading) return <Loading />;
   const need = types.filter(([k]) => meta(k).required); const have = need.filter(([k]) => rows.some(r => r.doc_type === k)).length;
   return <div className="space-y-3">
@@ -257,9 +268,11 @@ function Docs({ id, can, onChanged }: { id: string; can: boolean; onChanged: () 
       return <li key={k} className="px-3 py-2.5">
         <div className="flex flex-wrap items-center gap-2"><span className={cx('grid h-5 w-5 place-items-center rounded-full text-[11px] font-bold', fs.length ? 'bg-emerald-500 text-white' : meta(k).required ? 'bg-pink-100 text-pink-700' : 'bg-ink-100 text-ink-400')}>{fs.length ? '✓' : meta(k).required ? '!' : '·'}</span>
           <b className="text-sm">{l}</b>{meta(k).required && !fs.length && <span className="text-xs text-pink-700">còn thiếu</span>}
-          {can && <label className="ml-auto cursor-pointer rounded-lg border border-ink-200 px-2 py-1 text-xs font-semibold hover:bg-ink-50">{busy ? 'Đang tải…' : '+ Tải lên'}<input type="file" multiple className="hidden" onChange={e => { up(k, e.target.files); e.target.value = ''; }} /></label>}</div>
+          {can && <button className="ml-auto rounded-lg border border-ink-200 px-2 py-1 text-xs font-semibold hover:bg-ink-50" onClick={() => addLink(k)}>🔗 Link</button>}
+          {can && <label className="cursor-pointer rounded-lg border border-ink-200 px-2 py-1 text-xs font-semibold hover:bg-ink-50">{busy ? 'Đang tải…' : '+ Tải lên'}<input type="file" multiple className="hidden" onChange={e => { up(k, e.target.files); e.target.value = ''; }} /></label>}</div>
         {fs.length > 0 && <div className="mt-1.5 flex flex-wrap gap-1.5 pl-7">{fs.map(d => <span key={d.id} className="inline-flex items-center gap-1 rounded-lg bg-ink-50 px-2 py-1 text-xs">
-          <button className="max-w-[220px] truncate font-medium text-brand-700 hover:underline" onClick={() => openFile(d.file_path)}>{d.file_name}</button><span className="text-ink-400">{fmtDate(d.created_at)}</span>
+          {d.file_url ? <a className="max-w-[220px] truncate font-medium text-brand-700 hover:underline" href={d.file_url} target="_blank" rel="noreferrer">🔗 {d.file_name || 'Link'}</a>
+            : <button className="max-w-[220px] truncate font-medium text-brand-700 hover:underline" onClick={() => openFile(d.file_path)}>{d.file_name}</button>}<span className="text-ink-400">{fmtDate(d.created_at)}</span>
           {can && <button className="text-ink-400 hover:text-red-600" onClick={() => del(d)}>✕</button>}</span>)}</div>}
       </li>; })}</ul>
   </div>;

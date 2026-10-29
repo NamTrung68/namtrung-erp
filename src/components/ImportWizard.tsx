@@ -17,11 +17,14 @@ export function ImportWizard({ open, onClose, title, fields, note, onImport, opt
   const [busy, setBusy] = useState(false); const [result, setResult] = useState<React.ReactNode>(null); const [fname, setFname] = useState('');
   const headers = raw ? (raw[hdr] || []).map((h, i) => [String(i), `${String.fromCharCode(65 + (i % 26))} · ${h ?? ''}`] as [string, string]) : [];
   const autoMap = (rows: any[][], h: number) => {
-    const hs = (rows[h] || []).map(norm); const m: Record<string, string> = {};
+    const hs = (rows[h] || []).map(norm); const m: Record<string, string> = {}; const used = new Set<number>();
+    const keysOf = (f: ImportField) => [f.label, ...(f.aliases || [])].map(norm);
+    // lượt 1: trùng khớp tên cột; lượt 2: gần đúng (bỏ qua tên quá ngắn như "Tên", "Họ")
+    for (const f of fields) { const i = hs.findIndex((x, j) => !used.has(j) && x && keysOf(f).includes(x)); if (i >= 0) { m[f.key] = String(i); used.add(i); } }
     for (const f of fields) {
-      const keys = [f.label, ...(f.aliases || [])].map(norm);
-      let i = hs.findIndex(x => keys.includes(x)); if (i < 0) i = hs.findIndex(x => x && keys.some(k => x.includes(k) || k.includes(x)));
-      if (i >= 0 && !Object.values(m).includes(String(i))) m[f.key] = String(i);
+      if (m[f.key]) continue;
+      const i = hs.findIndex((x, j) => !used.has(j) && x.length >= 4 && keysOf(f).some(k => k.length >= 4 && (x.includes(k) || k.includes(x))));
+      if (i >= 0) { m[f.key] = String(i); used.add(i); }
     }
     setMap(m);
   };
