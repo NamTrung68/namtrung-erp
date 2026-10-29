@@ -67,12 +67,25 @@ function EditUser({ p, onClose, onDone }: { p: any; onClose: () => void; onDone:
   const a = useApp(); const [f, setF] = useState({ ...p, sale_aliases: (p.sale_aliases || []).join(', ') });
   const { data: priv } = useLoad(() => db.from('profile_private').select('*').eq('profile_id', p.id).maybeSingle(), [p.id]);
   const [pv, setPv] = useState<any>(null); const pp = pv || priv || {};
+  const canHR = a.isAdmin || a.has('hcns', 'bgd');
+  const { data: rec } = useLoad(() => canHR ? db.from('hr_records').select('profile_id,dob').eq('profile_id', p.id).maybeSingle() : Promise.resolve(null), [p.id]);
+  const [dob, setDob] = useState<string | null>(null); const dobVal = dob ?? (rec as any)?.dob ?? '';
+  const [newPw, setNewPw] = useState<string | null>(null);
+  const resetPw = async () => {
+    const pw = await ask({ title: `Đặt lại mật khẩu · ${p.full_name}`, message: 'Tài khoản sẽ bị đăng xuất khỏi mọi thiết bị. Gửi mật khẩu mới cho nhân sự và nhắc đổi lại ở mục Tài khoản.',
+      input: { label: 'Mật khẩu mới (tối thiểu 8 ký tự)', required: true, value: 'NT' + Math.random().toString(36).slice(2, 8) + Math.floor(10 + Math.random() * 89) }, ok: 'Đặt lại' });
+    if (!pw) return;
+    run(async () => { await db.rpc('admin_set_password', { p_user: p.id, p_password: pw }); setNewPw(pw); }, 'Đã đặt lại mật khẩu');
+  };
   const { busy, run } = useAction();
   const roleOpts = a.isAdmin ? ROLES : ROLES.filter(r => !['admin', 'bgd'].includes(r[0]));
   const save = () => run(async () => {
     await db.from('profiles').update({ full_name: f.full_name, employee_code: f.employee_code || null, phone: f.phone || null, job_level: f.job_level || null, manager_id: f.manager_id || null,
       org_unit_id: f.org_unit_id || null, roles: f.roles, work_schedule: f.work_schedule, status: f.status, is_new_hire: f.is_new_hire, hire_date: f.hire_date || null,
       sale_aliases: String(f.sale_aliases || '').split(',').map((s: string) => s.trim()).filter(Boolean) }).eq('id', p.id);
+    if (canHR && dob !== null) {
+      if (rec) await db.from('hr_records').update({ dob: dob || null }).eq('profile_id', p.id); else await db.from('hr_records').insert({ profile_id: p.id, dob: dob || null });
+    }
     if (pv && (a.isAdmin || a.has('hcns', 'ke_toan'))) {
       const body = { profile_id: p.id, base_salary: pp.base_salary ?? null, allowance: pp.allowance ?? 0, insurance_deduction: pp.insurance_deduction ?? 0, bank_bin: pp.bank_bin || null, bank_account: pp.bank_account || null, bank_holder: pp.bank_holder || null };
       if (priv) await db.from('profile_private').update(body).eq('profile_id', p.id); else await db.from('profile_private').insert(body);
@@ -87,7 +100,9 @@ function EditUser({ p, onClose, onDone }: { p: any; onClose: () => void; onDone:
   const set = (k: string) => (v: any) => setF((x: any) => ({ ...x, [k]: v }));
   const setP = (k: string) => (v: any) => setPv({ ...pp, [k]: v });
   return (
-    <Modal open onClose={onClose} title={`${p.full_name} · ${p.email}`} size="lg" footer={<><Button className="mr-auto" onClick={adjustLeave}>Điều chỉnh sổ phép</Button><Button variant="primary" loading={busy} onClick={save}>Lưu</Button></>}>
+    <Modal open onClose={onClose} title={`${p.full_name} · ${p.email}`} size="lg" footer={<><Button onClick={adjustLeave}>Điều chỉnh sổ phép</Button>{(a.isAdmin || (a.has('hcns') && !p.roles.some((r: string) => ['admin', 'bgd'].includes(r)))) && p.id !== a.me.id && <Button className="mr-auto" onClick={resetPw}>🔑 Đặt lại mật khẩu</Button>}<Button variant="primary" loading={busy} onClick={save}>Lưu</Button></>}>
+      {newPw && <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm">Mật khẩu mới: <b className="font-mono text-base">{newPw}</b>
+        <Button size="sm" onClick={() => navigator.clipboard.writeText(`Tài khoản ERP Nam Trung\nEmail: ${p.email}\nMật khẩu mới: ${newPw}\nĐăng nhập rồi đổi mật khẩu ở mục Tài khoản.`).then(() => toast.ok('Đã sao chép tin nhắn gửi nhân sự'))}>Sao chép tin nhắn</Button></div>}
       <div className="grid gap-3 sm:grid-cols-3">
         <Field label="Họ tên"><Input value={f.full_name} onChange={e => set('full_name')(e.target.value)} /></Field>
         <Field label="Mã nhân viên"><Input value={f.employee_code || ''} onChange={e => set('employee_code')(e.target.value)} /></Field>
@@ -97,6 +112,7 @@ function EditUser({ p, onClose, onDone }: { p: any; onClose: () => void; onDone:
         <Field label="Phòng ban"><Select options={a.units.map(u => [u.id, u.name])} value={f.org_unit_id || ''} onChange={set('org_unit_id')} placeholder="—" /></Field>
         <Field label="Lịch làm việc"><Select options={SCHED} value={f.work_schedule} onChange={set('work_schedule')} /></Field>
         <Field label="Ngày vào làm"><Input type="date" value={f.hire_date || ''} onChange={e => set('hire_date')(e.target.value)} /></Field>
+        {canHR && <Field label="Ngày sinh 🎂" hint="Hiện ngày/tháng ở mục Sinh nhật, không hiện năm"><Input type="date" value={dobVal} onChange={e => setDob(e.target.value)} /></Field>}
         <Field label="Trạng thái"><Select options={[['active', 'Đang làm'], ['inactive', 'Đã nghỉ (khóa đăng nhập)']]} value={f.status} onChange={set('status')} /></Field>
         <Field label="Vai trò" className="sm:col-span-3"><Chips options={roleOpts} value={f.roles} onChange={set('roles')} /></Field>
         <Field label="Tên trong file đơn hoàn thành (cột Nhân viên KD), cách nhau dấu phẩy" className="sm:col-span-2"><Input value={f.sale_aliases} onChange={e => set('sale_aliases')(e.target.value)} placeholder="VD: Khơi Lê, Trungdv22" /></Field>

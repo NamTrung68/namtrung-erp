@@ -14,7 +14,7 @@ export default function Account() {
   const { data: priv } = useLoad(() => db.from('profile_private').select('bank_bin,bank_account,bank_holder').eq('profile_id', a.me.id).maybeSingle(), []);
   const [bank, setBank] = useState<any>({}); useEffect(() => { if (priv) setBank(priv); }, [priv]);
   const [perm, setPerm] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState(''); const { data: myDob, reload: rDob } = useLoad(() => db.rpc<string | null>('my_dob'), []); const [dob, setDob] = useState('');
   useEffect(() => { db.from('profiles').select('phone').eq('id', a.me.id).maybeSingle().then((p: any) => setPhone(p?.phone || '')); }, []);
   return (
     <Layout title="Tài khoản của tôi">
@@ -31,6 +31,10 @@ export default function Account() {
           </dl>
           <Field label="Số điện thoại" className="mt-3"><div className="flex gap-2"><Input value={phone} onChange={e => setPhone(e.target.value)} />
             <Button loading={busy} onClick={() => run(async () => { await db.from('profiles').update({ phone }).eq('id', a.me.id); }, 'Đã lưu')}>Lưu</Button></div></Field>
+          <Field label="Ngày sinh 🎂" className="mt-3" hint={myDob ? 'Muốn sửa ngày sinh, liên hệ HCNS.' : 'Khai 1 lần để cả công ty chúc mừng sinh nhật bạn (chỉ hiện ngày/tháng).'}>
+            {myDob ? <div className="text-sm font-semibold">{String(myDob).split('-').reverse().join('/')}</div>
+              : <div className="flex gap-2"><Input type="date" value={dob} onChange={e => setDob(e.target.value)} />
+                <Button loading={busy} onClick={() => run(async () => { await db.rpc('set_my_dob', { p_dob: dob }); rDob(); }, 'Đã lưu ngày sinh')}>Lưu</Button></div>}</Field>
         </Card>
         <Card title="Đổi mật khẩu">
           <div className="space-y-3"><Field label="Mật khẩu mới (≥ 8 ký tự)"><Input type="password" autoComplete="new-password" value={pw} onChange={e => setPw(e.target.value)} /></Field>

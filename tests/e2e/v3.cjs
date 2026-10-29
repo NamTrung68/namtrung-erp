@@ -34,9 +34,10 @@ const errors = [];
   if (!/STT\tTên hàng\tHS/.test(clipApt) || /NT xuất/.test(clipApt)) throw new Error('Clipboard APT sai: ' + clipApt.slice(0, 120));
   await sale.click('div.fixed.inset-0.z-50 button:text-is("Dán lên hệ thống kê khai")'); await sale.waitForTimeout(300);
   await shot(sale, null, 'apt-sys');
-  await sale.click('button:has-text("Sao chép các dòng để dán")'); await sale.waitForTimeout(200);
-  const clipSys = (await sale.evaluate(() => navigator.clipboard.readText())).split('\t');
-  if (clipSys[1] !== 'PCE' || !/Wuhu Sanxi Industrial Co., Ltd/.test(clipSys[7] || '')) throw new Error('Clipboard hệ thống sai: ' + clipSys.join(' | '));
+  await sale.click('div.fixed.inset-0.z-50 button:has-text("Sao chép để dán")'); await sale.waitForTimeout(200);
+  const rawSys = await sale.evaluate(() => navigator.clipboard.readText()); const clipSys = JSON.parse(rawSys);
+  if (Object.keys(clipSys).join(',') !== 'MoTa,DonViTinh,GiaKhaiHQToiThieu,SoLuong,ThueNK,ThueVAT,MaHS,Consignee,TenNhaCungCap,HinhAnh,ChinhSachNhapKhau,Status'
+    || clipSys.DonViTinh !== 'Chiếc' || clipSys.GiaKhaiHQToiThieu !== 9040 || clipSys.Status !== 1 || !/Wuhu Sanxi Industrial Co., Ltd/.test(clipSys.TenNhaCungCap)) throw new Error('Clipboard hệ thống sai: ' + rawSys);
   await sale.locator('div.fixed.inset-0.z-50 button:text-is("Đóng")').first().click();
   await sale.goto(BASE + '#/crm/quotes'); await sale.waitForTimeout(800);
   if (!(await sale.textContent('body')).includes('NT1234')) throw new Error('Cột Mã đơn không hiện NT1234');

@@ -71,7 +71,30 @@ export default function Today() {
             <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-full border border-dashed border-ink-500" />Đơn chờ duyệt</span>
           </div>
         </>}
+        <Birthdays />
       </div>
     </Layout>
+  );
+}
+
+function Birthdays() {
+  const a = useApp(); const { data } = useLoad(() => db.rpc<any[]>('birthdays', {}), []);
+  const list = (data as any[]) || []; if (!list.length) return null;
+  const m = new Date(today() + 'T00:00:00Z').getUTCMonth() + 1; const todays = list.filter(b => b.is_today);
+  return (
+    <section className="mt-8">
+      {todays.length > 0 && <div className="mb-4 overflow-hidden rounded-3xl border-2 border-ink-900 bg-gradient-to-r from-[#ffcf3f] via-[#ff9fb4] to-[#a996ff] p-5 shadow-pop">
+        <div className="text-3xl">🎂🎉🎈</div>
+        <div className="display mt-1 text-2xl sm:text-3xl">Hôm nay sinh nhật {todays.map(b => b.profile_id === a.me.id ? 'bạn' : b.full_name).join(', ')}!</div>
+        <p className="mt-1 text-sm font-medium text-ink-800">{todays.some(b => b.profile_id === a.me.id) ? 'Nam Trung chúc bạn tuổi mới thật nhiều niềm vui, sức khỏe và thành công 💜' : 'Gửi một lời chúc thật ấm áp tới đồng đội nhé 💜'}</p>
+      </div>}
+      <h3 className="text-xl font-extrabold">🎂 Sinh nhật tháng {m}</h3>
+      <div className="mt-3 flex flex-wrap gap-2">{list.map(b => (
+        <div key={b.profile_id} className={cx('flex items-center gap-2.5 rounded-2xl border px-3 py-2', b.is_today ? 'border-pink-300 bg-pink-50' : b.days_left < 0 ? 'border-ink-100 bg-white opacity-60' : 'border-ink-200 bg-white')}>
+          <div className={cx('grid h-10 w-10 place-items-center rounded-xl text-sm font-extrabold', b.is_today ? 'bg-pink-500 text-white' : 'bg-ink-100 text-ink-700')}>{String(b.day).padStart(2, '0')}</div>
+          <div><div className="text-sm font-semibold">{b.full_name}{b.profile_id === a.me.id && ' (bạn)'}</div>
+            <div className="text-[11px] text-ink-500">{[a.units.find(u => u.id === b.org_unit_id)?.name, b.is_today ? 'hôm nay 🎉' : b.days_left > 0 ? `còn ${b.days_left} ngày` : 'đã qua'].filter(Boolean).join(' · ')}</div></div>
+        </div>))}</div>
+    </section>
   );
 }

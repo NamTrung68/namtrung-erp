@@ -35,10 +35,11 @@ function MyAttendance() {
     const t = fmtTime(first.at); const [h, m] = t.split(':').map(Number); const [sh, sm] = start.split(':').map(Number);
     return Math.max(0, h * 60 + m - (sh * 60 + sm));
   };
-  const totalLate = Array.from(days.entries()).reduce((s, [d, l]) => s + lateOf(d, l), 0);
+  const flexFrom = cfg.flex_start || '';
+  const totalLate = Array.from(days.entries()).filter(([d]) => !flexFrom || d >= flexFrom).reduce((s, [d, l]) => s + lateOf(d, l), 0);
   return (
-    <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
-      <div className="space-y-4">
+    <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)] [&>*]:min-w-0">
+      <div className="min-w-0 space-y-4">
         {!a.me.selfie_consent && cfg.require_selfie !== false ? <Consent /> :
           <Card title={`Hôm nay ${fmtDate(today())}`}>
             <div className="mb-3 text-sm">Mạng hiện tại: <b>{ip?.ip || '…'}</b> {ip && (ip.ok ? <Badge color="green">Mạng công ty</Badge> : <Badge color={(cfg.outside_ip || 'flag') === 'block' ? 'red' : 'amber'}>{(cfg.outside_ip || 'flag') === 'block' ? 'Ngoài mạng công ty — không chấm được' : 'Ngoài mạng công ty — sẽ cần quản lý xác nhận'}</Badge>)}</div>
@@ -50,16 +51,19 @@ function MyAttendance() {
             </div>
             <p className="mt-3 text-xs text-ink-500">Giờ làm {cfg.start}–{cfg.end}, thứ Bảy đến {cfg.saturday_end}. Quỹ linh hoạt {cfg.flex_minutes} phút/tháng cho đi muộn + về sớm (từ {fmtDate(cfg.flex_start)}). Giờ chấm lấy theo máy chủ.</p>
           </Card>}
-        <Card title="Tháng này"><div className="text-sm">Số ngày có chấm công: <b>{days.size}</b><br />Đi muộn (ước tính theo giờ vào): <b>{totalLate}</b> / {cfg.flex_minutes ?? 100} phút
+        <Card title="Tháng này"><div className="text-sm">Số ngày có chấm công: <b>{days.size}</b><br />Đi muộn (ước tính theo giờ vào{flexFrom && today() < flexFrom ? `, tính từ ${fmtDate(flexFrom)}` : ''}): <b>{totalLate}</b> / {cfg.flex_minutes ?? 100} phút
           <div className="mt-2 h-2 rounded-full bg-ink-100"><div className={totalLate > (cfg.flex_minutes ?? 100) ? 'h-2 rounded-full bg-red-500' : 'h-2 rounded-full bg-emerald-500'} style={{ width: `${Math.min(100, totalLate / (cfg.flex_minutes || 100) * 100)}%` }} /></div></div></Card>
       </div>
-      <Card title="Lịch sử chấm công" actions={<Input type="month" className="w-40" value={month} onChange={e => setMonth(e.target.value)} />} bodyClass="p-0">
-        {!days.size ? <Empty>Chưa có dữ liệu</Empty> : <Table head={['Ngày', 'Vào', 'Ra', 'Muộn', 'Ghi chú']}>{Array.from(days.entries()).reverse().map(([d, l]) => {
-          const late = lateOf(d, l); const flagged = l.some(e => e.status === 'flagged');
-          const ein = l.find(e => e.kind === 'in'); const eout = [...l].reverse().find(e => e.kind === 'out');
-          return <tr key={d}><Td>{fmtDate(d)}</Td><Td><span className="inline-flex items-center gap-2">{ein && <SelfieThumb e={ein} onOpen={setImg} />}{fmtTime(ein?.at)}</span></Td><Td><span className="inline-flex items-center gap-2">{eout && <SelfieThumb e={eout} onOpen={setImg} />}{fmtTime(eout?.at)}</span></Td>
-            <Td>{late ? <span className="text-amber-700">{late} phút</span> : ''}</Td><Td>{flagged && <Badge color="amber">Ngoài IP</Badge>}{l.some(e => e.status === 'rejected') && <Badge color="red">Bị từ chối</Badge>}</Td></tr>;
-        })}</Table>}
+      <Card className="min-w-0" title="Lịch sử chấm công" actions={<Input type="month" className="w-36" value={month} onChange={e => setMonth(e.target.value)} />} bodyClass="p-0">
+        {!days.size ? <Empty>Chưa có dữ liệu</Empty> : <ul className="divide-y divide-ink-100">{Array.from(days.entries()).reverse().map(([d, l]) => {
+          const late = !flexFrom || d >= flexFrom ? lateOf(d, l) : 0; const ein = l.find(e => e.kind === 'in'); const eout = [...l].reverse().find(e => e.kind === 'out');
+          return <li key={d} className="grid grid-cols-[52px_1fr_1fr] items-center gap-2 px-3 py-2.5 sm:grid-cols-[90px_1fr_1fr_auto] sm:px-4">
+            <div><div className="font-semibold leading-tight">{fmtDate(d).slice(0, 5)}</div><div className="text-[11px] text-ink-400">{['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][new Date(d + 'T00:00:00Z').getUTCDay()]}</div></div>
+            <div className="flex min-w-0 items-center gap-1.5">{ein ? <SelfieThumb e={ein} onOpen={setImg} /> : <span className="h-10 w-10" />}<div className="leading-tight"><div className="text-[10px] uppercase text-ink-400">Vào</div><b className="tabular-nums">{fmtTime(ein?.at) || '—'}</b></div></div>
+            <div className="flex min-w-0 items-center gap-1.5">{eout ? <SelfieThumb e={eout} onOpen={setImg} /> : <span className="h-10 w-10" />}<div className="leading-tight"><div className="text-[10px] uppercase text-ink-400">Ra</div><b className="tabular-nums">{fmtTime(eout?.at) || '—'}</b></div></div>
+            {(late > 0 || l.some(e => e.status !== 'valid')) && <div className="col-span-3 flex flex-wrap items-center gap-1.5 text-xs sm:col-span-1 sm:justify-end">{late > 0 && <span className="font-semibold text-amber-700">muộn {late}′</span>}
+              {l.some(e => e.status === 'flagged') && <Badge color="amber">Ngoài IP</Badge>}{l.some(e => e.status === 'rejected') && <Badge color="red">Bị từ chối</Badge>}</div>}
+          </li>; })}</ul>}
       </Card>
       {img && <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4" onClick={() => setImg(null)}><img src={img} className="max-h-[88vh] max-w-full rounded-2xl shadow-2xl" alt="Ảnh chấm công" /></div>}
       {cam && <Camera kind={cam} onClose={() => setCam(null)} onDone={() => { setCam(null); reload(); a.refreshMe(); }} />}
