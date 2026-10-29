@@ -4,6 +4,7 @@ import { Button, Card, Empty, Field, Input, Loading, Modal, Select, Table, Td, T
 import { db, storage } from '../lib/sb';
 import { useApp } from '../state';
 import { fmtDate } from '../lib/format';
+import { prepareUpload } from '../lib/image';
 
 export default function Docs() {
   const a = useApp();
@@ -51,9 +52,9 @@ function NewDoc({ open, cats, onClose, onDone }: { open: boolean; cats: [string,
     const row: any = { category_id: f.category_id, title: f.title.trim(), kind: f.kind, ext_order_code: f.ext_order_code || null, note: f.note || null, owner_id: a.me.id };
     if (f.kind === 'link') { if (!/^https?:\/\//i.test(f.url)) throw new Error('Link phải bắt đầu bằng http(s)://'); row.url = f.url; }
     else {
-      if (!file) throw new Error('Chọn file'); if (file.size > 20 * 1024 * 1024) throw new Error('File tối đa 20 MB');
+      if (!file) throw new Error('Chọn file'); const up = await prepareUpload(file, 10);
       const path = `${f.category_id}/${Date.now()}-${file.name.replace(/[^\w.\-]/g, '_')}`;
-      await storage.upload('docs', path, file); row.storage_path = path; row.file_name = file.name; row.file_size = file.size;
+      await storage.upload('docs', path, up); row.storage_path = path; row.file_name = up.name; row.file_size = up.size;
     }
     await db.from('documents').insert(row); toast.ok('Đã lưu tài liệu'); onDone();
   });

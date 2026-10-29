@@ -21,3 +21,18 @@ export async function compressImage(src: Blob | HTMLCanvasElement, maxSide = 960
   if (!blob) throw new Error('Không nén được ảnh');
   return blob;
 }
+
+/** Chuẩn bị file trước khi tải lên: ảnh → nén JPEG ~100–200 KB (giữ đủ nét để đọc giấy tờ); file khác giới hạn dung lượng */
+export async function prepareUpload(file: File, maxMB = 5): Promise<File> {
+  if (/^image\/(jpeg|png|webp|bmp|heic|heif)$/i.test(file.type) || /\.(jpe?g|png|webp|bmp|heic)$/i.test(file.name)) {
+    if (file.size <= 200 * 1024 && /jpe?g/i.test(file.type)) return file;
+    try {
+      let blob: Blob | null = null;
+      for (const side of [1800, 1500, 1200, 1000]) { blob = await compressImage(file, side, 190); if (blob.size <= 200 * 1024) break; }
+      return new File([blob!], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+    } catch { /* trình duyệt không đọc được định dạng ảnh này → giữ nguyên */ }
+  }
+  if (file.size > maxMB * 1024 * 1024) throw new Error(`File "${file.name}" nặng ${(file.size / 1048576).toFixed(1)} MB (tối đa ${maxMB} MB). Hãy tải lên Google Drive rồi dán link.`);
+  return file;
+}
+export const isUrl = (s: string) => /^https?:\/\/\S+$/i.test(s.trim());

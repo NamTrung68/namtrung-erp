@@ -25,6 +25,7 @@ function MyAttendance() {
   const { data: ip } = useLoad(() => db.rpc('my_ip'), []);
   const { data: ev, reload } = useLoad(() => db.from('attendance_events').select('id,kind,at,work_date,ip_ok,status,selfie_path,purged_at').eq('profile_id', a.me.id).gte('work_date', month + '-01').lte('work_date', monthEnd(month + '-01')).order('at'), [month]);
   const [cam, setCam] = useState<'in' | 'out' | null>(null); const [img, setImg] = useState<string | null>(null);
+  const blocked = !!ip && !ip.ok && (cfg.outside_ip || 'flag') === 'block' && (cfg.ip_whitelist || []).length > 0;
   if (a.me.work_schedule !== 'office') return <Card>Lịch làm việc của bạn ({a.me.work_schedule === 'warehouse' ? 'Kho' : 'không chấm công'}) không cần chấm công bằng ứng dụng.</Card>;
   const days = new Map<string, any[]>(); ((ev as any[]) || []).forEach(e => days.set(e.work_date, [...(days.get(e.work_date) || []), e]));
   const todayEv = days.get(today()) || [];
@@ -40,11 +41,12 @@ function MyAttendance() {
       <div className="space-y-4">
         {!a.me.selfie_consent && cfg.require_selfie !== false ? <Consent /> :
           <Card title={`Hôm nay ${fmtDate(today())}`}>
-            <div className="mb-3 text-sm">Mạng hiện tại: <b>{ip?.ip || '…'}</b> {ip && (ip.ok ? <Badge color="green">Mạng công ty</Badge> : <Badge color="amber">Ngoài mạng công ty — sẽ cần quản lý xác nhận</Badge>)}</div>
+            <div className="mb-3 text-sm">Mạng hiện tại: <b>{ip?.ip || '…'}</b> {ip && (ip.ok ? <Badge color="green">Mạng công ty</Badge> : <Badge color={(cfg.outside_ip || 'flag') === 'block' ? 'red' : 'amber'}>{(cfg.outside_ip || 'flag') === 'block' ? 'Ngoài mạng công ty — không chấm được' : 'Ngoài mạng công ty — sẽ cần quản lý xác nhận'}</Badge>)}</div>
             <div className="mb-3 flex gap-2 text-sm"><span>Vào: <b>{fmtTime(todayEv.find(e => e.kind === 'in')?.at) || '—'}</b></span><span>· Ra: <b>{fmtTime([...todayEv].reverse().find(e => e.kind === 'out')?.at) || '—'}</b></span></div>
+            {blocked && <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">⛔ Bạn đang ở ngoài mạng công ty — hãy kết nối wifi văn phòng để chấm công. Đi công tác / gặp khách: tạo đơn ở mục <a className="font-semibold underline" href="#/hr/leave">Xin nghỉ</a>.</div>}
             <div className="grid grid-cols-2 gap-2">
-              <Button variant="primary" className="h-14 text-base" onClick={() => setCam('in')}>Chấm vào</Button>
-              <Button variant="dark" className="h-14 text-base" onClick={() => setCam('out')}>Chấm ra</Button>
+              <Button variant="primary" className="h-14 text-base" disabled={blocked} onClick={() => setCam('in')}>Chấm vào</Button>
+              <Button variant="dark" className="h-14 text-base" disabled={blocked} onClick={() => setCam('out')}>Chấm ra</Button>
             </div>
             <p className="mt-3 text-xs text-ink-500">Giờ làm {cfg.start}–{cfg.end}, thứ Bảy đến {cfg.saturday_end}. Quỹ linh hoạt {cfg.flex_minutes} phút/tháng cho đi muộn + về sớm (từ {fmtDate(cfg.flex_start)}). Giờ chấm lấy theo máy chủ.</p>
           </Card>}
