@@ -31,14 +31,31 @@ function setup() {
   dailyBackup();
 }
 
+function rpc_(fn, body) {
+  const r = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, { method: 'post', contentType: 'application/json',
+    headers: { apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY }, payload: JSON.stringify(Object.assign({ p_token: P().getProperty('BACKUP_TOKEN') }, body)), muteHttpExceptions: true });
+  if (r.getResponseCode() !== 200) throw new Error('Sao lưu lỗi ' + r.getResponseCode() + ' (' + fn + '): ' + r.getContentText().slice(0, 300));
+  return r.getContentText();
+}
+
 function dailyBackup() {
-  const r = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/rpc/backup_export', { method: 'post', contentType: 'application/json',
-    headers: { apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY }, payload: JSON.stringify({ p_token: P().getProperty('BACKUP_TOKEN') }), muteHttpExceptions: true });
-  if (r.getResponseCode() !== 200) throw new Error('Sao lưu lỗi ' + r.getResponseCode() + ': ' + r.getContentText().slice(0, 300));
+  const tables = JSON.parse(rpc_('backup_tables', {}));
+  const parts = [];   // ghép chuỗi JSON từng bảng, lấy mỗi lần 1000 dòng
+  tables.forEach(t => {
+    const rows = [];
+    for (let off = 0; ; off += 1000) {
+      const page = rpc_('backup_page', { p_table: t, p_offset: off, p_limit: 1000 });
+      if (page === '[]') break;
+      rows.push(page.slice(1, -1));
+      if (JSON.parse(page).length < 1000) break;
+    }
+    parts.push(JSON.stringify(t) + ':[' + rows.join(',') + ']');
+  });
+  const json = '{"generated_at":' + JSON.stringify(new Date().toISOString()) + ',"version":2,"tables":{' + parts.join(',') + '}}';
   const stamp = Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'yyyy-MM-dd_HHmm');
   const name = 'nt-erp_' + stamp + '.json';
   const f = folder_('Sao luu');
-  f.createFile(Utilities.gzip(Utilities.newBlob(r.getContentText(), 'application/json', name), name + '.gz'));
+  f.createFile(Utilities.gzip(Utilities.newBlob(json, 'application/json', name), name + '.gz'));
   const cut = new Date(Date.now() - KEEP_DAYS * 864e5);
   const it = f.getFiles(); while (it.hasNext()) { const x = it.next(); if (x.getDateCreated() < cut) x.setTrashed(true); }
 }
