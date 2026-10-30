@@ -1,15 +1,16 @@
 // Sale: dòng HĐ APT của mình cần xử lý · Người được cấp quyền: duyệt mở chặn
 import React, { useState } from 'react';
 import { Layout } from '../../components/Layout';
-import { Badge, Button, Card, cx, Empty, Loading, StatusChips, ask, useAction, useLoad } from '../../components/ui';
+import { Badge, Button, Card, cx, Empty, Loading, StatusChips, ask, toast, useAction, useLoad } from '../../components/ui';
 import { Pager, usePager } from '../../components/Pager';
 import { db } from '../../lib/sb';
 import { useApp } from '../../state';
 import { fmtDateTime, money, num } from '../../lib/format';
 import { bienTone, dueTxt, lineName, LuongBadge, Money, pctTxt, REPLY, ST, StatusBadge } from './common';
 import { LineModal, ReplyForm, useAccCfg } from './Acc';
+import { aptPriceMsg } from '../../lib/doisoat';
 
-const SEL = 'id,truck_id,line_key,ma_dong,md,sale_id,sale_name,hh,dh,ten_apt,ten_ht,ten_tk,sl_apt,sl_ht,dvt_apt,dvt_ht,gia_khach,gia_nhap,gia_note,gia_de_xuat,gia_ap_dung,bien_nt,nk_ht,nk_tk,luong,status,issues,notes,phan_hoi,due_at,reply,reply_price,reply_note,replied_by,replied_at,approved_by,approved_at,approve_note,inv_no,inv_result,acc_trucks(name)';
+const SEL = 'id,gia_von,bien_apt,apt_stt,truck_id,line_key,ma_dong,md,sale_id,sale_name,hh,dh,ten_apt,ten_ht,ten_tk,sl_apt,sl_ht,dvt_apt,dvt_ht,gia_khach,gia_nhap,gia_note,gia_de_xuat,gia_ap_dung,bien_nt,nk_ht,nk_tk,luong,status,issues,notes,phan_hoi,due_at,reply,reply_price,reply_note,replied_by,replied_at,approved_by,approved_at,approve_note,inv_no,inv_result,acc_trucks(name)';
 
 function LineCard({ l, children, onOpen }: { l: any; children?: React.ReactNode; onOpen: () => void }) {
   const a = useApp(); const cfg = useAccCfg(); const [dt, dc] = dueTxt(l.status === 'blocked' ? l.due_at : null);
@@ -30,15 +31,22 @@ function LineCard({ l, children, onOpen }: { l: any; children?: React.ReactNode;
 
 export function AccMine() {
   const a = useApp(); const [st, setSt] = useState('blocked'); const [sel, setSel] = useState<any>(null);
+  const cfg = useAccCfg();
   const { data, loading, reload } = useLoad(() => db.from<any[]>('acc_lines').select(SEL).in('status', ['blocked', 'replied', 'pending_approval', 'approved']).order('due_at', { nulls: 'last' }).limit(1000), []);
-  const all = data || []; const view = all.filter(l => !st || l.status === st); const pg = usePager('acc_mine', [st]);
+  const { data: okL } = useLoad(() => db.from<any[]>('acc_lines').select(SEL).in('status', ['ok', 'approved']).gt('apt_stt', 0).is('inv_no', null).order('updated_at', { asc: false }).limit(1000), []);
+  const price = (okL || []).filter(l => aptPriceMsg([l], cfg));
+  const all = data || []; const view = st === 'price' ? price : all.filter(l => !st || l.status === st); const pg = usePager('acc_mine', [st]);
   const c = (k: string) => all.filter(l => l.status === k).length;
   return <Layout title="Việc HĐ của tôi">
     <p className="mb-3 text-sm text-ink-600">Đây là các dòng hàng trên hóa đơn APT <b>chưa đủ điều kiện tự chốt</b>. Mỗi dòng chọn 1 cách xử lý trong {useAccCfg().han_sale_gio}h. Dòng đạt điều kiện hệ thống đã tự chốt, bạn không cần làm gì.</p>
-    <StatusChips value={st} onChange={setSt} items={[['blocked', ST.blocked[0], c('blocked'), 'red'], ['replied', ST.replied[0], c('replied'), 'amber'], ['pending_approval', ST.pending_approval[0], c('pending_approval'), 'purple'], ['approved', ST.approved[0], c('approved'), 'teal'], ['', 'Tất cả', all.length, 'dark']]} />
+    <StatusChips value={st} onChange={setSt} items={[['blocked', ST.blocked[0], c('blocked'), 'red'], ['replied', ST.replied[0], c('replied'), 'amber'], ['pending_approval', ST.pending_approval[0], c('pending_approval'), 'purple'], ['approved', ST.approved[0], c('approved'), 'teal'], ['price', 'Đề xuất giá gửi APT', price.length, 'purple'], ['', 'Tất cả', all.length, 'dark']]} />
+    {st === 'price' && price.length > 0 && <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm">Các dòng biên NT ngoài khung, hệ thống đã tính giá để biên NT về {(cfg.bien_muc_tieu * 100).toFixed(0)}%.
+      <Button size="sm" variant="primary" onClick={() => navigator.clipboard.writeText(aptPriceMsg(price, cfg)).then(() => toast.ok('Đã sao chép — dán vào Zalo gửi APT'))}>📋 Copy tất cả gửi APT</Button></div>}
     {loading ? <Loading /> : !view.length ? <Card><Empty>{st === 'blocked' ? '🎉 Không có dòng nào cần bạn xử lý' : 'Không có dòng'}</Empty></Card> :
       <div className="space-y-3">{pg.slice(view).map(l => <LineCard key={l.id} l={l} onOpen={() => setSel(l)}>
-        {['blocked', 'replied'].includes(l.status) && (l.sale_id === a.me.id || a.isLead) && <ReplyForm line={l} onDone={reload} />}</LineCard>)}</div>}
+        {st === 'price' && <div className="mt-2 flex items-center justify-between rounded-lg bg-brand-50 px-3 py-2 text-sm"><span>Đề nghị APT xuất giá <b>{Math.round(Number(l.gia_khach) / (1 + cfg.bien_muc_tieu)).toLocaleString('vi-VN')}</b></span>
+          <Button size="sm" onClick={() => navigator.clipboard.writeText(aptPriceMsg([l], cfg, l.acc_trucks?.name)).then(() => toast.ok('Đã sao chép'))}>📋 Copy</Button></div>}
+        {st !== 'price' && ['blocked', 'replied'].includes(l.status) && (l.sale_id === a.me.id || a.isLead) && <ReplyForm line={l} onDone={reload} />}</LineCard>)}</div>}
     <Pager p={pg} total={view.length} />
     {sel && <LineModal line={sel} onClose={() => setSel(null)} onChanged={() => { setSel(null); reload(); }} />}
   </Layout>;

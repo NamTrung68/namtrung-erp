@@ -7,7 +7,7 @@ import { db, fetchAll } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { readTable, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
-import { DEFAULT_ACC_CFG, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, normMd, parseApt, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile } from '../../lib/doisoat';
+import { aptPriceMsg, DEFAULT_ACC_CFG, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, normMd, parseApt, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile } from '../../lib/doisoat';
 import { driveReady, saveToDrive } from '../../lib/drive';
 import { bienTone, dueTxt, lineName, LuongBadge, Money, pctTxt, REPLY, ST, StatusBadge } from './common';
 
@@ -106,6 +106,7 @@ function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: () => v
       for (const k of ['kb', 'apt', 'tkn']) { const f = files[k]; if (f) { try { links[k] = await saveToDrive(a.settings.drive, f, f.name, folder); } catch (e: any) { toast.err('Lưu Drive: ' + e.message); break; } } }
       if (Object.keys(links).length) await db.from('acc_trucks').update({ file_links: links }).eq('id', id);
     }
+    const n = await db.rpc<number>('acc_relink_truck', { p_truck: id }).catch(() => 0); if (n) toast.info(`${n} dòng HĐ APT đã về trước được ghép vào xe này`);
     onDone(id);
   }, target ? 'Đã nạp lại, giữ nguyên trả lời của sale' : test ? 'Đã lưu xe nạp thử — sale chưa thấy' : 'Đã lưu đối soát, đã báo sale dòng bị chặn');
   const F = ({ k, l, hint }: { k: string; l: string; hint: string }) => <Field label={l} hint={hint}>
@@ -132,15 +133,16 @@ function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: () => v
         <div className="mt-1 text-xs">Nạp lại giữ nguyên trả lời của sale và kết quả HĐ đã ghép. Nếu đúng là xe mới thì cứ lưu bình thường.</div></div>}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat label="Dòng file APT" value={res.stats.apt} sub={`hệ thống ${res.sysCount} · tờ khai ${res.stats.tk}`} />
-        <Stat label="Tự chốt (TRUE)" value={res.stats.ok} tone="green" sub={`${Math.round(res.stats.ok / Math.max(1, res.stats.apt) * 100)}% dòng`} />
+        <Stat label="Tự chốt (TRUE)" value={res.stats.ok} tone="green" sub={`${Math.round(res.stats.ok / Math.max(1, res.stats.apt) * 100)}% dòng · ${res.lines.filter((l: any) => l.gia_de_xuat).length} dòng tự đề xuất giá`} />
         <Stat label="Bị chặn → sale" value={res.stats.blocked} tone={res.stats.blocked ? 'red' : undefined} sub={`hạn ${cfg.han_sale_gio}h`} />
         <Stat label="Theo dõi riêng" value={res.stats.info} sub="hợp quy · xuất thẳng · Lanchi" />
       </div>
       {res.unmapped.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Tên sale chưa ghép nhân sự: <b>{res.unmapped.join(', ')}</b>. Dòng của các tên này chỉ kế toán thấy — vào tab “Ghép tên sale” rồi nạp lại.</div>}
       {res.warnings.map((w: string, i: number) => <div key={i} className="rounded-lg bg-ink-50 p-2 text-xs text-ink-600">• {w}</div>)}
-      <div className="max-h-[40vh] overflow-auto rounded-xl border border-ink-200"><Table head={['STT', 'Sale', 'MD', 'Tên hàng', 'Luồng', 'Trạng thái', 'Vấn đề']}>
-        {res.lines.filter((l: any) => l.status !== 'ok').map((l: any) => <tr key={l.line_key}><Td>{l.apt_stt}</Td><Td className="whitespace-nowrap">{sm.find(l.sale_name)?.name || l.sale_name}</Td><Td>{l.md}</Td>
-          <Td className="min-w-[200px] text-xs">{lineName(l).slice(0, 80)}</Td><Td><LuongBadge l={l.luong} /></Td><Td><StatusBadge s={l.status} /></Td><Td className="min-w-[260px] text-xs text-red-700">{l.issues.join(' · ') || <span className="text-ink-500">{l.notes[0]}</span>}</Td></tr>)}</Table></div>
+      <div className="max-h-[40vh] overflow-auto rounded-xl border border-ink-200"><Table head={['STT', 'Sale', 'MD', 'Tên hàng', 'Giá TK → APT', 'Biên APT', 'Biên NT', 'Luồng', 'Trạng thái', 'Vấn đề']}>
+        {res.lines.filter((l: any) => l.status !== 'ok' || l.gia_de_xuat).map((l: any) => <tr key={l.line_key}><Td>{l.apt_stt}</Td><Td className="whitespace-nowrap">{sm.find(l.sale_name)?.name || l.sale_name}</Td><Td>{l.md}</Td>
+          <Td className="min-w-[200px] text-xs">{lineName(l).slice(0, 80)}</Td><Td className="whitespace-nowrap text-right text-xs"><Money v={l.gia_von} /> → <Money v={l.gia_ap_dung} /></Td>
+          <Td className="text-right text-xs">{pctTxt(l.bien_apt)}</Td><Td className={cx('text-right text-xs', bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max))}>{pctTxt(l.bien_nt)}</Td><Td><LuongBadge l={l.luong} /></Td><Td><StatusBadge s={l.status} /></Td><Td className="min-w-[260px] text-xs text-red-700">{l.issues.join(' · ') || <span className="text-ink-500">{l.notes[0]}</span>}</Td></tr>)}</Table></div>
     </div>}
   </Modal>;
 }
@@ -173,6 +175,7 @@ function TruckDetail({ id }: { id: string }) {
     const blob = await writeXlsx(fname(k === 'fb' ? 'Phan_hoi_APT' : 'Doi_soat'), k === 'fb' ? fbRows() : fullRows(), k === 'fb' ? 'Phản hồi APT' : 'Đối soát', !drive);
     if (drive) { const url = await saveToDrive(a.settings.drive, blob, fname(k === 'fb' ? 'Phan_hoi_APT' : 'Doi_soat') + '.xlsx', `Ke toan/Doi soat xe/${(t?.truck_date || today()).slice(0, 7)}`); window.open(url, '_blank'); }
   }, drive ? 'Đã lưu lên Drive' : undefined);
+  const copyApt = (ls: any[]) => { const t2 = aptPriceMsg(ls, cfg, t?.name); if (!t2) { toast.info('Không có dòng nào biên NT ngoài khung'); return; } navigator.clipboard.writeText(t2).then(() => toast.ok('Đã sao chép — dán vào Zalo gửi APT')); };
   const del = () => run(async () => {
     const n = all.filter(l => l.inv_no).length, r = all.filter(l => l.reply).length;
     if (!(await ask({ title: `Xóa “${t.name}”?`, message: <>Xóa toàn bộ {all.length} dòng đối soát của xe này{r ? `, gồm ${r} dòng sale đã trả lời` : ''}{n ? `, ${n} dòng đã ghép HĐ (chỉ Admin xóa được)` : ''}. Không khôi phục từ màn hình được (có nhật ký và bản sao lưu).</>, ok: 'Xóa xe', danger: true }))) return;
@@ -183,6 +186,7 @@ function TruckDetail({ id }: { id: string }) {
     <Layout title={<span>Đối soát · {t.name}</span>} actions={<Button onClick={() => go('/acc')}>← Danh sách xe</Button>}>
       <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant="dark" loading={busy} onClick={() => exp('fb')}>⬇ Phản hồi gửi APT</Button><Button loading={busy} onClick={() => exp('full')}>⬇ Đối soát đầy đủ</Button>
         {driveReady(a.settings.drive) && <Button loading={busy} onClick={() => exp('full', true)}>☁ Lưu Drive</Button>}<Button onClick={() => setRe(true)}>⇪ Nạp lại file</Button>
+        <Button onClick={() => copyApt(view.length !== all.length ? view : all)}>📋 Copy đề xuất giá gửi APT{view.length !== all.length ? ' (đang lọc)' : ''}</Button>
         <Button variant="danger" loading={busy} onClick={del}>🗑 Xóa xe</Button>
         <span className="text-xs text-ink-500">Nạp lúc {fmtDateTime(t.created_at)}{t.files?.by ? ' · ' + t.files.by : ''} · {[t.files?.kb, t.files?.apt, t.files?.tkn].filter(Boolean).join(' · ')}</span></div>
       <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -202,14 +206,16 @@ function TruckDetail({ id }: { id: string }) {
         <Select className="w-52" placeholder="Tất cả luồng" options={Object.entries(LUONG).map(([k, v]) => [k, `${k}. ${v}`] as [string, string])} value={lu} onChange={setLu} /></div>
       <Card bodyClass="p-0">{loading ? <Loading /> : !view.length ? <Empty>Không có dòng</Empty> :
         <div className="overflow-x-auto"><table className="w-full text-[13px] [&_td]:px-2 [&_td]:py-2 [&_td]:align-top">
-          <thead><tr className="border-b border-ink-200 bg-ink-50 text-left text-xs text-ink-500">{['STT', 'Sale · MD', 'Tên hàng', 'SL', 'Giá APT', 'Giá khách', 'Biên NT', 'Phản hồi APT', 'Trạng thái', 'Vấn đề / ghi chú', 'HĐ'].map(h => <th key={h} className="whitespace-nowrap px-2 py-2.5 font-medium">{h}</th>)}</tr></thead>
+          <thead><tr className="border-b border-ink-200 bg-ink-50 text-left text-xs text-ink-500">{['STT', 'Sale · MD', 'Tên hàng', 'SL', 'Giá tờ khai', 'Giá APT', 'Biên APT', 'Giá khách', 'Biên NT', 'Phản hồi APT', 'Trạng thái', 'Vấn đề / ghi chú', 'HĐ'].map(h => <th key={h} className="whitespace-nowrap px-2 py-2.5 font-medium">{h}</th>)}</tr></thead>
           <tbody className="divide-y divide-ink-100">{pg.slice(view).map(l => { const [dt, dc] = dueTxt(l.status === 'blocked' ? l.due_at : null);
             return <tr key={l.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setSel(l)}>
               <td className="text-ink-400">{l.apt_stt ?? '—'}<div className="text-[11px]">{l.hh}</div></td>
               <td className="whitespace-nowrap"><div className="font-medium text-ink-900">{a.personName(l.sale_id) || <span className="text-amber-700">{l.sale_name || '—'}</span>}</div><div className="text-[11px] text-ink-500">{l.ma_dong || l.md || <span className="text-red-600">không có đơn</span>}{l.dh ? ' · ' + l.dh : ''}</div></td>
               <td className="min-w-[220px] max-w-[340px]"><div className="line-clamp-2">{lineName(l)}</div><div className="mt-0.5"><LuongBadge l={l.luong} /></div></td>
               <td className="text-right tabular-nums">{num(l.sl_apt ?? l.sl_ht, 0)}<div className="text-[11px] text-ink-400">{l.dvt_apt || l.dvt_ht}</div></td>
-              <td className="text-right"><Money v={l.gia_ap_dung ?? l.gia_nhap} />{l.gia_note && <div className="text-[11px] text-ink-400">nháp <Money v={l.gia_nhap} /></div>}</td>
+              <td className="text-right text-ink-600"><Money v={l.gia_von} /></td>
+              <td className="text-right"><Money v={l.gia_ap_dung ?? l.gia_nhap} />{(l.gia_note || l.gia_de_xuat) && <div className="text-[11px] text-ink-400">nháp <Money v={l.gia_nhap} /></div>}</td>
+              <td className="text-right tabular-nums text-ink-600">{pctTxt(l.bien_apt)}</td>
               <td className="text-right"><Money v={l.gia_khach} /></td>
               <td className={cx('text-right tabular-nums', bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max))}>{pctTxt(l.bien_nt)}</td>
               <td className="whitespace-nowrap text-xs font-semibold">{l.phan_hoi}</td>
@@ -245,9 +251,12 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
       <div><div className="mb-1 text-xs font-bold uppercase text-ink-400">APT · tờ khai</div>
         <R k="Mã HH · DH" v={`${l.hh || '—'} · ${l.dh || '—'}`} /><R k="Sale ghi trên APT" v={l.sale_apt || '—'} /><R k="SL APT · tờ khai" v={`${num(l.sl_apt, 2)} · ${num(l.sl_tk, 2)} ${l.dvt_apt || ''}`} />
         <R k="Giá nháp APT" v={<Money v={l.gia_nhap} />} />{l.gia_note && <R k="Giá sale ghi NOTE" v={<Money v={l.gia_note} />} />}{l.gia_de_xuat && <R k="Giá đề xuất (biên 3%)" v={<Money v={l.gia_de_xuat} />} tone="text-brand-700 font-semibold" />}
-        <R k="Biên NT" v={pctTxt(l.bien_nt)} tone={bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max)} /><R k="Thuế NK tờ khai" v={pctTxt(l.nk_tk)} /></div>
+        <R k="Biên NT" v={pctTxt(l.bien_nt)} tone={bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max)} /><R k="Thuế NK tờ khai" v={pctTxt(l.nk_tk)} />
+        <R k="Giá vốn tờ khai (giá NH + NK/đv)" v={<Money v={l.gia_von} />} /><R k="Biên APT" v={pctTxt(l.bien_apt)} /></div>
     </div>
     <div className="mt-3 text-xs text-ink-500">Tên trên file APT: {l.ten_apt || '—'}</div>
+    {aptPriceMsg([l], cfg) && <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm"><span>Đề nghị APT xuất giá <b><Money v={Math.round(Number(l.gia_khach) / (1 + cfg.bien_muc_tieu))} /></b> để biên NT về {pctTxt(cfg.bien_muc_tieu)}</span>
+      <Button size="sm" variant="primary" onClick={() => navigator.clipboard.writeText(aptPriceMsg([l], cfg)).then(() => toast.ok('Đã sao chép'))}>📋 Copy gửi APT</Button></div>}
     {l.reply && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm"><b>Sale trả lời:</b> {REPLY[l.reply]}{l.reply_price ? ` — giá ${money(l.reply_price)}` : ''}{l.reply_note ? ` — “${l.reply_note}”` : ''}
       <div className="text-xs text-ink-500">{a.personName(l.replied_by)} · {fmtDateTime(l.replied_at)}</div></div>}
     {l.approved_at && <div className="mt-2 rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm"><b>{l.status === 'approved' ? 'Đã duyệt' : 'Từ chối'}:</b> {l.approve_note || ''}<div className="text-xs text-ink-500">{a.personName(l.approved_by)} · {fmtDateTime(l.approved_at)}</div></div>}
@@ -333,17 +342,18 @@ function SaleMap() {
   const groups: { acc: string; names: string[] }[] = [...(cfg.sale_names || [])];
   Array.from(new Set((unm || []).map(x => x.sale_name).filter(Boolean))).filter(n => !groups.some(g => [g.acc, ...g.names].some(x => norm(x) === norm(n)))).forEach(n => groups.push({ acc: n, names: [] }));
   const save = (g: { acc: string; names: string[] }) => run(async () => {
-    const pid = pick[g.acc]; if (!pid) throw new Error('Chọn nhân sự');
+    const pid = pick[g.acc] || sm.find(g.acc)?.id || g.names.map(n => sm.find(n)?.id).find(Boolean); if (!pid) throw new Error('Chọn nhân sự');
     await db.rpc('acc_set_sale_alias', { p_profile: pid, p_names: [g.acc, ...g.names].filter(Boolean) }); location.reload();
   }, 'Đã ghép');
   if (!sm.ready) return <Loading />;
   return <Card title="Ghép tên sale trong file với nhân sự ERP" bodyClass="p-0">
     <p className="px-4 pt-3 text-xs text-ink-500">File khai báo ghi họ tên đầy đủ, file APT và tờ khai ghi tài khoản. Chọn đúng người cho từng dòng → hệ thống tự gán dòng hàng cho sale đó. Đổi người phụ trách: chọn lại và bấm Lưu.</p>
-    <Table head={['Tài khoản', 'Tên trong file', 'Đang ghép với', 'Chọn nhân sự', '']}>{groups.map(g => { const cur = sm.find(g.acc) || g.names.map(n => sm.find(n)).find(Boolean);
+    <Table head={['Tài khoản', 'Tên trong file', 'Đang ghép với', 'Chọn nhân sự', '']}>{groups.map(g => { const all = [g.acc, ...g.names].filter(Boolean); const hits = all.map(n => sm.find(n)); const cur = hits.find(Boolean) || null;
+      const missing = all.filter((n, i) => !hits[i] || hits[i]!.id !== cur?.id);
       return <tr key={g.acc}><Td className="font-semibold">{g.acc}</Td><Td className="text-xs">{g.names.join(', ') || '—'}</Td>
-        <Td>{cur ? <span className="text-emerald-700">✓ {cur.name}</span> : <span className="text-amber-700">Chưa ghép</span>}</Td>
+        <Td>{cur ? <span className={missing.length ? 'text-amber-700' : 'text-emerald-700'}>{missing.length ? '◐' : '✓'} {cur.name}{missing.length ? <div className="text-[11px]">Thiếu tên: {missing.join(', ')} — bấm Lưu</div> : ''}</span> : <span className="text-amber-700">Chưa ghép</span>}</Td>
         <Td><Select className="w-56" placeholder="— Chọn —" options={sm.dir.map(p => [p.id, p.full_name] as [string, string])} value={pick[g.acc] || cur?.id || ''} onChange={v => setPick(x => ({ ...x, [g.acc]: v }))} /></Td>
-        <Td><Button size="sm" loading={busy} disabled={!pick[g.acc] || pick[g.acc] === cur?.id} onClick={() => save(g)}>Lưu</Button></Td></tr>; })}</Table>
+        <Td><Button size="sm" loading={busy} disabled={!(pick[g.acc] || cur?.id) || (!missing.length && (pick[g.acc] || cur?.id) === cur?.id)} onClick={() => save(g)}>Lưu</Button></Td></tr>; })}</Table>
   </Card>;
 }
 
@@ -353,7 +363,7 @@ function Track() {
   const [mode, setMode] = useState<'open' | 'late'>('open'); const [lu, setLu] = useState(''); const [only, setOnly] = useState(false); const [q, setQ] = useState(''); const [sel, setSel] = useState<any>(null);
   const SEL = 'id,truck_id,line_key,md,ma_dong,hh,sale_id,sale_name,ten_apt,ten_ht,sl_apt,dvt_apt,tt_apt,gia_khach,luong,status,inv_id,inv_no,inv_result,issues,notes,phan_hoi,acc_trucks(name,truck_date)';
   const { data, loading } = useLoad(async () => {
-    if (mode === 'open') return fetchAll<any>(() => db.from('acc_lines').select(SEL).is('inv_no', null).eq('is_test', false).gt('apt_stt', 0).in('luong', ['A', 'B']).in('status', ['ok', 'approved', 'info', 'blocked', 'replied', 'pending_approval']));
+    if (mode === 'open') return fetchAll<any>(() => db.from('acc_lines').select(SEL).or('inv_no.is.null,inv_result.eq.mot_phan').eq('is_test', false).gt('apt_stt', 0).in('luong', ['A', 'B']).in('status', ['ok', 'approved', 'info', 'blocked', 'replied', 'pending_approval']));
     const ls = await fetchAll<any>(() => db.from('acc_lines').select(SEL).eq('is_test', false).gt('apt_stt', 0).gte('inv_no', '0'));
     const ids = Array.from(new Set(ls.map(l => l.inv_id).filter(Boolean))); const inv = new Map<string, any>();
     for (let i = 0; i < ids.length; i += 150) (await db.from<any[]>('acc_invoices').select('id,ngay,ky_hieu,so_hd').in('id', ids.slice(i, i + 150))).forEach(x => inv.set(x.id, x));

@@ -58,7 +58,7 @@ const sql = q => execSync(`psql -h /var/tmp/pg -p 5433 -U postgres -d nt_e2e -At
   await s.goto(BASE + '#/acc/mine'); await s.waitForTimeout(1500);
   await s.screenshot({ path: SHOTS + '/v10-mine.png', fullPage: false });
   const cards = await s.locator('text=Xử lý dòng này').count(); ok(cards > 0, 'sale thấy dòng cần xử lý');
-  await s.locator('button:has-text("Chuyển xe sau")').first().click(); await s.locator('button:has-text("Gửi")').first().click(); await s.waitForTimeout(1200);
+  await s.locator('button:has-text("Chuyển xe sau")').first().click(); await s.locator('button:text-is("Gửi")').first().click(); await s.waitForTimeout(1200);
   ok(sql("select count(*) from acc_lines where reply = 'chuyen_xe_sau'") === '1', 'sale trả lời');
   ok(sql("select count(*) from acc_lines where sale_id is not null and sale_id <> (select id from profiles where email='a@nt.vn')") === '0' || true, 'x');
   // Xóa xe (admin)

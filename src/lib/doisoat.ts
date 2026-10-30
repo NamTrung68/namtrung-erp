@@ -150,7 +150,7 @@ export interface AccLine {
   apt_stt: number | null; hh: string | null; dh: string | null; sale_apt: string | null; ten_apt: string | null; sl_apt: number | null; dvt_apt: string | null;
   gia_nhap: number | null; gia_note: number | null; note_apt: string | null; nk_apt: number | null; vat: number | null;
   tk_row: number | null; ten_tk: string | null; hs: string | null; sl_tk: number | null; dvt_tk: string | null; gia_tk_nh: number | null; nk_tk: number | null; tnk_dv: number | null; md_header: string | null;
-  luong: Luong; gia_ap_dung: number | null; gia_de_xuat: number | null; bien_nt: number | null; tt_apt: number; tt_khach: number | null;
+  luong: Luong; gia_ap_dung: number | null; gia_de_xuat: number | null; bien_nt: number | null; gia_von: number | null; bien_apt: number | null; tt_apt: number; tt_khach: number | null;
   status: LineStatus; level: 1 | 2 | 3; issues: string[]; notes: string[]; phan_hoi: string; match_score: number | null;
 }
 export interface ReconcileResult { lines: AccLine[]; stats: Record<string, any>; warnings: string[] }
@@ -202,7 +202,7 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
         if (bien > hi + tol) {
           if (gnote) add(2, `Biên NT ${(bien * 100).toFixed(2)}% > ${hi * 100}% ngay cả theo giá sale ghi NOTE.`);
           else { gde = Math.round(gk / (1 + tgt)); notes.push(`Biên NT ${(bien * 100).toFixed(2)}% > ${hi * 100}% → tự đề xuất APT xuất giá ${gde.toLocaleString('vi-VN')}`); }
-        } else if (bien < lo - tol && (lo - bien) * ttApt > cfg.tien_bo_qua) add(1, `Biên NT ${(bien * 100).toFixed(2)}% < ${lo * 100}% → sale giải trình hoặc xin duyệt.`);
+        } else if (bien < lo - tol && (lo - bien) * ttApt > cfg.tien_bo_qua) add(1, `Biên NT ${(bien * 100).toFixed(2)}% < ${lo * 100}% → đề nghị APT xuất giá ${Math.round(gk / (1 + tgt)).toLocaleString('vi-VN')} (biên NT ${tgt * 100}%), hoặc sale giải trình / xin duyệt.`);
         else if (bien < lo - tol) notes.push(`Biên NT ${(bien * 100).toFixed(2)}% < ${lo * 100}% nhưng tiền chênh dưới ${cfg.tien_bo_qua.toLocaleString('vi-VN')}đ — bỏ qua.`);
       }
       if (s && t && Math.abs((s.nk || 0) - t.nk) > 0.001) add(1, `Thuế NK hệ thống ${Math.round((s.nk || 0) * 100)}% ≠ tờ khai ${Math.round(t.nk * 100)}% → sửa hệ thống theo tờ khai.`);
@@ -229,7 +229,7 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
       else if (gde) phan_hoi = `XUẤT GIÁ ${gde.toLocaleString('vi-VN')}`;
       else phan_hoi = 'CHỐT';
     }
-    const gad = gde || ga;
+    const gad = gde || ga; const gvon = t && t.nh ? t.nh + (t.sl ? t.tnk / t.sl : 0) : null;
     return {
       line_key: a ? `A${a.apt_stt}` : `S${s!.ma_dong}`, ma_dong: s?.ma_dong || null, md: s?.md || null, sale_name: s?.sale || a?.sale_apt || t?.sale || null,
       sale_acc: acc(s?.sale || a?.sale_apt || t?.sale || ''), ma_kh: s?.ma_kh || null,
@@ -238,7 +238,7 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
       gia_nhap: gn, gia_note: gnote, note_apt: a?.note || null, nk_apt: a ? a.nk : null, vat: vat ?? null,
       tk_row: t?.tk_row ?? null, ten_tk: t?.ten ?? null, hs: t?.hs || s?.hs || null, sl_tk: t?.sl ?? null, dvt_tk: t?.dvt || null, gia_tk_nh: t?.nh ?? null, nk_tk: t ? t.nk : null,
       tnk_dv: t && t.sl ? t.tnk / t.sl : null, md_header: t?.md_header || a?.md_apt || null,
-      luong, gia_ap_dung: gad, gia_de_xuat: gde, bien_nt: gk && gad ? gk / gad - 1 : bien, tt_apt: Math.round((gad || 0) * (sl || 0)), tt_khach: gk ? Math.round(gk * (sl || 0)) : null,
+      luong, gia_ap_dung: gad, gia_de_xuat: gde, bien_nt: gk && gad ? gk / gad - 1 : bien, gia_von: gvon, bien_apt: gvon && gad ? gad / gvon - 1 : null, tt_apt: Math.round((gad || 0) * (sl || 0)), tt_khach: gk ? Math.round(gk * (sl || 0)) : null,
       status, level, issues, notes, phan_hoi, match_score: score === null ? null : Math.round(score * 100) / 100,
     };
   };
@@ -267,12 +267,12 @@ export function parseInvoiceXml(xml: string): Invoice {
   return { so_hd: so, ky_hieu: tag(body, 'KHHDon'), ngay: tag(body, 'NLap') || null, mst_ban: tag(nban, 'MST'), ten_ban: tag(nban, 'Ten'), mst_mua: tag(nmua, 'MST'), ten_mua: tag(nmua, 'Ten'),
     tong_truoc_thue: Number(tag(ttoan, 'TgTCThue')) || lines.reduce((x, l) => x + l.tt, 0), tien_thue: Number(tag(ttoan, 'TgTThue')) || 0, tong: Number(tag(ttoan, 'TgTTTBSo')) || 0, lines };
 }
-export type InvResult = 'khop' | 'lech' | 'khong_don' | 'gia_khach_0' | 'khong_thuoc_xe';
+export type InvResult = 'khop' | 'lech' | 'khong_don' | 'gia_khach_0' | 'khong_thuoc_xe' | 'mot_phan';
 export const INV_RESULT: Record<InvResult, [string, string]> = {
   khop: ['Khớp', 'green'], lech: ['Lệch giá/SL so với bản đã chốt', 'red'], khong_don: ['Đã xuất HĐ nhưng KHÔNG có đơn trên hệ thống', 'red'],
-  gia_khach_0: ['Đã xuất HĐ nhưng giá khách = 0', 'red'], khong_thuoc_xe: ['Không thuộc xe đã nạp', 'gray'],
+  gia_khach_0: ['Đã xuất HĐ nhưng giá khách = 0', 'red'], khong_thuoc_xe: ['Chưa thuộc xe nào (tự ghép khi nạp xe)', 'gray'], mot_phan: ['Đã xuất HĐ một phần', 'amber'],
 };
-/** Kết luận 1 dòng HĐ so với dòng đối soát (theo mã hàng APT). So với giá đã chốt: NOTE → giá đề xuất → giá nháp */
+/** Kết luận 1 dòng HĐ so với dòng đối soát (theo mã hàng APT) — chỉ xét giá; số lượng được cộng qua nhiều HĐ ở máy chủ (khớp / một phần / vượt) */
 export function judgeInvoiceLine(l: InvLine, line: Pick<AccLine, 'md' | 'gia_khach' | 'gia_note' | 'gia_de_xuat' | 'gia_nhap' | 'sl_tk' | 'sl_apt'> | null): InvResult {
   if (!line) return 'khong_thuoc_xe';
   if (!line.md) return 'khong_don';
@@ -280,6 +280,20 @@ export function judgeInvoiceLine(l: InvLine, line: Pick<AccLine, 'md' | 'gia_kha
   const chot = line.gia_note || line.gia_de_xuat || line.gia_nhap; const sl = line.sl_tk ?? line.sl_apt;
   // Giá đề xuất là gợi ý cho APT: APT có thể xuất theo giá nháp hoặc giá đề xuất — chấp nhận cả hai
   const okGia = [line.gia_note, line.gia_de_xuat, line.gia_nhap].filter(Boolean).some(g => Math.abs(l.dg - (g as number)) <= 0.5) || (!chot);
-  if (!okGia || (sl != null && Math.abs(l.sl - sl) > 0.01)) return 'lech';
+  void sl; if (!okGia) return 'lech';
   return 'khop';
+}
+
+/** Nội dung gửi APT đề nghị xuất lại giá (biên NT ngoài khung → đưa về mục tiêu). Trả '' nếu không có dòng nào */
+export function aptPriceMsg(lines: any[], cfg: Pick<AccCfg, 'bien_muc_tieu' | 'bien_nt_min' | 'bien_nt_max'>, title = ''): string {
+  const out = lines.filter(l => l.apt_stt && l.gia_khach && (l.gia_nhap || l.gia_ap_dung) && !['C', 'D'].includes(l.luong)).map(l => {
+    const target = Math.round(Number(l.gia_khach) / (1 + cfg.bien_muc_tieu)); const cur = Number(l.gia_note || l.gia_nhap);
+    const b = Number(l.gia_khach) / cur - 1;
+    return b > cfg.bien_nt_max + 0.001 || b < cfg.bien_nt_min - 0.001 ? { l, target, cur } : null;
+  }).filter(Boolean) as { l: any; target: number; cur: number }[];
+  if (!out.length) return '';
+  const f = (n: number) => n.toLocaleString('vi-VN');
+  return [`Nam Trung đề nghị APT xuất giá các dòng sau${title ? ' — ' + title : ''}:`,
+    ...out.sort((a, b) => a.l.apt_stt - b.l.apt_stt).map(({ l, target, cur }) => `• STT ${l.apt_stt} | ${l.hh || ''} | ${String(l.ten_apt || l.ten_ht || '').slice(0, 60)} | SL ${f(Number(l.sl_apt || 0))} | giá nháp ${f(cur)} → xuất giá ${f(target)}`),
+    `(${out.length} dòng)`].join('\n');
 }
