@@ -205,3 +205,13 @@ export const storage = {
     await raw(`/storage/v1/object/${bucket}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prefixes: paths }) });
   },
 };
+
+/** Lấy toàn bộ dòng theo từng lô 1000 (máy chủ giới hạn 1000 dòng / lần) */
+export async function fetchAll<T = any>(make: () => Query<any>, max = 100000, chunk = 1000): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; from < max; from += chunk) {
+    const part: T[] = (await make().range(from, from + chunk - 1)) || [];
+    out.push(...part); if (part.length < chunk) break;
+  }
+  return out;
+}

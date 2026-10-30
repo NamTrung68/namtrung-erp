@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Modal } from '../../components/ui';
 import { CustomerPicker } from '../../components/CustomerPicker';
 import { go } from '../../state';
+import { Pager, usePager } from '../../components/Pager';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Empty, Input, Loading, StatusChips, toast } from '../../components/ui';
 import { db } from '../../lib/sb';
@@ -25,13 +26,13 @@ const ARCH: ImportField[] = [
 ];
 
 export default function Library() {
-  const a = useApp(); const [q, setQ] = useState(''); const [src, setSrc] = useState(''); const [rows, setRows] = useState<any[] | null>(null); const [page, setPage] = useState(0);
+  const a = useApp(); const [q, setQ] = useState(''); const [src, setSrc] = useState(''); const [rows, setRows] = useState<any[] | null>(null);
   const [imp, setImp] = useState(false); const [tpl, setTpl] = useState<any>(null); const canImport = a.isAdmin || a.has('bgd', 'tp_kd');
-  const total = rows?.[0] ? Number(rows[0].total) : 0; const PER = 100;
-  const load = async (p = 0) => { try { setRows(await db.rpc<any[]>('quote_library', { p_q: q.trim() || null, p_source: src || null, p_limit: PER, p_offset: p * PER })); setPage(p); } catch (e) { toast.err(e); setRows([]); } };
-  useEffect(() => { const t = setTimeout(() => load(0), 400); return () => clearTimeout(t); }, [q, src]);
+  const total = rows?.[0] ? Number(rows[0].total) : 0; const pg = usePager('library', [q, src]);
+  const load = async () => { try { setRows(await db.rpc<any[]>('quote_library', { p_q: q.trim() || null, p_source: src || null, p_limit: pg.size, p_offset: pg.from })); } catch (e) { toast.err(e); setRows([]); } };
+  useEffect(() => { const t = setTimeout(() => load(), 300); return () => clearTimeout(t); }, [q, src, pg.page, pg.size]);
   const exportAll = async () => {
-    try { const all = await db.rpc<any[]>('quote_library', { p_q: q.trim() || null, p_source: src || null, p_limit: 2000, p_offset: 0 });
+    try { const all: any[] = []; for (let off = 0; off < 20000; off += 1000) { const part = await db.rpc<any[]>('quote_library', { p_q: q.trim() || null, p_source: src || null, p_limit: 1000, p_offset: off }); all.push(...part); if (part.length < 1000) break; }
       await writeXlsx(`kho-bao-gia-${new Date().toISOString().slice(0, 10)}`, [['Nguồn', 'Mã BG', 'Mã đơn', 'Ngày', 'Trạng thái', 'Tên hàng', 'HS', 'ĐVT', 'SL', 'Đơn giá ¥', 'Thuế NK %', 'VAT %', 'Giá xuất / ĐV', 'Tỷ giá', 'Hình thức NK', 'Kho', 'Cước', 'Sale'],
         ...all.map(r => [r.source === 'he_thong' ? 'Hệ thống' : 'Lưu trữ', r.code, r.order_code, r.quote_date, QUOTE_STATUS[r.status]?.[0] || '', r.item_name, r.hs_code, r.unit, num0(r.qty), num0(r.price_cny), num0(r.duty_pct), num0(r.vat_pct), num0(r.export_price), num0(r.rate), a.label('import_method', r.import_method) || r.import_method, r.warehouse, r.freight, r.sale_name])], 'Kho báo giá');
     } catch (e) { toast.err(e); }
@@ -63,14 +64,13 @@ export default function Library() {
                 <div className="mt-0.5 text-ink-400">{fmtDate(r.quote_date)}{r.sale_name && ` · ${r.sale_name}`}</div>
                 <button className="mt-1 whitespace-nowrap rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-100" onClick={() => setTpl(r)}>+ Tạo BG tương tự</button></td>
             </tr>)}</tbody></table></div>
-          <div className="flex items-center justify-between border-t border-ink-100 px-4 py-2 text-xs text-ink-500"><span>{num(total)} dòng · trang {page + 1}/{Math.max(1, Math.ceil(total / PER))}</span>
-            <span className="flex gap-1"><Button size="sm" disabled={page === 0} onClick={() => load(page - 1)}>‹ Trước</Button><Button size="sm" disabled={(page + 1) * PER >= total} onClick={() => load(page + 1)}>Sau ›</Button></span></div>
+          <Pager p={pg} total={total} />
         </>}
       </div>
       {tpl && <SimilarQuote row={tpl} onClose={() => setTpl(null)} />}
       <ImportWizard open={imp} onClose={() => setImp(false)} title="Nhập dữ liệu báo giá cũ vào kho tham khảo" fields={ARCH} sampleName="mau-bao-gia-cu"
         note={<>Mỗi dòng là một mặt hàng đã báo giá. <b>Không nhập thông tin khách hàng</b> — kho này mọi nhân sự đều xem được.</>}
-        onImport={async rs => { for (let i = 0; i < rs.length; i += 500) await db.from('quote_archive').insert(rs.slice(i, i + 500).map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v === '' ? null : v])))); load(0); return <b>Đã nhập {rs.length} dòng vào kho báo giá.</b>; }} />
+        onImport={async rs => { for (let i = 0; i < rs.length; i += 500) await db.from('quote_archive').insert(rs.slice(i, i + 500).map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v === '' ? null : v])))); load(); return <b>Đã nhập {rs.length} dòng vào kho báo giá.</b>; }} />
     </Layout>
   );
 }

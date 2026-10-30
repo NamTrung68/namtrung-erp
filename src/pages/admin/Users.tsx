@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Card, Chips, Empty, Field, Input, Loading, Modal, NumInput, Select, Table, Td, Textarea, toast, useAction, useLoad, ask } from '../../components/ui';
+import { Pager, usePager } from '../../components/Pager';
 import { auth, db } from '../../lib/sb';
 import { useApp } from '../../state';
 import { BANKS } from '../../lib/vietqr';
@@ -14,17 +15,18 @@ export default function Users() {
   const { data, loading, reload } = useLoad(() => db.from('profiles').select('*').order('full_name'), []);
   const { data: invites, reload: ri } = useLoad(() => db.from('invites').select('*').is('used_at', null).order('created_at', { asc: false }), []);
   const { run } = useAction();
+  const pg = usePager('users', [q]);
   const rows = ((data as any[]) || []).filter(p => !q || (p.full_name + p.email + (p.employee_code || '')).toLowerCase().includes(q.toLowerCase()));
   return (
     <Layout title="Nhân sự & phân quyền" actions={<Button variant="dark" onClick={() => setInv(true)}>Tạo tài khoản nhân sự</Button>}>
       <div className="mb-3 flex gap-2"><Input className="max-w-xs" placeholder="Tìm tên, email, mã NV…" value={q} onChange={e => setQ(e.target.value)} /></div>
       <Card bodyClass="p-0">{loading ? <Loading /> : <Table head={['Mã', 'Họ tên', 'Email', 'Cấp bậc', 'Vai trò', 'Quản lý trực tiếp', 'Phòng', 'Lịch', 'Trạng thái']}>
-        {rows.map(p => <tr key={p.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setEdit(p)}>
+        {pg.slice(rows).map(p => <tr key={p.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setEdit(p)}>
           <Td>{p.employee_code}</Td><Td className="font-medium">{p.full_name}{p.is_new_hire && <Badge className="ml-1" color="blue">Mới</Badge>}</Td><Td className="text-xs">{p.email}</Td>
           <Td>{a.levels.find(l => l.code === p.job_level)?.name}</Td><Td><div className="flex flex-wrap gap-1">{p.roles.map((r: string) => <Badge key={r} color={['admin', 'bgd'].includes(r) ? 'purple' : 'gray'}>{ROLES.find(x => x[0] === r)?.[1] || r}</Badge>)}</div></Td>
           <Td>{a.personName(p.manager_id)}</Td><Td>{a.units.find(u => u.id === p.org_unit_id)?.name}</Td><Td className="text-xs">{p.work_schedule}</Td>
           <Td><Badge color={p.status === 'active' ? 'green' : 'gray'}>{p.status === 'active' ? 'Đang làm' : 'Đã nghỉ'}</Badge></Td></tr>)}
-      </Table>}</Card>
+      </Table>}<Pager p={pg} total={rows.length} /></Card>
       {((invites as any[]) || []).length > 0 && <Card title="Lời mời chưa kích hoạt" className="mt-4" bodyClass="p-0"><Table head={['Email', 'Họ tên', 'Vai trò', 'Ngày mời', '']}>{(invites as any[]).map(i => (
         <tr key={i.email}><Td>{i.email}</Td><Td>{i.full_name}</Td><Td>{i.roles.join(', ')}</Td><Td>{fmtDate(i.created_at)}</Td>
           <Td><Button size="sm" variant="ghost" onClick={() => run(async () => { await db.from('invites').delete().eq('email', i.email); ri(); }, 'Đã hủy lời mời')}>Hủy</Button></Td></tr>))}</Table>

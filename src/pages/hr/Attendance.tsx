@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Layout } from '../../components/Layout';
-import { Badge, Button, Card, Empty, Field, Input, Loading, Modal, NumInput, Select, Table, Td, Tabs, Textarea, toast, useAction, useLoad } from '../../components/ui';
+import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, NumInput, Select, Table, Td, Tabs, Textarea, toast, useAction, useLoad } from '../../components/ui';
 import { db, storage } from '../../lib/sb';
 import { useApp } from '../../state';
 import { compressImage } from '../../lib/image';
@@ -85,19 +85,49 @@ function Consent() {
   );
 }
 
+// Bộ lọc làm đẹp: b sáng · c tương phản · s bão hòa · w ấm · sm mịn da (0–1). css dùng cho xem trước.
+const FILTERS: { k: string; l: string; b: number; c: number; s: number; w: number; sm: number; css: string }[] = [
+  { k: 'none', l: 'Tự nhiên', b: 1, c: 1, s: 1, w: 0, sm: 0, css: 'none' },
+  { k: 'bright', l: 'Sáng da', b: 1.12, c: 0.95, s: 1.04, w: 4, sm: 0.25, css: 'brightness(1.12) contrast(0.95) saturate(1.04)' },
+  { k: 'soft', l: 'Mịn da', b: 1.1, c: 0.92, s: 1.03, w: 6, sm: 0.5, css: 'brightness(1.1) contrast(0.92) saturate(1.03)' },
+  { k: 'rosy', l: 'Hồng hào', b: 1.08, c: 0.97, s: 1.18, w: 10, sm: 0.3, css: 'brightness(1.08) contrast(0.97) saturate(1.18) sepia(0.06)' },
+  { k: 'korea', l: 'Hàn Quốc', b: 1.16, c: 0.88, s: 0.9, w: 2, sm: 0.45, css: 'brightness(1.16) contrast(0.88) saturate(0.9)' },
+  { k: 'warm', l: 'Nắng ấm', b: 1.05, c: 1.02, s: 1.12, w: 18, sm: 0.2, css: 'brightness(1.05) contrast(1.02) saturate(1.12) sepia(0.15)' },
+];
+function applyBeauty(c: HTMLCanvasElement, f: typeof FILTERS[number]) {
+  if (f.k === 'none') return;
+  const ctx = c.getContext('2d')!; const w = c.width, h = c.height;
+  if (f.sm > 0) { // mịn da: làm mờ bằng thu nhỏ – phóng to rồi phủ mờ lên ảnh gốc (chạy được trên mọi trình duyệt)
+    const t = document.createElement('canvas'); t.width = Math.max(1, Math.round(w / 5)); t.height = Math.max(1, Math.round(h / 5));
+    const tc = t.getContext('2d')!; tc.imageSmoothingQuality = 'high'; tc.drawImage(c, 0, 0, t.width, t.height);
+    ctx.save(); ctx.globalAlpha = f.sm; ctx.imageSmoothingQuality = 'high'; ctx.drawImage(t, 0, 0, w, h); ctx.restore();
+  }
+  const img = ctx.getImageData(0, 0, w, h); const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    let r = d[i] * f.b, g = d[i + 1] * f.b, bl = d[i + 2] * f.b;
+    r = (r - 128) * f.c + 128; g = (g - 128) * f.c + 128; bl = (bl - 128) * f.c + 128;
+    const l = 0.299 * r + 0.587 * g + 0.114 * bl; r = l + (r - l) * f.s; g = l + (g - l) * f.s; bl = l + (bl - l) * f.s;
+    d[i] = r + f.w; d[i + 1] = g + f.w * 0.35; d[i + 2] = bl - f.w * 0.5;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
 function Camera({ kind, onClose, onDone }: { kind: 'in' | 'out'; onClose: () => void; onDone: () => void }) {
-  const a = useApp(); const video = useRef<HTMLVideoElement>(null); const [shot, setShot] = useState<Blob | null>(null); const [url, setUrl] = useState(''); const [err, setErr] = useState('');
+  const a = useApp(); const video = useRef<HTMLVideoElement>(null); const soft = useRef<HTMLVideoElement>(null);
+  const [fk, setFk] = useState(() => { try { return localStorage.getItem('nt_cam_filter') || 'bright'; } catch { return 'bright'; } });
+  const flt = FILTERS.find(x => x.k === fk) || FILTERS[0];
+  useEffect(() => { try { localStorage.setItem('nt_cam_filter', fk); } catch { /* */ } }, [fk]); const [shot, setShot] = useState<Blob | null>(null); const [url, setUrl] = useState(''); const [err, setErr] = useState('');
   const [note, setNote] = useState(''); const { busy, run } = useAction(); const stream = useRef<MediaStream | null>(null);
   useEffect(() => {
     navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'user', width: { ideal: 960 } }, audio: false })
-      .then(s => { stream.current = s; if (video.current) { video.current.srcObject = s; video.current.play().catch(() => {}); } })
+      .then(s => { stream.current = s; for (const v of [video.current, soft.current]) if (v) { v.srcObject = s; v.play().catch(() => {}); } })
       .catch(() => setErr('Không mở được camera. Cho phép quyền camera cho trang này rồi thử lại, hoặc chọn ảnh từ máy.'));
     return () => stream.current?.getTracks().forEach(t => t.stop());
   }, []);
   const capture = async () => {
     const v = video.current!; const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
-    const ctx = c.getContext('2d')!; ctx.translate(c.width, 0); ctx.scale(-1, 1); ctx.drawImage(v, 0, 0);
-    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(0, c.height - 34, c.width, 34); ctx.fillStyle = '#fff'; ctx.font = '18px sans-serif';
+    const ctx = c.getContext('2d', { willReadFrequently: true } as any)!; ctx.translate(c.width, 0); ctx.scale(-1, 1); ctx.drawImage(v, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0); applyBeauty(c, flt); ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(0, c.height - 34, c.width, 34); ctx.fillStyle = '#fff'; ctx.font = '18px sans-serif';
     ctx.fillText(`${a.me.full_name} · ${new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}`, 10, c.height - 11);
     const b = await compressImage(c); setShot(b); setUrl(URL.createObjectURL(b));
   };
@@ -114,9 +144,14 @@ function Camera({ kind, onClose, onDone }: { kind: 'in' | 'out'; onClose: () => 
     <Modal open onClose={onClose} title={kind === 'in' ? 'Chấm công vào' : 'Chấm công ra'} size="sm"
       footer={<>{shot && <Button onClick={() => { setShot(null); setUrl(''); }}>Chụp lại</Button>}{shot ? <Button variant="primary" loading={busy} onClick={submit}>Xác nhận chấm công</Button> : !err && <Button variant="primary" onClick={capture}>Chụp ảnh</Button>}</>}>
       {err && <div className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{err}<input className="mt-2 block text-sm" type="file" accept="image/*" capture="user" onChange={e => e.target.files?.[0] && fromFile(e.target.files[0])} /></div>}
-      <div className="overflow-hidden rounded-xl bg-ink-900">
-        {url ? <img src={url} className="w-full" alt="selfie" /> : <video ref={video} playsInline muted className="w-full -scale-x-100" />}
+      <div className="relative overflow-hidden rounded-2xl bg-ink-900">
+        {url ? <img src={url} className="w-full" alt="selfie" /> : <>
+          <video ref={video} playsInline muted className="w-full -scale-x-100" style={{ filter: flt.css }} />
+          <video ref={soft} playsInline muted aria-hidden className="pointer-events-none absolute inset-0 h-full w-full -scale-x-100 object-cover" style={{ filter: `${flt.css === 'none' ? '' : flt.css} blur(6px)`, opacity: flt.sm }} />
+        </>}
       </div>
+      {!url && !err && <div className="-mx-1 mt-2 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none]">{FILTERS.map(x =>
+        <button key={x.k} onClick={() => setFk(x.k)} className={cx('shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition', fk === x.k ? 'border-brand-600 bg-brand-600 text-white shadow-sm' : 'border-ink-200 bg-white text-ink-700')}>✨ {x.l}</button>)}</div>}
       {shot && <div className="mt-2 text-xs text-ink-500">Ảnh đã nén: {Math.round(shot.size / 1024)} KB</div>}
       <Field label="Ghi chú (nếu có)" className="mt-3"><Input value={note} onChange={e => setNote(e.target.value)} /></Field>
     </Modal>

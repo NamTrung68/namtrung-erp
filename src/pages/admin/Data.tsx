@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Button, Card, Empty, Field, Input, Loading, Select, Table, Td, Tabs, Textarea, toast, useAction, useLoad, ask } from '../../components/ui';
-import { db, storage } from '../../lib/sb';
+import { Pager, usePager } from '../../components/Pager';
+import { db, fetchAll, storage } from '../../lib/sb';
 import { useApp } from '../../state';
 import { readXlsx, toISODate } from '../../lib/xlsx';
 import { makeZip } from '../../lib/zip';
@@ -82,13 +83,16 @@ function Selfies() {
 
 function Audit() {
   const a = useApp(); const [table, setTable] = useState(''); const [actor, setActor] = useState('');
-  const { data, loading } = useLoad(async () => { let q = db.from('audit_logs').select('*').order('at', { asc: false }).limit(300); if (table) q = q.eq('table_name', table); if (actor) q = q.eq('actor_id', actor); return q; }, [table, actor]);
+  const pg = usePager('audit', [table, actor]);
+  const { data: res, loading } = useLoad(async () => { let q = db.from('audit_logs').select('*', { count: true }).order('at', { asc: false }).range(pg.from, pg.to); if (table) q = q.eq('table_name', table); if (actor) q = q.eq('actor_id', actor); return q; }, [table, actor, pg.page, pg.size]);
+  const data = (res as any)?.data; const total = (res as any)?.count ?? 0;
   return (
     <Card title="Nhật ký thay đổi" actions={<><Select className="w-48" options={['customers', 'quotations', 'profiles', 'profile_private', 'leave_requests', 'payslips', 'payslip_adjustments', 'settings', 'exchange_rates', 'documents', 'invites', 'secrets', 'attendance_events', 'job_daily_crm'].map(x => [x, x])} value={table} onChange={setTable} placeholder="Mọi bảng" />
       <Select className="w-48" options={a.people.map(p => [p.id, p.full_name])} value={actor} onChange={setActor} placeholder="Mọi người" /></>} bodyClass="p-0">
       {loading ? <Loading /> : !(data as any[])?.length ? <Empty>Không có dữ liệu (hoặc bạn không có quyền xem)</Empty> :
         <Table head={['Thời gian', 'Người thực hiện', 'Hành động', 'Bảng', 'Bản ghi', 'Thay đổi']}>{(data as any[]).map(l => <tr key={l.id}><Td className="whitespace-nowrap text-xs">{fmtDateTime(l.at)}</Td><Td className="whitespace-nowrap">{a.personName(l.actor_id) || 'Hệ thống'}</Td>
           <Td>{l.action}</Td><Td>{l.table_name}</Td><Td className="max-w-[120px] truncate text-xs">{l.record_id}</Td><Td className="max-w-md text-xs"><code className="line-clamp-3 break-all">{JSON.stringify(l.diff)}</code></Td></tr>)}</Table>}
+      <Pager p={pg} total={total} />
     </Card>
   );
 }
@@ -102,7 +106,7 @@ function Backups() {
     run(async () => { await db.rpc('backup_create', { p_note: note || 'Sao lưu thủ công' }); reload(); }, 'Đã sao lưu'); };
   const download = () => run(async () => {
     const files: { name: string; data: Blob }[] = [];
-    for (const t of BACKUP_TABLES) { setDl(t); try { const rows = await db.from(t).select('*').limit(100000); files.push({ name: `${t}.json`, data: new Blob([JSON.stringify(rows)], { type: 'application/json' }) }); } catch { /* bảng không có quyền / không tồn tại */ } }
+    for (const t of BACKUP_TABLES) { setDl(t); try { const noId = ['settings', 'lookups', 'job_levels', 'hr_records', 'holidays', 'leave_entitlements']; const rows = await fetchAll(() => noId.includes(t) ? db.from(t).select('*') : db.from(t).select('*').order('id'), 500000); files.push({ name: `${t}.json`, data: new Blob([JSON.stringify(rows)], { type: 'application/json' }) }); } catch { /* bảng không có quyền / không tồn tại */ } }
     setDl(''); downloadBlob(`erp-namtrung-saoluu-${today()}.zip`, await makeZip(files));
   }, 'Đã tải bản sao lưu về máy');
   const latest = (data as any[])?.[0]?.name || 'bk_YYYYMMDD_HHMMSS';

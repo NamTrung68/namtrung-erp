@@ -10,6 +10,7 @@ import Today from './pages/Today';
 import Timesheet from './pages/hr/Timesheet';
 import Staff from './pages/hr/Staff';
 import Library from './pages/crm/Library';
+import Replies from './pages/crm/Replies';
 import Inventory from './pages/Inventory';
 import Customers from './pages/crm/Customers';
 import Quotes from './pages/crm/Quotes';
@@ -31,7 +32,7 @@ import DataAdmin from './pages/admin/Data';
 import Account from './pages/Account';
 
 const routes: Record<string, React.FC> = {
-  '/': Today, '/dashboard': Dashboard, '/hr/timesheet': Timesheet, '/hr/staff': Staff, '/crm/library': Library, '/inventory': Inventory,
+  '/': Today, '/dashboard': Dashboard, '/hr/timesheet': Timesheet, '/hr/staff': Staff, '/crm/library': Library, '/crm/replies': Replies, '/inventory': Inventory,
   '/crm/customers': Customers, '/crm/customer': Customers,
   '/crm/quotes': Quotes, '/crm/quote': QuoteEditor,
   '/crm/daily': Daily, '/crm/reports': Reports,

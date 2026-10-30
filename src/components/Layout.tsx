@@ -4,6 +4,7 @@ import { auth, db } from '../lib/sb';
 import { Button, cx, toast } from './ui';
 import { fmtDateTime } from '../lib/format';
 import { DuplicateCheck, QuickCare } from './CrmModals';
+import { ReplyPicker } from './Replies';
 
 const P: Record<string, string> = {
   home: 'M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z',
@@ -42,6 +43,7 @@ export function useNav() {
       { to: '/crm/customers', label: 'Khách hàng', icon: '👥', show: a.isSales },
       { to: '/crm/quotes', label: 'Báo giá', icon: '🧾', show: a.isSales },
       { to: '/crm/library', label: 'Kho báo giá', icon: '📚', show: true },
+      { to: '/crm/replies', label: 'Câu trả lời mẫu', icon: '💬', show: true },
       { to: '/support', label: 'Hỗ trợ khách', icon: '🆘', show: true },
       { to: '/crm/daily', label: 'Báo cáo ngày', icon: '📝', show: a.isSales },
       { to: '/crm/reports', label: 'Báo cáo và KPI', icon: '📈', show: a.isSales },
@@ -72,7 +74,7 @@ export function useNav() {
 
 export function Layout({ children, title, actions }: { children: React.ReactNode; title?: React.ReactNode; actions?: React.ReactNode }) {
   const a = useApp(); const { path } = useRoute(); const nav = useNav();
-  const [open, setOpen] = useState(false); const [check, setCheck] = useState(false); const [care, setCare] = useState(false);
+  const [open, setOpen] = useState(false); const [check, setCheck] = useState(false); const [care, setCare] = useState(false); const [reply, setReply] = useState(false);
   useEffect(() => setOpen(false), [path]);
   const side = (
     <nav className="flex h-full flex-col gap-3 overflow-y-auto px-3 py-4">
@@ -108,6 +110,7 @@ export function Layout({ children, title, actions }: { children: React.ReactNode
         <button className="rounded-xl p-1.5 hover:bg-ink-100 lg:hidden" onClick={() => setOpen(true)} aria-label="Menu"><Icon name="menu" /></button>
         <h1 className="min-w-0 flex-1 truncate text-base font-extrabold tracking-tight sm:text-lg">{title}</h1>
         <div className="hidden items-center gap-2 md:flex">{actions}</div>
+        <Button size="sm" onClick={() => setReply(true)} title="Câu trả lời mẫu"><span>💬</span><span className="hidden sm:inline">Câu mẫu</span></Button>
         {a.isSales && <>
           <Button size="sm" className="hidden sm:inline-flex" onClick={() => setCheck(true)}>Kiểm tra SĐT / MST</Button>
           <Button size="sm" variant="primary" onClick={() => setCare(true)}><span className="sm:hidden">+ Chăm sóc</span><span className="hidden sm:inline">Ghi chăm sóc nhanh</span></Button>
@@ -119,6 +122,7 @@ export function Layout({ children, title, actions }: { children: React.ReactNode
       <main className="mx-auto max-w-[1600px] p-3 sm:p-5">{children}</main>
       <DuplicateCheck open={check} onClose={() => setCheck(false)} />
       <QuickCare open={care} onClose={() => setCare(false)} />
+      {reply && <ReplyPicker open onClose={() => setReply(false)} />}
     </div>
   );
 }

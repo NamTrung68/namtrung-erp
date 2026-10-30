@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, cx, Empty, Field, Input, Loading, Modal, NumInput, Select, StatusChips, Tabs, Textarea, toast, useAction, useLoad, ask } from '../../components/ui';
+import { Pager, usePager } from '../../components/Pager';
 import { db, storage } from '../../lib/sb';
 import { isUrl, prepareUpload } from '../../lib/image';
 import { go, useApp, useRoute } from '../../state';
@@ -28,6 +29,7 @@ export default function Staff() {
     khong_hd: r => !r.o.contract_type && r.status === 'active', nghi: r => r.o.employment_status === 'nghi_viec' || r.status !== 'active',
   };
   const cnt = (k: string) => rows.filter(test[k]).length;
+  const pg = usePager('staff', [f, q]);
   const list = rows.filter(test[f]).filter(r => !q.trim() || `${r.full_name} ${r.employee_code} ${r.email} ${r.phone}`.toLowerCase().includes(q.trim().toLowerCase()));
   if (!hr) return <Layout title="Hồ sơ của tôi"><div className="mx-auto max-w-4xl"><StaffPanel id={a.me.id} readOnly onChanged={() => {}} /></div></Layout>;
   return (
@@ -40,7 +42,7 @@ export default function Staff() {
       <div className="flex gap-4">
         <div className={cx('min-w-0 flex-1 rounded-2xl border border-ink-200 bg-white shadow-soft', sel && 'hidden xl:block')}>
           {loading ? <Loading /> : !list.length ? <Empty>Không có nhân sự phù hợp</Empty> :
-            <ul className="divide-y divide-ink-100">{list.map(r => { const o = r.o; const unit = a.units.find(u => u.id === r.org_unit_id)?.name;
+            <ul className="divide-y divide-ink-100">{pg.slice(list).map(r => { const o = r.o; const unit = a.units.find(u => u.id === r.org_unit_id)?.name;
               return <li key={r.id}><button onClick={() => go(`/hr/staff?id=${r.id}`)} className={cx('grid w-full grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-ink-50 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto]', sel === r.id && 'bg-brand-50')}>
                 <span className="min-w-0"><b className="block truncate">{r.full_name}</b><span className="text-xs text-ink-400">{r.employee_code} · {r.phone || r.email}</span></span>
                 <span className="hidden min-w-0 text-xs md:block"><span className="block truncate text-ink-700">{o.position_title || a.levels.find(l => l.code === r.job_level)?.name}</span><span className="text-ink-400">{unit}</span></span>
@@ -48,6 +50,7 @@ export default function Staff() {
                 <span className="flex flex-col items-end gap-1"><Badge color={EMP[o.employment_status]?.[1]}>{EMP[o.employment_status]?.[0] || '—'}</Badge>
                   {o.docs_missing > 0 && <span className="text-[11px] text-pink-700">Thiếu {o.docs_missing} giấy tờ</span>}</span>
               </button></li>; })}</ul>}
+          {list.length > 0 && <Pager p={pg} total={list.length} />}
         </div>
         {sel && <div className="fixed inset-0 z-30 overflow-y-auto bg-ink-50 p-2 xl:static xl:z-auto xl:w-[56%] xl:max-w-[960px] xl:overflow-visible xl:bg-transparent xl:p-0">
           <StaffPanel key={sel} id={sel} onClose={() => go('/hr/staff')} onChanged={reload} />

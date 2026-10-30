@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Button, Empty, Input, Loading, Select, StatusChips, Table, Td, toast, useLoad } from '../../components/ui';
-import { db } from '../../lib/sb';
+import { db, fetchAll } from '../../lib/sb';
+import { Pager, usePager } from '../../components/Pager';
 import { go, useApp, useRoute } from '../../state';
 import { fmtDate, money } from '../../lib/format';
 import { QUOTE_STATUS, QuoteStatus } from './Customers';
@@ -10,12 +11,13 @@ import { writeXlsx } from '../../lib/xlsx';
 export default function Quotes() {
   const a = useApp(); const { query } = useRoute();
   const [status, setStatus] = useState(query.status || ''); const [q, setQ] = useState(''); const [dq, setDq] = useState(''); useEffect(() => { const t = setTimeout(() => setDq(q), 350); return () => clearTimeout(t); }, [q]); const [sale, setSale] = useState('');
-  const { data: cnt } = useLoad(() => db.from('quotations').select('status,sale_id').neq('status', 'da_thay_the').limit(10000), []);
+  const { data: cnt } = useLoad(() => db.rpc<any[]>('quote_status_counts', { p_sale: sale || null }), [sale]);
   const counts: Record<string, number> = { all: 0 };
-  ((cnt as any[]) || []).filter(r => !sale || r.sale_id === sale).forEach(r => { counts[r.status] = (counts[r.status] || 0) + 1; counts.all++; });
-  const { data, loading } = useLoad(async () => {
-    let qq = db.from('quotations').select('id,code,version,status,total_after_vat,est_profit,created_at,sent_at,valid_until,order_code,sale_id,violations,inventory_flags,ma_don:header->>maDonHeThong,customers(code,sys_code,sys_username,contact_name,company_name)')
-      .neq('status', 'da_thay_the').order('created_at', { asc: false }).limit(300);
+  ((cnt as any[]) || []).forEach(r => { counts[r.status] = Number(r.n); counts.all += Number(r.n); });
+  const pg = usePager('quotes', [status, dq, sale]);
+  const build = async (count: boolean) => {
+    let qq = db.from('quotations').select('id,code,version,status,total_after_vat,est_profit,created_at,sent_at,valid_until,order_code,sale_id,violations,inventory_flags,ma_don:header->>maDonHeThong,customers(code,sys_code,sys_username,contact_name,company_name)', { count })
+      .neq('status', 'da_thay_the').order('created_at', { asc: false });
     if (status) qq = qq.eq('status', status);
     if (sale) qq = qq.eq('sale_id', sale);
     const t = dq.trim().replace(/[(),*]/g, ' ').trim();
@@ -23,12 +25,14 @@ export default function Quotes() {
       const cs: any[] = await db.from('customers').select('id').or(`contact_name.ilike.*${t}*,company_name.ilike.*${t}*,code.ilike.*${t}*,sys_code.ilike.*${t}*,sys_username.ilike.*${t}*,tax_code.ilike.*${t}*,phone_norm.ilike.*${t.replace(/\D/g, '') || t}*`).limit(200);
       qq = qq.or([`code.ilike.*${t}*`, `order_code.ilike.*${t}*`, `header->>maDonHeThong.ilike.*${t}*`, ...(cs.length ? [`customer_id.in.(${cs.map(c => c.id).join(',')})`] : [])].join(','));
     }
-    return qq;
-  }, [status, dq, sale]);
+    return { qq }; // bọc lại: builder là thenable, trả thẳng sẽ bị await chạy mất
+  };
+  const { data: res, loading } = useLoad(async () => (await build(true)).qq.range(pg.from, pg.to), [status, dq, sale, pg.page, pg.size]);
+  const data = (res as any)?.data; const total = (res as any)?.count ?? 0;
   const exportXlsx = async () => {
     try {
-      const ids = ((data as any[]) || []).map(r => r.id); if (!ids.length) throw new Error('Không có báo giá để xuất');
-      const qs: any[] = await db.from('quotations').select('code,version,status,created_at,sent_at,valid_until,order_code,sale_id,total_after_vat,est_profit,header,customers(code,sys_code,contact_name,company_name),quotation_lines(line_no,name,hs_code,unit,qty,unit_price_cny,duty_pct,vat_pct,computed)').in('id', ids);
+      const { qq: b } = await build(false); const ids = (await fetchAll(() => b, 5000)).map((r: any) => r.id); if (!ids.length) throw new Error('Không có báo giá để xuất');
+      const qs: any[] = []; for (let i = 0; i < ids.length; i += 150) qs.push(...await db.from('quotations').select('code,version,status,created_at,sent_at,valid_until,order_code,sale_id,total_after_vat,est_profit,header,customers(code,sys_code,contact_name,company_name),quotation_lines(line_no,name,hs_code,unit,qty,unit_price_cny,duty_pct,vat_pct,computed)').in('id', ids.slice(i, i + 150)));
       const rows: any[][] = [['Mã BG', 'Phiên bản', 'Ngày', 'Trạng thái', 'Mã đơn', 'Mã KH', 'Mã KH hệ thống', 'Khách hàng', 'Sale', 'Tỷ giá', 'Hình thức NK', 'Kho', 'STT', 'Tên hàng', 'HS', 'ĐVT', 'SL', 'Đơn giá ¥', 'Thuế NK %', 'VAT %', 'Giá xuất / ĐV', 'Tổng trước VAT (dòng)', 'Tổng sau VAT (BG)', 'LN ước tính (BG)']];
       qs.sort((x, y) => (y.created_at > x.created_at ? 1 : -1)).forEach(q => (q.quotation_lines || []).sort((x: any, y: any) => x.line_no - y.line_no).forEach((l: any) => rows.push([
         q.code, q.version, fmtDate(q.created_at), QUOTE_STATUS[q.status]?.[0], q.order_code || q.header?.maDonHeThong || '', q.customers?.code, q.customers?.sys_code, q.customers?.company_name || q.customers?.contact_name, a.personName(q.sale_id),
@@ -73,6 +77,7 @@ export default function Quotes() {
                 <Td className="whitespace-nowrap">{fmtDate(r.valid_until)}</Td><Td className="whitespace-nowrap font-semibold text-brand-700">{r.order_code || r.ma_don}</Td><Td className="whitespace-nowrap text-xs">{a.personName(r.sale_id)}</Td>
               </tr>))}
           </Table></>}
+        <Pager p={pg} total={total} />
       </div>
     </Layout>
   );

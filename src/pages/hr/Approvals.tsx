@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Card, Empty, Field, Input, Loading, Modal, Select, Table, Td, Textarea, useAction, useLoad, ask } from '../../components/ui';
+import { Pager, usePager } from '../../components/Pager';
 import { db } from '../../lib/sb';
 import { useApp, go } from '../../state';
 import { fmtDate, fmtDateTime, num, today, addDays } from '../../lib/format';
@@ -13,6 +14,7 @@ export default function Approvals() {
   const { data: lv, loading, reload } = useLoad(() => db.from('leave_requests').select('*').neq('profile_id', a.me.id).eq('status', hist ? 'da_duyet' : 'cho_duyet').order('start_date', { asc: !hist }).limit(200), [hist]);
   const { data: ar, reload: r2 } = useLoad(() => db.from('attendance_requests').select('*').neq('profile_id', a.me.id).eq('status', hist ? 'da_duyet' : 'cho_duyet').order('work_date', { asc: !hist }).limit(200), [hist]);
   const { data: dels, reload: r3 } = useLoad(() => db.from('delegations').select('*').is('revoked_at', null).gte('to_at', new Date().toISOString()).order('from_at'), []);
+  const pl = usePager('appr_leave', [hist]); const pa = usePager('appr_att', [hist]);
   const decide = async (table: 'leave' | 'attendance', id: string, ok: boolean) => {
     const note = ok ? '' : await ask({ title: 'Từ chối đơn', input: { label: 'Lý do', required: true } });
     if (note === null) return;
@@ -23,16 +25,16 @@ export default function Approvals() {
       <div className="mb-3 flex items-center gap-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={hist} onChange={e => setHist(e.target.checked)} /> Xem đơn đã duyệt</label>
         {(a.isAdmin || a.has('tp_kd')) && <Button size="sm" onClick={() => go('/crm/quotes?status=cho_duyet')}>Báo giá chờ duyệt giá →</Button>}</div>
       <Card title="Đơn nghỉ · công tác · vắng theo giờ" bodyClass="p-0" className="mb-4">
-        {loading ? <Loading /> : !(lv as any[])?.length ? <Empty>Không có đơn</Empty> : <Table head={['Nhân sự', 'Loại', 'Thời gian', 'Ngày', 'Lý do', 'Gửi lúc', '']}>{(lv as any[]).map(r => (
+        {loading ? <Loading /> : !(lv as any[])?.length ? <Empty>Không có đơn</Empty> : <><Table head={['Nhân sự', 'Loại', 'Thời gian', 'Ngày', 'Lý do', 'Gửi lúc', '']}>{pl.slice(lv as any[]).map(r => (
           <tr key={r.id}><Td className="whitespace-nowrap font-medium">{a.personName(r.profile_id)}</Td><Td>{a.label('leave_type', r.leave_type)}{r.late_notice && <Badge color="amber" className="ml-1">báo gấp</Badge>}</Td>
             <Td className="whitespace-nowrap">{whenText(r)}</Td><Td>{num(r.days, 1)}</Td>
             <Td className="max-w-xs">{r.reason}{r.backup_id && <div className="text-xs text-ink-400">Hỗ trợ: {a.personName(r.backup_id)}</div>}{r.handover && <div className="text-xs text-ink-400">Bàn giao: {r.handover}</div>}</Td><Td className="whitespace-nowrap text-xs">{fmtDateTime(r.created_at)}</Td>
-            <Td className="whitespace-nowrap">{r.status === 'cho_duyet' ? <><Button size="sm" variant="success" onClick={() => decide('leave', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('leave', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table>}
+            <Td className="whitespace-nowrap">{r.status === 'cho_duyet' ? <><Button size="sm" variant="success" onClick={() => decide('leave', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('leave', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pl} total={(lv as any[]).length} /></>}
       </Card>
       <Card title="Đơn xác nhận công (quên chấm)" bodyClass="p-0" className="mb-4">
-        {!(ar as any[])?.length ? <Empty>Không có đơn</Empty> : <Table head={['Nhân sự', 'Loại', 'Ngày', 'Lý do', '']}>{(ar as any[]).map(r => (
+        {!(ar as any[])?.length ? <Empty>Không có đơn</Empty> : <><Table head={['Nhân sự', 'Loại', 'Ngày', 'Lý do', '']}>{pa.slice(ar as any[]).map(r => (
           <tr key={r.id}><Td className="font-medium">{a.personName(r.profile_id)}</Td><Td>{KIND[r.kind]}{r.minutes && ` · ${r.minutes} phút`}</Td><Td>{fmtDate(r.work_date)}{r.part !== 'full' && ` (${r.part === 'am' ? 'sáng' : 'chiều'})`}</Td><Td>{r.reason}</Td>
-            <Td className="whitespace-nowrap">{r.status === 'cho_duyet' ? <><Button size="sm" variant="success" onClick={() => decide('attendance', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('attendance', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table>}
+            <Td className="whitespace-nowrap">{r.status === 'cho_duyet' ? <><Button size="sm" variant="success" onClick={() => decide('attendance', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('attendance', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pa} total={(ar as any[]).length} /></>}
       </Card>
       <Card title="Ủy quyền đang hiệu lực" bodyClass="p-0">
         {!(dels as any[])?.length ? <Empty>Không có</Empty> : <Table head={['Người ủy quyền', 'Người được ủy quyền', 'Từ', 'Đến', 'Lý do', '']}>{(dels as any[]).map(d => (

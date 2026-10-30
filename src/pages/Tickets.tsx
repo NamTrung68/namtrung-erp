@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Layout } from '../components/Layout';
 import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, Select, Tabs, Textarea, toast, useAction, useLoad } from '../components/ui';
+import { Pager, usePager } from '../components/Pager';
 import { db, storage } from '../lib/sb';
 import { go, useApp, useRoute } from '../state';
 import { fmtDateTime } from '../lib/format';
@@ -24,6 +25,7 @@ export default function Tickets() {
     faq: all.filter(t => t.is_public && t.answer),
   };
   const rows = lists[tab]; const sel = ((data as any[]) || []).find(t => t.id === query.id);
+  const pg = usePager('tickets', [tab, q]);
   return (
     <Layout title="Claim & hỏi đáp" actions={<Button variant="dark" onClick={() => setOpen(true)}>Gửi claim / câu hỏi</Button>}>
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -33,9 +35,10 @@ export default function Tickets() {
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <Card bodyClass="p-0" className={cx(sel && 'hidden lg:block')}>{loading ? <Loading /> : !rows.length ? <Empty>Không có mục nào.</Empty> :
-          <ul className="divide-y divide-ink-100">{rows.map(t => <li key={t.id}><button onClick={() => go(`/tickets?id=${t.id}`)} className={cx('w-full px-4 py-3 text-left hover:bg-ink-50', query.id === t.id && 'bg-brand-50')}>
+          <ul className="divide-y divide-ink-100">{pg.slice(rows).map(t => <li key={t.id}><button onClick={() => go(`/tickets?id=${t.id}`)} className={cx('w-full px-4 py-3 text-left hover:bg-ink-50', query.id === t.id && 'bg-brand-50')}>
             <div className="flex flex-wrap items-center gap-1.5"><b className="text-sm">{t.title}</b><Badge color={stColor[t.status]}>{ST.find(s => s[0] === t.status)?.[1]}</Badge>{['gap', 'khan', 'cao'].includes(t.priority) && <Badge color="solidred">{t.priority === 'khan' ? 'Khẩn' : 'Gấp'}</Badge>}</div>
             <div className="text-xs text-ink-500">{t.code} · {a.label('claim_type', t.type) || t.type} · {a.personName(t.reporter_id)} · {fmtDateTime(t.created_at)}</div></button></li>)}</ul>}
+          {rows.length > 0 && <Pager p={pg} total={rows.length} />}
         </Card>
         {sel ? <TicketView t={sel} onChanged={reload} /> : <Card className="hidden lg:block"><Empty>Chọn một mục để xem</Empty></Card>}
       </div>

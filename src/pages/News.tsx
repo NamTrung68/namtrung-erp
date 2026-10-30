@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, Select, Textarea, useAction, useLoad, Chips } from '../components/ui';
+import { Pager, usePager } from '../components/Pager';
 import { db } from '../lib/sb';
 import { go, useApp, useRoute } from '../state';
 import { fmtDateTime } from '../lib/format';
@@ -11,6 +12,7 @@ export default function News() {
   const a = useApp(); const { query } = useRoute(); const [open, setOpen] = useState(false);
   const canPost = a.isAdmin || a.has('hcns', 'tp_kd', 'tn_kd');
   const { data, loading, reload } = useLoad(() => db.from('announcements').select('*').order('pinned', { asc: false }).order('publish_at', { asc: false }).limit(100), []);
+  const pg = usePager('news', [(data as any[])?.length]);
   const { data: reads, reload: reloadReads } = useLoad(() => db.from('announcement_reads').select('announcement_id').eq('user_id', a.me.id), []);
   const readSet = new Set(((reads as any[]) || []).map(r => r.announcement_id));
   const sel = ((data as any[]) || []).find(x => x.id === query.id);
@@ -20,9 +22,9 @@ export default function News() {
     <Layout title="Bảng tin nội bộ" actions={canPost && <Button variant="dark" onClick={() => setOpen(true)}>Đăng thông báo</Button>}>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <Card bodyClass="p-0">{loading ? <Loading /> : !(data as any[])?.length ? <Empty>Chưa có thông báo</Empty> :
-          <ul className="divide-y divide-ink-100">{(data as any[]).map(n => <li key={n.id}><button onClick={() => go(`/news?id=${n.id}`)} className={cx('w-full px-4 py-3 text-left hover:bg-ink-50', query.id === n.id && 'bg-brand-50')}>
+          <><ul className="divide-y divide-ink-100">{pg.slice(data as any[]).map(n => <li key={n.id}><button onClick={() => go(`/news?id=${n.id}`)} className={cx('w-full px-4 py-3 text-left hover:bg-ink-50', query.id === n.id && 'bg-brand-50')}>
             <div className={cx('text-sm', readSet.has(n.id) ? 'text-ink-700' : 'font-semibold')}>{n.pinned && '📌 '}{n.title}</div>
-            <div className="text-xs text-ink-400">{CATS.find(c => c[0] === n.category)?.[1]} · {a.personName(n.created_by)} · {fmtDateTime(n.publish_at)}</div></button></li>)}</ul>}
+            <div className="text-xs text-ink-400">{CATS.find(c => c[0] === n.category)?.[1]} · {a.personName(n.created_by)} · {fmtDateTime(n.publish_at)}</div></button></li>)}</ul><Pager p={pg} total={(data as any[]).length} /></>}
         </Card>
         {sel ? <Card title={sel.title} actions={(sel.created_by === a.me.id || a.isAdmin) && <Button size="sm" variant="danger" onClick={() => run(async () => { await db.from('announcements').delete().eq('id', sel.id); go('/news'); reload(); }, 'Đã xóa')}>Xóa</Button>}>
           <div className="mb-3 flex flex-wrap gap-2 text-xs text-ink-500"><Badge>{CATS.find(c => c[0] === sel.category)?.[1]}</Badge>{a.personName(sel.created_by)} · {fmtDateTime(sel.publish_at)}

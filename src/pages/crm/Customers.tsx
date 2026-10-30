@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Chips, cx, Empty, Field, Input, Loading, Modal, Select, Tabs, Textarea, toast, useAction, useLoad, Table, Td, ask, StatusChips } from '../../components/ui';
-import { db } from '../../lib/sb';
+import { db, fetchAll } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { addDays, daysBetween, fmtDate, fmtDateTime, money, today } from '../../lib/format';
 import { CareModal, DuplicateCheck, dupText, DirectiveModal } from '../../components/CrmModals';
 import { ImportField, ImportWizard } from '../../components/ImportWizard';
 import { writeXlsx } from '../../lib/xlsx';
+import { Pager, usePager } from '../../components/Pager';
 
 const EMPTY = {
   contact_name: '', position: '', company_name: '', phone: '', zalo: '', tax_code: '', email: '', facebook: '', province: '', address: '',
@@ -66,28 +67,32 @@ export default function Customers() {
   const [creating, setCreating] = useState(false);
   const [checkOpen, setCheckOpen] = useState(query.check === '1');
   useEffect(() => { setSel(query.id || null); if (query.check === '1') setCheckOpen(true); if (query.new === '1') setCreating(true); }, [query.id, query.check, query.new]);
-  const { data, loading, reload } = useLoad(async () => {
-    let qq = db.from('customers').select(CUSTOMER_COLS)
-      .is('deleted_at', null).order('next_care_date', { nulls: 'last' }).order('created_at', { asc: false }).limit(300);
-    if (q.trim()) { const s = q.trim().replace(/[(),]/g, ' '); qq = qq.or(`contact_name.ilike.*${s}*,company_name.ilike.*${s}*,phone_norm.ilike.*${s.replace(/\D/g, '') || s}*,code.ilike.*${s}*,sys_code.ilike.*${s}*,sys_username.ilike.*${s}*,tax_code.ilike.*${s}*`); }
+  const [dq, setDq] = useState(''); useEffect(() => { const t = setTimeout(() => setDq(q), 350); return () => clearTimeout(t); }, [q]);
+  const pg = usePager('customers', [dq, stage, temp, type, owner, due]);
+  const build = (count: boolean) => {
+    let qq = db.from('customers').select(CUSTOMER_COLS, { count })
+      .is('deleted_at', null).order('next_care_date', { nulls: 'last' }).order('created_at', { asc: false });
+    if (dq.trim()) { const s = dq.trim().replace(/[(),]/g, ' '); qq = qq.or(`contact_name.ilike.*${s}*,company_name.ilike.*${s}*,phone_norm.ilike.*${s.replace(/\D/g, '') || s}*,code.ilike.*${s}*,sys_code.ilike.*${s}*,sys_username.ilike.*${s}*,tax_code.ilike.*${s}*`); }
     if (stage) qq = qq.eq('stage', stage); if (temp) qq = qq.eq('temperature', temp); if (type) qq = qq.eq('customer_type', type);
     if (owner) qq = qq.eq('owner_id', owner); else if (!a.isLead) qq = qq.eq('owner_id', a.me.id);
     if (due) qq = qq.lte('next_care_date', today()).neq('stage', 'khong_tiem_nang');
     return qq;
-  }, [q, stage, temp, type, owner, due]);
+  };
+  const { data: res, loading, reload } = useLoad(() => build(true).range(pg.from, pg.to), [dq, stage, temp, type, owner, due, pg.page, pg.size]);
+  const data = (res as any)?.data; const total = (res as any)?.count ?? 0;
   const salesOpts = a.people.filter(p => p.status === 'active').map(p => [p.id, p.full_name] as [string, string]);
   const { data: counts, reload: reloadCounts } = useLoad(() => db.rpc<any[]>('customer_stage_counts', { p_owner: owner || null }), [owner]);
   const cmap = new Map(((counts as any[]) || []).map(r => [r.stage, Number(r.n)]));
-  const total = Array.from(cmap.values()).reduce((x, y) => x + y, 0);
+  const stageTotal = Array.from(cmap.values()).reduce((x, y) => x + y, 0);
   const open = (id: string) => go(`/crm/customer?id=${id}`);
   const close = () => { setCreating(false); go('/crm/customers'); };
   const rows = (data as any[]) || [];
   const [careFor, setCareFor] = useState<any>(null);
   const [impOpen, setImpOpen] = useState(false); const [createNew, setCreateNew] = useState(false);
   const canImport = a.isAdmin || a.has('bgd', 'tp_kd');
-  const exportList = () => writeXlsx(`khach-hang-${today()}`, [['Mã KH', 'Mã KH hệ thống', 'Người liên hệ', 'Công ty / shop', 'SĐT', 'Zalo', 'MST', 'Loại khách', 'Ngành', 'Hình thức NK', 'Giai đoạn', 'Mức độ', 'Hẹn chăm', 'Lần chăm', 'Báo giá', 'Đơn', 'Ngày đơn cuối (HT)', 'Số ngày không đơn', 'Sale'],
-    ...rows.map(c => [c.code, c.sys_code, c.contact_name, c.company_name, c.phone, c.zalo, c.tax_code, a.label('customer_type', c.customer_type), a.label('industry', c.industry), a.label('import_method', c.import_method),
-      a.label('stage', c.stage), a.label('temperature', c.temperature), c.next_care_date, c.care_count, c.quote_count, c.order_count, c.sys_last_order_date, c.sys_last_order_date ? daysBetween(c.sys_last_order_date, today()) : '', a.personName(c.owner_id)])], 'Khách hàng');
+  const exportList = async () => { const all: any[] = await fetchAll(() => build(false), 50000); return writeXlsx(`khach-hang-${today()}`, [['Mã KH', 'Mã KH hệ thống', 'Người liên hệ', 'Công ty / shop', 'SĐT', 'Zalo', 'MST', 'Loại khách', 'Ngành', 'Hình thức NK', 'Giai đoạn', 'Mức độ', 'Hẹn chăm', 'Lần chăm', 'Báo giá', 'Đơn', 'Ngày đơn cuối (HT)', 'Số ngày không đơn', 'Sale'],
+    ...all.map(c => [c.code, c.sys_code, c.contact_name, c.company_name, c.phone, c.zalo, c.tax_code, a.label('customer_type', c.customer_type), a.label('industry', c.industry), a.label('import_method', c.import_method),
+      a.label('stage', c.stage), a.label('temperature', c.temperature), c.next_care_date, c.care_count, c.quote_count, c.order_count, c.sys_last_order_date, c.sys_last_order_date ? daysBetween(c.sys_last_order_date, today()) : '', a.personName(c.owner_id)])], 'Khách hàng'); };
   const quickCare = async (e: React.MouseEvent, id: string) => { e.stopPropagation(); setCareFor(await db.from('customers').select('*').eq('id', id).maybeSingle()); };
   return (
     <Layout title="Khách hàng" actions={<>
@@ -96,7 +101,7 @@ export default function Customers() {
       {a.isLead && <Button onClick={exportList}>⬇ Xuất Excel</Button>}
       <Button onClick={() => { reload(); reloadCounts(); }}>Tải lại</Button></>}>
       <div className={cx((sel || creating) && 'hidden xl:block')}>
-        <StatusChips value={stage} onChange={setStage} items={[['', 'Tất cả', total, 'dark'], ...a.opts('stage').map(([k, l]) => [k, l, cmap.get(k) || 0, STAGE_TONE[k] || 'gray'] as [string, string, number, string])]} />
+        <StatusChips value={stage} onChange={setStage} items={[['', 'Tất cả', stageTotal, 'dark'], ...a.opts('stage').map(([k, l]) => [k, l, cmap.get(k) || 0, STAGE_TONE[k] || 'gray'] as [string, string, number, string])]} />
         <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-6">
           <Input className="col-span-2" placeholder="Tìm tên, SĐT, MST, mã KH, username HT…" value={q} onChange={e => setQ(e.target.value)} />
           <Select options={a.opts('temperature')} value={temp} onChange={setTemp} placeholder="Mọi mức độ" />
@@ -109,7 +114,7 @@ export default function Customers() {
         <div className={cx('min-w-0 flex-1 rounded-2xl border border-ink-200 bg-white shadow-soft', (sel || creating) && 'hidden xl:block')}>
           {loading ? <Loading /> : rows.length === 0 ? <Empty>Không có khách phù hợp</Empty> : <>
             <CustomerTable rows={rows} sel={sel} onOpen={open} onCare={quickCare} /></>}
-          {rows.length >= 300 && <div className="p-3 text-center text-xs text-ink-400">Hiển thị 300 khách đầu — dùng bộ lọc để thu hẹp</div>}
+          <Pager p={pg} total={total} />
         </div>
         {(sel || creating) && <div className="fixed inset-0 z-30 overflow-y-auto bg-ink-50 p-2 xl:static xl:z-auto xl:w-[52%] xl:max-w-[920px] xl:overflow-visible xl:bg-transparent xl:p-0">
           <CustomerPanel key={sel || 'new'} id={creating ? null : sel} onClose={close} onSaved={(id) => { reload(); reloadCounts(); setCreating(false); open(id); }} />
@@ -290,17 +295,19 @@ function TransferModal({ open, customer, onClose, onDone }: { open: boolean; cus
 
 function CareHistory({ customerId }: { customerId: string }) {
   const a = useApp();
-  const { data, loading } = useLoad(() => db.from('care_logs').select('*').eq('customer_id', customerId).order('created_at', { asc: false }), [customerId]);
-  if (loading) return <Loading />;
+  const pg = usePager('care_hist', [customerId]);
+  const { data: res, loading } = useLoad(() => db.from('care_logs').select('*', { count: true }).eq('customer_id', customerId).order('created_at', { asc: false }).range(pg.from, pg.to), [customerId, pg.page, pg.size]);
+  const data = (res as any)?.data; const total = (res as any)?.count ?? 0;
+  if (loading && !data) return <Loading />;
   if (!data?.length) return <Empty>Chưa có lần chăm sóc nào</Empty>;
-  return <ol className="space-y-3">{(data as any[]).map(l => (
+  return <><ol className="space-y-3">{(data as any[]).map(l => (
     <li key={l.id} className="rounded-lg border border-ink-100 p-3">
       <div className="flex flex-wrap items-center gap-2 text-xs text-ink-500"><b className="text-ink-800">{fmtDateTime(l.created_at)}</b>
         {a.personName(l.sale_id)} · {a.label('channel', l.channel)} · {a.label('care_purpose', l.purpose)}
         <Badge color={l.is_connected ? 'green' : 'gray'}>{a.label('care_result', l.result)}</Badge></div>
       <p className="mt-1 whitespace-pre-wrap text-sm">{l.content}</p>
       <div className="mt-1 text-xs text-ink-400">→ {a.label('stage', l.stage_after)} · {a.label('temperature', l.temperature_after)}{l.next_care_date && ` · hẹn ${fmtDate(l.next_care_date)}`}{l.quotation_code && ` · ${l.quotation_code}`}</div>
-    </li>))}</ol>;
+    </li>))}</ol><Pager p={pg} total={total} /></>;
 }
 function CustomerQuotes({ customerId }: { customerId: string }) {
   const { data, loading } = useLoad(() => db.from('quotations').select('id,code,version,status,total_after_vat,created_at,order_code').eq('customer_id', customerId).order('created_at', { asc: false }), [customerId]);

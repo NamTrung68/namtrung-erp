@@ -21,7 +21,7 @@ export default function Dashboard() {
     return q;
   }, [scope]);
   const { data: funnel } = useLoad(() => db.rpc<any[]>('customer_stage_counts', { p_owner: scope === 'me' ? a.me.id : null }), [scope]);
-  const { data: hot } = useLoad(() => { let q = db.from('customers').select('id').is('deleted_at', null).eq('temperature', 'nong').limit(2000); if (scope === 'me') q = q.eq('owner_id', a.me.id); return q; }, [scope]);
+  const { data: hot } = useLoad(() => { let q = db.from('customers').select('id', { count: true }).is('deleted_at', null).eq('temperature', 'nong').limit(1); if (scope === 'me') q = q.eq('owner_id', a.me.id); return q; }, [scope]);
   const { data: waiting } = useLoad(() => { let q = db.from('quotations').select('id,code,status,total_after_vat,sent_at,customers(contact_name,company_name)').in('status', ['da_gui', 'can_nhac']).order('sent_at', { asc: false }).limit(12); if (scope === 'me') q = q.eq('sale_id', a.me.id); return q; }, [scope]);
   const [careFor, setCareFor] = useState<any>(null);
   const dueRows = (due as any[]) || [];
@@ -58,7 +58,7 @@ export default function Dashboard() {
             </section>}
             <div className={cx('space-y-4', !sales && 'xl:col-span-2')}>
               {sales && <section className="rounded-2xl border border-ink-200 bg-white shadow-soft">
-                <div className="border-b border-ink-100 px-4 py-3"><b>Phễu khách hàng</b> <span className="ml-1 text-xs text-ink-500">{ftotal} khách, {((hot as any[]) || []).length} khách nóng</span></div>
+                <div className="border-b border-ink-100 px-4 py-3"><b>Phễu khách hàng</b> <span className="ml-1 text-xs text-ink-500">{ftotal} khách, {(hot as any)?.count ?? 0} khách nóng</span></div>
                 <div className="space-y-1.5 px-4 py-3">{a.opts('stage').filter(([k]) => k !== 'khong_tiem_nang').map(([k, l]) => (
                   <button key={k} onClick={() => go(`/crm/customers`)} className="grid w-full grid-cols-[150px_1fr_28px] items-center gap-2 text-left text-xs">
                     <span className="truncate text-ink-600">{l}</span>

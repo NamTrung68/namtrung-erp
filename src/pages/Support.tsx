@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, Select, Tabs, Textarea, useAction, useLoad } from '../components/ui';
+import { Pager, usePager } from '../components/Pager';
 import { db } from '../lib/sb';
 import { go, useApp, useRoute } from '../state';
 import { fmtDate, fmtDateTime, money } from '../lib/format';
@@ -27,7 +28,7 @@ export default function Support() {
     done: all.filter(r => !OPEN.includes(r.status)),
     all,
   };
-  const rows = lists[tab];
+  const rows = lists[tab]; const pg = usePager('support', [tab]);
   const sel = all.find(x => x.id === query.id);
   const { data: custs } = useLoad(() => {
     const ids = Array.from(new Set(all.map(r => r.customer_id).filter(Boolean)));
@@ -40,13 +41,14 @@ export default function Support() {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)]">
         <Card bodyClass="p-0" className={cx(sel && 'hidden lg:block')}>
           {loading ? <Loading /> : !rows.length ? <Empty>Không có mục nào</Empty> :
-            <ul className="divide-y divide-ink-100">{rows.map(r => <li key={r.id}>
+            <ul className="divide-y divide-ink-100">{pg.slice(rows).map(r => <li key={r.id}>
               <button onClick={() => go(`/support?id=${r.id}`)} className={cx('w-full px-4 py-3 text-left hover:bg-ink-50', query.id === r.id && 'bg-brand-50')}>
                 <div className="flex flex-wrap items-center gap-1.5"><Badge color={KIND[r.kind]?.[1]}>{KIND[r.kind]?.[0]}</Badge><b className="text-sm">{r.title}</b><Badge color={ST[r.status][1]}>{ST[r.status][0]}</Badge>
                   {['gap', 'khan'].includes(r.priority) && <Badge color="solidred">{r.priority === 'khan' ? 'Khẩn' : 'Gấp'}</Badge>}</div>
                 {r.customer_id && <div className="mt-0.5 text-xs font-medium text-ink-700">{cname(r.customer_id)}</div>}
                 <div className="text-xs text-ink-500">{r.code} · {a.personName(r.requester_id)} → {r.assignee_id ? a.personName(r.assignee_id) : a.units.find(u => u.id === r.org_unit_id)?.name} · {fmtDateTime(r.created_at)}{r.due_date && ` · hạn ${fmtDate(r.due_date)}`}</div>
               </button></li>)}</ul>}
+          {rows.length > 0 && <Pager p={pg} total={rows.length} />}
         </Card>
         {sel ? <Thread req={sel} customer={cname(sel.customer_id)} onChanged={reload} /> : <Card className="hidden lg:block"><Empty>Chọn một mục để xem trao đổi</Empty></Card>}
       </div>

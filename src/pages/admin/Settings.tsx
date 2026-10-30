@@ -180,6 +180,25 @@ function PayrollCfg() {
           <Td><NumInput value={t[0]} onChange={v => p.set('tiers')(tiers.map((x, j) => j === i ? [v ?? 0, x[1]] : x))} /></Td><Td><NumInput value={t[1]} onChange={v => p.set('tiers')(tiers.map((x, j) => j === i ? [x[0], v ?? 0] : x))} /></Td></tr>)}</Table>
         <Button className="mt-3" variant="primary" loading={p.busy} onClick={p.save}>Lưu</Button>
       </Card>
+      <Card title="COM theo bộ phận (Mua hàng · CSKH · TP Kế toán)">
+        {(() => { const b = p.v.buyer_com || {}; const c = p.v.cskh_com || {}; const k = p.v.accounting_com || {}; const nm: number[] = b.nego_pct_by_month || [2, 3, 4, 5];
+          const sb = (x: any) => p.set('buyer_com')({ ...b, ...x }); const sc = (x: any) => p.set('cskh_com')({ ...c, ...x }); const sk = (x: any) => p.set('accounting_com')({ ...k, ...x });
+          return <div className="space-y-4 text-sm">
+            <div><div className="mb-2 flex items-center gap-2 font-semibold"><input type="checkbox" checked={b.enabled !== false} onChange={e => sb({ enabled: e.target.checked })} /> Mua hàng: (Phí mua hàng × a% + Hoa hồng đàm phán × b%) × Hệ số</div>
+              <div className="grid gap-3 sm:grid-cols-6">
+                <Field label="a% phí mua hàng"><NumInput value={b.fee_pct ?? 2} onChange={v => sb({ fee_pct: v ?? 0 })} /></Field>
+                {[0, 1, 2, 3].map(i => <Field key={i} label={`b% tháng thứ ${i < 3 ? i + 1 : '4+'}`}><NumInput value={nm[i]} onChange={v => sb({ nego_pct_by_month: [0, 1, 2, 3].map(j => j === i ? v ?? 0 : nm[j] ?? 0) })} /></Field>)}
+                <Field label="Hệ số %" hint="100 = không xét số đơn"><NumInput value={b.coef_pct ?? 100} onChange={v => sb({ coef_pct: v ?? 0 })} /></Field>
+              </div><p className="mt-1 text-xs text-ink-500">Tháng thâm niên tính từ “Ngày vào làm”. Người mua hàng lấy theo cột “Nhân viên mua hàng” trong file đơn.</p></div>
+            <div><div className="mb-2 flex items-center gap-2 font-semibold"><input type="checkbox" checked={c.enabled !== false} onChange={e => sc({ enabled: e.target.checked })} /> CSKH: Phí dịch vụ × % + Phí đàm phán × %</div>
+              <div className="grid gap-3 sm:grid-cols-4"><Field label="% phí dịch vụ"><NumInput value={c.fee_pct ?? 2} onChange={v => sc({ fee_pct: v ?? 0 })} /></Field><Field label="% phí đàm phán"><NumInput value={c.nego_pct ?? 1} onChange={v => sc({ nego_pct: v ?? 0 })} /></Field></div></div>
+            <div><div className="mb-2 font-semibold">Trưởng phòng Kế toán: % × % LN đơn hoàn thành cả công ty</div>
+              <div className="grid gap-3 sm:grid-cols-4"><Field label="% COM"><NumInput value={k.pct ?? 0.5} onChange={v => sk({ pct: v ?? 0 })} /></Field><Field label="% LN tính thưởng"><NumInput value={k.base_pct ?? 60} onChange={v => sk({ base_pct: v ?? 0 })} /></Field></div>
+              <Field label="Người được hưởng" className="mt-2"><Chips options={a.people.filter(x => x.status === 'active').map(x => [x.id, x.full_name])} value={k.profile_ids || []} onChange={v => sk({ profile_ids: v })} /></Field></div>
+            <Field label="Link mở đơn trên hệ thống ({so} = số đơn, {ma} = mã đơn)" className="max-w-xl"><Input value={p.v.order_link || 'https://ad.namtrunglog.com/don-hang/{so}'} onChange={e => p.set('order_link')(e.target.value)} /></Field>
+          </div>; })()}
+        <Button className="mt-3" variant="primary" loading={p.busy} onClick={p.save}>Lưu COM</Button>
+      </Card>
       <Card title={`Chỉ tiêu KPI (tổng trọng số ${sumW}%)`}>
         <p className="mb-2 text-xs text-ink-500">Mọi chỉ số KPI cấu hình ở đây. <b>Chỉ tiêu / ngày</b> dùng cho thanh tiến độ trên Bảng điều khiển và Báo cáo ngày; <b>Trọng số</b> tính điểm KPI (để 0 nếu chỉ theo dõi, không tính điểm). Bỏ tick “Hiện” để ẩn khỏi dải KPI.</p>
         <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-sm">

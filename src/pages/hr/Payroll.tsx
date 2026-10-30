@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Layout } from '../../components/Layout';
-import { Badge, Button, Card, Empty, Field, Input, Loading, Modal, NumInput, Select, Stat, Table, Td, toast, useAction, useLoad, ask } from '../../components/ui';
+import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, NumInput, Select, Stat, Table, Td, toast, useAction, useLoad, ask } from '../../components/ui';
+import { Pager, usePager } from '../../components/Pager';
 import { db } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { readXlsx, toISODate } from '../../lib/xlsx';
@@ -17,13 +18,13 @@ export function Payroll() {
   const { data: slips, loading, reload } = useLoad(() => per ? db.from('payslips').select('*').eq('period_id', per.id) : Promise.resolve([]), [per?.id]);
   const { data: orders, reload: ro } = useLoad(() => per ? db.from('order_results').select('id,ext_order_code,sale_name,profile_id,order_profit,completed_at,customer_ext') .eq('period_id', per.id).limit(5000) : Promise.resolve([]), [per?.id]);
   const { data: privs } = useLoad(() => db.from('profile_private').select('profile_id,bank_bin,bank_account,bank_holder'), []);
-  const [importOpen, setImportOpen] = useState(false); const [qr, setQr] = useState<any>(null); const [adj, setAdj] = useState<any>(null);
+  const [importOpen, setImportOpen] = useState(false); const [qr, setQr] = useState<any>(null); const [adj, setAdj] = useState<any>(null); const [other, setOther] = useState(false);
   if (!a.canHR) return <Layout title="Bảng lương"><Card>Chỉ HCNS, Kế toán, BGĐ.</Card></Layout>;
   const rows = ((slips as any[]) || []).slice().sort((x, y) => a.personName(x.profile_id).localeCompare(a.personName(y.profile_id)));
   const total = rows.reduce((s, r) => s + Number(r.net), 0);
   const unmapped = Array.from(new Set(((orders as any[]) || []).filter(o => !o.profile_id).map(o => o.sale_name)));
-  const exportCsv = () => downloadCSV(`bang-luong-${month}`, [['Mã NV', 'Họ tên', 'Công chuẩn', 'Công hưởng lương', 'Đi làm', 'Phép có lương', 'Nghỉ không lương', 'Phút muộn/sớm', 'Vượt quỹ', 'Lương cơ bản', 'Lương theo công', 'Phụ cấp', 'LN đơn', 'LN tính thưởng', 'Hoa hồng', 'Bù trừ lỗ', 'Thưởng đội', 'Trừ vượt quỹ phút', 'BHXH', 'Điều chỉnh', 'Thực lĩnh', 'Trạng thái'],
-    ...rows.map(r => [a.people.find(p => p.id === r.profile_id)?.employee_code, a.personName(r.profile_id), r.standard_days, r.paid_days, r.worked_days, r.paid_leave_days, r.unpaid_days, r.late_minutes, r.flex_over_minutes, r.base_salary, r.salary_by_days, r.allowance, r.profit_total, r.commission_base, r.commission, r.loss_offset, r.team_bonus, r.flex_deduction, r.insurance, r.adjustments, r.net, SS[r.status]?.[0]])]);
+  const exportCsv = () => downloadCSV(`bang-luong-${month}`, [['STT', 'Mã NV', 'Họ tên', 'Công chuẩn', 'Công hưởng lương', 'Đi làm', 'Phép có lương', 'Nghỉ không lương', 'Phút muộn/sớm', 'Vượt quỹ', 'Lương cơ bản', 'Lương theo công', 'Phụ cấp', 'LN đơn', 'LN tính thưởng', 'Hoa hồng', 'Bù trừ lỗ', 'COM Mua hàng', 'COM CSKH', 'COM Kế toán', 'Thưởng đội', 'Trừ vượt quỹ phút', 'BHXH', 'Điều chỉnh', 'Thực lĩnh', 'Trạng thái'],
+    ...rows.map((r, i) => [i + 1, a.people.find(p => p.id === r.profile_id)?.employee_code, a.personName(r.profile_id), r.standard_days, r.paid_days, r.worked_days, r.paid_leave_days, r.unpaid_days, r.late_minutes, r.flex_over_minutes, r.base_salary, r.salary_by_days, r.allowance, r.profit_total, r.commission_base, r.commission, r.loss_offset, r.com_buyer, r.com_cskh, r.com_accounting, r.team_bonus, r.flex_deduction, r.insurance, r.adjustments, r.net, SS[r.status]?.[0]])]);
   return (
     <Layout title="Bảng lương" actions={<Input type="month" className="w-40" value={month} onChange={e => setMonth(e.target.value)} />}>
       {!per ? <Card><div className="flex flex-wrap items-center gap-3 text-sm">Chưa mở kỳ lương tháng {month}. <Button variant="dark" loading={busy} onClick={() => run(async () => { await db.rpc('payroll_open', { p_month: month + '-01' }); rp(); }, 'Đã mở kỳ lương')}>Mở kỳ lương</Button></div></Card> : <>
@@ -38,30 +39,37 @@ export function Payroll() {
           {['open', 'review'].includes(per.status) && <Button variant="dark" loading={busy} onClick={() => run(async () => { const n = await db.rpc('payroll_compute', { p_period: per.id }); rp(); reload(); return n; }, 'Đã tính lương')}>2. Tính lương</Button>}
           {per.status === 'open' && rows.length > 0 && <Button loading={busy} onClick={() => run(async () => { await db.rpc('payroll_send_review', { p_period: per.id }); rp(); reload(); }, 'Đã gửi phiếu lương cho nhân sự')}>3. Gửi nhân sự xác nhận</Button>}
           {['review', 'approval'].includes(per.status) && a.isAdmin && <Button variant="success" loading={busy} onClick={async () => { if (await ask({ title: 'Chốt lương', message: `Chốt ${rows.length} phiếu, tổng ${money(total)} đ? Sau khi chốt không sửa được.`, ok: 'Chốt lương' })) run(async () => { await db.rpc('payroll_close', { p_period: per.id }); rp(); reload(); }, 'Đã chốt lương'); }}>4. BGĐ chốt lương</Button>}
+          {per.status !== 'closed' && rows.length > 0 && a.has('ke_toan', 'admin', 'bgd') && <Button onClick={() => setOther(true)}>± COM hệ thống khác</Button>}
           <Button onClick={exportCsv}>Xuất Excel (CSV)</Button>
         </div>
         {unmapped.length > 0 && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Tên sale trong file chưa khớp nhân sự: <b>{unmapped.join(', ')}</b>. Vào <a className="underline" href="#/admin/users">Nhân sự & quyền</a> → thêm "Tên trong file đơn" cho đúng người, rồi nhập lại file.</div>}
         <Card bodyClass="p-0">
           {loading ? <Loading /> : !rows.length ? <Empty>Chưa tính lương kỳ này</Empty> :
-            <Table head={['Nhân sự', 'Công', 'Muộn/sớm', 'Lương theo công', 'Phụ cấp', 'LN đơn', 'Hoa hồng', 'Thưởng đội', 'Trừ', 'Điều chỉnh', 'Thực lĩnh', 'Trạng thái', '']}>
-              {rows.map(r => (
+            <Table head={['STT', 'Nhân sự', 'Công', 'Muộn/sớm', 'Lương theo công', 'Phụ cấp', 'LN đơn', 'Hoa hồng Sale', 'COM bộ phận', 'Thưởng đội', 'Trừ', 'Điều chỉnh', 'Thực lĩnh', 'Trạng thái', '']}>
+              {rows.map((r, i) => { const pp = a.people.find(x => x.id === r.profile_id); const comDept = Number(r.com_buyer || 0) + Number(r.com_cskh || 0) + Number(r.com_accounting || 0); return (
                 <tr key={r.id} className="hover:bg-ink-50">
-                  <Td className="whitespace-nowrap font-medium"><a className="hover:underline" href={`#/hr/payslip?id=${r.id}`}>{a.personName(r.profile_id)}</a></Td>
+                  <Td className="text-center text-ink-400">{i + 1}</Td>
+                  <Td className="whitespace-nowrap font-medium"><a className="hover:underline" href={`#/hr/payslip?id=${r.id}`}>{a.personName(r.profile_id)}</a>
+                    <div className="text-[11px] font-normal text-ink-400">{[a.levels.find(l => l.code === pp?.job_level)?.name, a.units.find(u => u.id === pp?.org_unit_id)?.name].filter(Boolean).join(' · ')}</div></Td>
                   <Td className="whitespace-nowrap">{num(r.paid_days, 1)}/{num(r.standard_days, 1)}{Number(r.unpaid_days) > 0 && <div className="text-xs text-red-600">KL {num(r.unpaid_days, 1)}</div>}</Td>
                   <Td>{r.late_minutes}′{r.flex_over_minutes > 0 && <div className="text-xs text-red-600">vượt {r.flex_over_minutes}′</div>}</Td>
                   <Td className="text-right">{money(r.salary_by_days)}</Td><Td className="text-right">{money(r.allowance)}</Td><Td className="text-right">{money(r.profit_total)}</Td>
-                  <Td className="text-right">{money(r.commission)}{Number(r.loss_offset) > 0 && <div className="text-xs text-red-600">−{money(r.loss_offset)} bù lỗ</div>}</Td><Td className="text-right">{money(r.team_bonus)}</Td>
+                  <Td className="text-right">{money(r.commission)}{Number(r.loss_offset) > 0 && <div className="text-xs text-red-600">−{money(r.loss_offset)} bù lỗ</div>}</Td>
+                  <Td className="text-right">{comDept ? money(comDept) : ''}<div className="text-[10px] leading-tight text-ink-400">{Number(r.com_buyer) > 0 && <div>MH {money(r.com_buyer)}</div>}{Number(r.com_cskh) > 0 && <div>CSKH {money(r.com_cskh)}</div>}{Number(r.com_accounting) > 0 && <div>KT {money(r.com_accounting)}</div>}</div></Td>
+                  <Td className="text-right">{money(r.team_bonus)}</Td>
                   <Td className="text-right text-red-600">{money(Number(r.flex_deduction) + Number(r.insurance))}</Td>
                   <Td className="text-right">{money(r.adjustments)}{per.status !== 'closed' && <button className="ml-1 text-xs text-brand-700" onClick={() => setAdj(r)}>±</button>}</Td>
                   <Td className="text-right font-semibold">{money(r.net)}</Td>
                   <Td><Badge color={SS[r.status][1]}>{SS[r.status][0]}</Badge>{r.dispute_note && <div className="max-w-[160px] text-xs text-red-600">{r.dispute_note}</div>}</Td>
                   <Td><Button size="sm" onClick={() => setQr(r)}>QR trả</Button></Td>
-                </tr>))}
+                </tr>); })}
             </Table>}
         </Card>
-        <p className="mt-2 text-xs text-ink-500">Hoa hồng = tỷ lệ theo cấp + lũy tiến (0–30tr, 30–65tr +3%, 65–100tr +5%, trên 100tr +7%) trên LN tính thưởng = {a.settings.payroll?.commission_base_pct ?? 60}% LN đơn. Đơn lỗ bù trừ tối đa 50% hoa hồng mỗi kỳ, phần còn lại chuyển kỳ sau. Thưởng quản lý 3% LN tính thưởng của đội (không gồm đơn của chính mình).</p>
+        <p className="mt-2 text-xs text-ink-500">COM bộ phận: Mua hàng = (phí mua hàng × {a.settings.payroll?.buyer_com?.fee_pct ?? 2}% + đàm phán × {(a.settings.payroll?.buyer_com?.nego_pct_by_month || [2, 3, 4, 5]).join('/')}% theo tháng thâm niên) × hệ số {a.settings.payroll?.buyer_com?.coef_pct ?? 100}% · CSKH = phí dịch vụ × {a.settings.payroll?.cskh_com?.fee_pct ?? 2}% + đàm phán × {a.settings.payroll?.cskh_com?.nego_pct ?? 1}% · TP Kế toán = {a.settings.payroll?.accounting_com?.pct ?? 0.5}% × {a.settings.payroll?.accounting_com?.base_pct ?? 60}% LN đơn hoàn thành cả công ty. Hệ thống khác: Kế toán tính ngoài rồi nhập ở “± COM hệ thống khác”.</p>
+        <p className="mt-1 text-xs text-ink-500">Hoa hồng = tỷ lệ theo cấp + lũy tiến (0–30tr, 30–65tr +3%, 65–100tr +5%, trên 100tr +7%) trên LN tính thưởng = {a.settings.payroll?.commission_base_pct ?? 60}% LN đơn. Đơn lỗ bù trừ tối đa 50% hoa hồng mỗi kỳ, phần còn lại chuyển kỳ sau. Thưởng quản lý 3% LN tính thưởng của đội (không gồm đơn của chính mình).</p>
         <ImportOrders open={importOpen} periodId={per.id} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); ro(); }} />
         {qr && <PayQr slip={qr} month={month} priv={((privs as any[]) || []).find(p => p.profile_id === qr.profile_id)} onClose={() => setQr(null)} />}
+        {other && <OtherCom slips={rows} onClose={() => setOther(false)} onDone={() => { setOther(false); toast.info('Bấm "2. Tính lương" để cập nhật thực lĩnh'); }} />}
         {adj && <Adjust slip={adj} onClose={() => setAdj(null)} onDone={() => { setAdj(null); toast.info('Bấm "Tính lương" để cập nhật thực lĩnh'); }} />}
       </>}
     </Layout>
@@ -78,13 +86,17 @@ function ImportOrders({ open, periodId, onClose, onDone }: { open: boolean; peri
       if (hi < 0) throw new Error('Không thấy dòng tiêu đề có cột "Mã đơn"');
       const H = s.rows[hi].map(c => stripVN(String(c ?? '')).toLowerCase().replace(/\s+/g, ' ').trim());
       const col = (...names: string[]) => H.findIndex(h => names.some(n => h.startsWith(n)));
+      const colAll = (pred: (h: string) => boolean) => H.findIndex(pred);
       const c = { code: col('ma don'), status: col('trang thai don'), done: col('ngay hoan thanh'), cust: col('khach hang'), kho: col('kho nhan'), type: col('loai don'), sale: col('nhan vien kd'),
-        goods: col('tong gia tri san pham quy doi'), profit: col('tong loi nhuan') };
+        goods: col('tong gia tri san pham quy doi'), profit: col('tong loi nhuan'), cskh: col('nhan vien cskh'), buyer: col('nhan vien mua hang'),
+        fee: colAll(h => h.startsWith('phi mua hang') && !h.includes('cny')), nego: colAll(h => h.startsWith('tien hoa hong dam pha') && h.includes('vnd')) };
       if (c.code < 0 || c.sale < 0 || c.profit < 0) throw new Error('Thiếu cột bắt buộc: Mã đơn, Nhân viên KD (Sale), Tổng lợi nhuận');
       const out = s.rows.slice(hi + 1).filter(r => r[c.code]).map(r => ({
         ext_order_code: String(r[c.code]).trim(), status: c.status >= 0 ? r[c.status] : '', sale_name: String(r[c.sale] ?? '').trim(), customer_ext: c.cust >= 0 ? String(r[c.cust] ?? '') : null,
         warehouse: c.kho >= 0 ? r[c.kho] : null, order_type: c.type >= 0 ? r[c.type] : null, completed_at: c.done >= 0 ? toISODate(r[c.done]) : null,
         goods_value: c.goods >= 0 ? Number(r[c.goods]) || 0 : 0, order_profit: Number(r[c.profit]) || 0,
+        cskh_name: c.cskh >= 0 ? String(r[c.cskh] ?? '').trim() : '', buyer_name: c.buyer >= 0 ? String(r[c.buyer] ?? '').trim() : '',
+        purchase_fee: c.fee >= 0 ? Number(r[c.fee]) || 0 : 0, nego_fee: c.nego >= 0 ? Number(r[c.nego]) || 0 : 0,
         raw: Object.fromEntries(s.rows[hi].map((h: any, i: number) => [String(h ?? i), r[i] ?? null]).filter(([, v]) => v !== null)),
       }));
       setRows(out);
@@ -95,17 +107,44 @@ function ImportOrders({ open, periodId, onClose, onDone }: { open: boolean; peri
   return (
     <Modal open={open} onClose={onClose} title="Nhập file đơn hoàn thành" size="lg" footer={rows && <Button variant="primary" loading={busy} onClick={() => run(async () => {
       const r = await db.rpc('import_order_results', { p_period: periodId, p_rows: use.map(({ status, ...x }) => x), p_replace: true });
-      toast.ok(`Đã nhập ${r.imported} đơn`); if (r.unmapped?.length) toast.err('Chưa khớp nhân sự: ' + r.unmapped.join(', ')); onDone();
+      toast.ok(`Đã nhập ${r.imported} đơn`); if (r.unmapped?.length) toast.err('Chưa khớp nhân sự: ' + r.unmapped.join(', ') + ' — thêm "Tên trong file đơn" ở Nhân sự & phân quyền'); onDone();
     })}>Nhập {use.length} đơn (thay toàn bộ dữ liệu kỳ này)</Button>}>
-      <p className="mb-3 text-sm text-ink-600">Dùng file "BC Lợi nhuận" xuất từ hệ thống đơn hàng (.xlsx). Hệ thống đọc các cột: Mã đơn, Trạng thái đơn, Ngày hoàn thành, Khách hàng, Nhân viên KD (Sale), Tổng lợi nhuận.</p>
+      <p className="mb-3 text-sm text-ink-600">Dùng file "BC Lợi nhuận" xuất từ hệ thống đơn hàng (.xlsx). Hệ thống đọc các cột: Mã đơn, Trạng thái đơn, Ngày hoàn thành, Khách hàng, Nhân viên KD (Sale), Nhân viên CSKH, Nhân viên mua hàng, Phí mua hàng (VND), Tiền hoa hồng đàm phán (VND), Tổng lợi nhuận.</p>
       <input type="file" accept=".xlsx" onChange={e => e.target.files?.[0] && parse(e.target.files[0])} className="text-sm" />
       {err && <div className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{err}</div>}
       {rows && <div className="mt-4 space-y-3">
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={onlyDone} onChange={e => setOnlyDone(e.target.checked)} /> Chỉ lấy đơn trạng thái "Hoàn thành" ({use.length}/{rows.length})</label>
         <Table head={['Nhân viên KD trong file', 'Số đơn', 'Tổng lợi nhuận']}>{bySale.map(([s, [n, p]]) => <tr key={s}><Td>{s || <i>(trống)</i>}</Td><Td>{n}</Td><Td className="text-right">{money(p)}</Td></tr>)}</Table>
+        <div className="grid gap-3 sm:grid-cols-2">{([['buyer_name', 'Nhân viên mua hàng'], ['cskh_name', 'Nhân viên CSKH']] as const).map(([k, l]) => { const m = new Map<string, [number, number, number]>(); use.forEach((r: any) => { const x = m.get(r[k]) || [0, 0, 0]; m.set(r[k], [x[0] + 1, x[1] + r.purchase_fee, x[2] + r.nego_fee]); });
+          return <Table key={k} head={[l, 'Đơn', 'Phí mua hàng', 'Đàm phán']}>{Array.from(m.entries()).map(([n, [c, f, g]]) => <tr key={n}><Td>{n || <i>(trống)</i>}</Td><Td>{c}</Td><Td className="text-right">{money(f)}</Td><Td className="text-right">{money(g)}</Td></tr>)}</Table>; })}</div>
       </div>}
     </Modal>
   );
+}
+
+// Kế toán nhập nhanh tiền COM tính ở hệ thống khác cho từng người (ghi thành 1 dòng điều chỉnh)
+const OTHER = 'COM hệ thống khác';
+function OtherCom({ slips, onClose, onDone }: { slips: any[]; onClose: () => void; onDone: () => void }) {
+  const a = useApp(); const { busy, run } = useAction(); const [v, setV] = useState<Record<string, number | null>>({}); const [q, setQ] = useState('');
+  const { data } = useLoad(() => db.from('payslip_adjustments').select('id,payslip_id,amount').eq('label', OTHER).in('payslip_id', slips.map(s => s.id)), []);
+  const cur = new Map(((data as any[]) || []).map(x => [x.payslip_id, x]));
+  const list = slips.filter(s => !q || a.personName(s.profile_id).toLowerCase().includes(q.toLowerCase()));
+  const save = () => run(async () => {
+    for (const s of slips) {
+      if (!(s.id in v)) continue; const amt = v[s.id]; const old: any = cur.get(s.id);
+      if (old && !amt) await db.from('payslip_adjustments').delete().eq('id', old.id);
+      else if (old && amt !== Number(old.amount)) await db.from('payslip_adjustments').update({ amount: amt }).eq('id', old.id);
+      else if (!old && amt) await db.from('payslip_adjustments').insert({ payslip_id: s.id, label: OTHER, amount: amt });
+    }
+    onDone();
+  }, 'Đã lưu COM hệ thống khác');
+  return <Modal open onClose={onClose} title="COM hệ thống khác (Sale · Mua hàng · CSKH…)" footer={<Button variant="primary" loading={busy} onClick={save}>Lưu</Button>}>
+    <p className="mb-2 text-xs text-ink-500">Kế toán tính COM của các hệ thống phụ ở ngoài, nhập tổng số tiền cho từng người. Mỗi người 1 dòng “{OTHER}” trong phiếu lương, sửa lại bất cứ lúc nào trước khi chốt.</p>
+    <Input className="mb-2" placeholder="Tìm nhân sự…" value={q} onChange={e => setQ(e.target.value)} />
+    <div className="max-h-[55vh] divide-y divide-ink-100 overflow-y-auto rounded-xl border border-ink-200">{list.map(s => { const old: any = cur.get(s.id); const pp = a.people.find(x => x.id === s.profile_id);
+      return <div key={s.id} className="flex items-center gap-3 px-3 py-2"><div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{a.personName(s.profile_id)}</div><div className="text-[11px] text-ink-400">{a.units.find(u => u.id === pp?.org_unit_id)?.name}</div></div>
+        <NumInput className="w-40" placeholder="0" value={s.id in v ? v[s.id] : (old ? Number(old.amount) : null)} onChange={x => setV(m => ({ ...m, [s.id]: x }))} /></div>; })}</div>
+  </Modal>;
 }
 
 function Adjust({ slip, onClose, onDone }: { slip: any; onClose: () => void; onDone: () => void }) {
@@ -151,13 +190,17 @@ export function PayslipView() {
   const a = useApp(); const { query } = useRoute(); const { busy, run } = useAction();
   const { data: s, loading, reload } = useLoad(() => db.from('payslips').select('*,payroll_periods(month,status)').eq('id', query.id).maybeSingle(), [query.id]);
   const { data: adj } = useLoad(() => db.from('payslip_adjustments').select('*').eq('payslip_id', query.id).order('created_at'), [query.id]);
-  const { data: orders } = useLoad(() => s ? db.from('order_results').select('ext_order_code,customer_ext,completed_at,order_profit').eq('period_id', s.period_id).eq('profile_id', s.profile_id).order('completed_at') : Promise.resolve([]), [s?.id]);
+  const { data: orders } = useLoad(() => s ? db.from('order_results').select('ext_order_code,customer_ext,completed_at,order_profit,profile_id,buyer_id,cskh_id,purchase_fee,nego_fee')
+    .eq('period_id', s.period_id).or(`profile_id.eq.${s.profile_id},buyer_id.eq.${s.profile_id},cskh_id.eq.${s.profile_id}`).order('completed_at').limit(3000) : Promise.resolve([]), [s?.id]);
+  const [otab, setOtab] = useState('sale');
   if (loading) return <Layout title="Phiếu lương"><Loading /></Layout>;
   if (!s) return <Layout title="Phiếu lương"><Card>Không tìm thấy phiếu lương.</Card></Layout>;
   const m = s.payroll_periods?.month || ''; const d = s.details || {};
   const L = ({ l, v, sub, neg }: { l: string; v: any; sub?: string; neg?: boolean }) => <div className="flex justify-between border-b border-ink-100 py-2 text-sm"><span>{l}{sub && <span className="block text-xs text-ink-400">{sub}</span>}</span><b className={neg ? 'text-red-600' : ''}>{v === null ? '' : (neg && Number(v) > 0 ? '−' : '') + money(v)}</b></div>;
   return (
-    <Layout title={`Phiếu lương ${m.slice(5, 7)}/${m.slice(0, 4)} · ${a.personName(s.profile_id)}`}>
+    <Layout title={`Phiếu lương ${m.slice(5, 7)}/${m.slice(0, 4)} · ${a.personName(s.profile_id)}`} actions={<Button onClick={() => (history.length > 1 ? history.back() : go(a.canHR ? '/hr/payroll' : '/hr/payslips'))}>← Quay lại</Button>}>
+      <div className="mb-3 flex flex-wrap items-center gap-2"><button className="text-sm font-semibold text-brand-700 hover:underline" onClick={() => (history.length > 1 ? history.back() : go(a.canHR ? '/hr/payroll' : '/hr/payslips'))}>← Quay lại</button>
+        <span className="text-xs text-ink-500">{(() => { const pp = a.people.find(x => x.id === s.profile_id); return [a.personName(s.profile_id), a.levels.find(l => l.code === pp?.job_level)?.name, a.units.find(u => u.id === pp?.org_unit_id)?.name].filter(Boolean).join(' · '); })()}</span></div>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Chi tiết" actions={<Badge color={SS[s.status][1]}>{SS[s.status][0]}</Badge>}>
           <L l="Công chuẩn / công hưởng lương" v={null as any} sub={`${num(s.paid_days, 1)} / ${num(s.standard_days, 1)} công · đi làm ${num(s.worked_days, 1)} · phép có lương ${num(s.paid_leave_days, 1)} · nghỉ không lương ${num(s.unpaid_days, 1)}`} />
@@ -168,6 +211,9 @@ export function PayslipView() {
           <L l="Hoa hồng lũy tiến" v={s.commission} sub={`tỷ lệ cơ bản ${num(d.commission_pct)}% + lũy tiến`} />
           {Number(s.loss_offset) > 0 && <L l="Bù trừ đơn lỗ" v={s.loss_offset} neg sub={`còn chuyển kỳ sau ${money(s.carry_loss)}`} />}
           {Number(s.team_bonus) > 0 && <L l="Thưởng quản lý đội" v={s.team_bonus} />}
+          {Number(s.com_buyer) > 0 && <L l="COM Mua hàng" v={s.com_buyer} sub={`${d.buyer?.orders ?? 0} đơn · phí mua hàng ${money(d.buyer?.purchase_fee)} × ${num(d.buyer?.fee_pct)}% + đàm phán ${money(d.buyer?.nego_fee)} × ${num(d.buyer?.nego_pct)}% (tháng thứ ${d.buyer?.month >= 99 ? '4+' : d.buyer?.month}) × hệ số ${num(d.buyer?.coef_pct)}%`} />}
+          {Number(s.com_cskh) > 0 && <L l="COM Chăm sóc khách hàng" v={s.com_cskh} sub={`${d.cskh?.orders ?? 0} đơn · phí dịch vụ ${money(d.cskh?.purchase_fee)} × ${num(d.cskh?.fee_pct)}% + đàm phán ${money(d.cskh?.nego_fee)} × ${num(d.cskh?.nego_pct)}%`} />}
+          {Number(s.com_accounting) > 0 && <L l="COM Trưởng phòng Kế toán" v={s.com_accounting} sub={`LN đơn hoàn thành cả công ty ${money(d.accounting?.total_profit)} × ${num(d.accounting?.base_pct)}% × ${num(d.accounting?.pct)}%`} />}
           <L l="Đi muộn / về sớm" v={null as any} sub={`${s.late_minutes} phút · quỹ ${d.flex_minutes ?? 100} phút${d.flex_active ? '' : ' (chưa áp dụng)'} · vượt ${s.flex_over_minutes} phút`} />
           {Number(s.flex_deduction) > 0 && <L l="Không tính lương phần vượt quỹ" v={s.flex_deduction} neg />}
           {Number(s.insurance) > 0 && <L l="BHXH, BHYT, BHTN" v={s.insurance} neg />}
@@ -181,10 +227,27 @@ export function PayslipView() {
               <Button variant="danger" onClick={async () => { const n = await ask({ title: 'Khiếu nại phiếu lương', input: { label: 'Dòng nào chưa đúng, vì sao', required: true } }); if (n) run(async () => { await db.rpc('payslip_respond', { p_id: s.id, p_agree: false, p_note: n }); reload(); }, 'Đã gửi khiếu nại'); }}>Chưa đúng</Button></div>
             {s.dispute_note && <p className="mt-2 text-sm text-red-600">Khiếu nại: {s.dispute_note}</p>}
           </Card>}
-          <Card title="Đơn hoàn thành tính hoa hồng" bodyClass="p-0">{!(orders as any[])?.length ? <Empty>Không có đơn</Empty> :
-            <Table head={['Mã đơn', 'Khách', 'Hoàn thành', 'Lợi nhuận']}>{(orders as any[]).map(o => <tr key={o.ext_order_code}><Td>{o.ext_order_code}</Td><Td>{o.customer_ext}</Td><Td>{fmtDate(o.completed_at)}</Td><Td className={Number(o.order_profit) < 0 ? 'text-right text-red-600' : 'text-right'}>{money(o.order_profit)}</Td></tr>)}</Table>}</Card>
+          <OrdersCard orders={(orders as any[]) || []} pid={s.profile_id} tab={otab} setTab={setOtab} />
         </div>
       </div>
     </Layout>
   );
+}
+
+export function orderUrl(code: string, tpl?: string) {
+  const t = tpl || 'https://ad.namtrunglog.com/don-hang/{so}'; const so = (String(code).match(/\d+/g) || []).join('');
+  return so ? t.replace('{so}', so).replace('{ma}', encodeURIComponent(code)) : null;
+}
+function OrdersCard({ orders, pid, tab, setTab }: { orders: any[]; pid: string; tab: string; setTab: (t: string) => void }) {
+  const a = useApp(); const tpl = a.settings.payroll?.order_link;
+  const groups: [string, string, any[]][] = [['sale', 'Đơn Sale', orders.filter(o => o.profile_id === pid)], ['buyer', 'Đơn Mua hàng', orders.filter(o => o.buyer_id === pid)], ['cskh', 'Đơn CSKH', orders.filter(o => o.cskh_id === pid)]];
+  const shown = groups.filter(g => g[2].length); const cur = shown.find(g => g[0] === tab) || shown[0];
+  const pg = usePager('slip_orders', [cur?.[0]]);
+  const Code = ({ c }: { c: string }) => { const u = orderUrl(c, tpl); return u ? <a className="font-semibold text-brand-700 hover:underline" href={u} target="_blank" rel="noreferrer">{c} ↗</a> : <>{c}</>; };
+  return <Card title="Đơn hoàn thành tính thưởng" actions={shown.length > 1 && <div className="flex gap-1">{shown.map(([k, l, xs]) => <button key={k} onClick={() => setTab(k)} className={cx('rounded-full border px-2.5 py-0.5 text-xs font-semibold', cur?.[0] === k ? 'border-ink-900 bg-ink-900 text-white' : 'border-ink-200')}>{l} {xs.length}</button>)}</div>} bodyClass="p-0">
+    {!cur ? <Empty>Không có đơn</Empty> : <>
+      {cur[0] === 'sale' ? <Table head={['Mã đơn', 'Khách', 'Hoàn thành', 'Lợi nhuận']}>{pg.slice(cur[2]).map(o => <tr key={o.ext_order_code}><Td><Code c={o.ext_order_code} /></Td><Td>{o.customer_ext}</Td><Td>{fmtDate(o.completed_at)}</Td><Td className={Number(o.order_profit) < 0 ? 'text-right text-red-600' : 'text-right'}>{money(o.order_profit)}</Td></tr>)}</Table>
+        : <Table head={['Mã đơn', 'Khách', 'Hoàn thành', 'Phí mua hàng', 'Đàm phán']}>{pg.slice(cur[2]).map(o => <tr key={o.ext_order_code}><Td><Code c={o.ext_order_code} /></Td><Td>{o.customer_ext}</Td><Td>{fmtDate(o.completed_at)}</Td><Td className="text-right">{money(o.purchase_fee)}</Td><Td className="text-right">{money(o.nego_fee)}</Td></tr>)}</Table>}
+      <Pager p={pg} total={cur[2].length} /></>}
+  </Card>;
 }

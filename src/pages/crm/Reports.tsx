@@ -3,6 +3,7 @@ import { Layout } from '../../components/Layout';
 import { Badge, Button, cx, Empty, Input, Loading, Select, toast, ErrorBox } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { useApp } from '../../state';
+import { Pager, usePager } from '../../components/Pager';
 import { addDays, copyTable, daysBetween, fmtDate, fmtDateTime, money, monthStart, num, today, weekStart } from '../../lib/format';
 
 export function usePeriod(initial = 'month') {
@@ -32,6 +33,7 @@ const REPORTS: [string, string][] = [['tong_quan', 'Tổng quan kinh doanh'], ['
 const RICON: Record<string, string> = { tong_quan: '📊', kpi: '🎯', can_cham: '⏰', nhat_ky: '📞', bao_gia: '🧾', pheu: '🔻', giu_khach: '🔁', nguon: '🧭', fb: '📣', nop_bc: '📝', ho_tro: '🆘', trung: '⚠️', chuyen: '🔀' };
 type Row = (string | number | React.ReactNode)[];
 function Section({ title, head, rows, bar }: { title: string; head: string[]; rows: Row[]; bar?: number }) {
+  const pg = usePager('rep_' + title, [rows.length]);
   const max = bar !== undefined ? Math.max(1, ...rows.map(r => Number(r[bar]) || 0)) : 1;
   const total = bar !== undefined ? rows.reduce((s, r) => s + (Number(r[bar]) || 0), 0) : 0;
   const plain = (v: any) => (typeof v === 'object' && v !== null ? (v.props?.['data-v'] ?? '') : v);
@@ -41,11 +43,12 @@ function Section({ title, head, rows, bar }: { title: string; head: string[]; ro
         <h3 className="text-sm font-bold">{title} <span className="ml-1 text-xs font-normal text-ink-400">{rows.length} dòng</span></h3>
         <Button size="sm" className="shrink-0" onClick={() => copyTable([head, ...rows.map(r => r.map(plain))]).then(() => toast.ok('Đã sao chép — dán vào Google Sheet'))}>📋<span className="hidden sm:inline"> Sao chép sang Sheet</span></Button>
       </header>
-      {!rows.length ? <Empty /> : <div className="max-h-[560px] overflow-auto"><table className="w-full text-sm">
+      {!rows.length ? <Empty /> : <div className="overflow-auto"><table className="w-full text-sm">
         <thead className="sticky top-0 bg-white"><tr className="border-b border-ink-200 text-left text-xs text-ink-500">{head.map((h, i) => <th key={i} className={cx('whitespace-nowrap px-3 py-2 font-semibold', i > 0 ? 'text-right' : 'sticky left-0 z-[1] bg-white')}>{h}</th>)}{bar !== undefined && <th className="px-3 py-2 text-xs font-semibold text-ink-500">Tỷ trọng</th>}</tr></thead>
-        <tbody className="divide-y divide-ink-100">{rows.map((r, i) => <tr key={i} className="hover:bg-ink-50/60">{r.map((c, j) => <td key={j} className={cx('px-3 py-1.5', j > 0 ? 'whitespace-nowrap text-right tabular-nums' : 'sticky left-0 min-w-[130px] bg-white font-medium')}>{c as any}</td>)}
+        <tbody className="divide-y divide-ink-100">{pg.slice(rows).map((r, i) => <tr key={i} className="hover:bg-ink-50/60">{r.map((c, j) => <td key={j} className={cx('px-3 py-1.5', j > 0 ? 'whitespace-nowrap text-right tabular-nums' : 'sticky left-0 min-w-[130px] bg-white font-medium')}>{c as any}</td>)}
           {bar !== undefined && <td className="w-[38%] min-w-[120px] px-3"><div className="flex items-center gap-2"><div className="h-2 flex-1 rounded-full bg-ink-100"><div className="h-2 rounded-full bg-brand-500" style={{ width: `${(Number(r[bar]) || 0) / max * 100}%` }} /></div><span className="w-10 text-right text-xs text-ink-500">{total ? Math.round((Number(r[bar]) || 0) / total * 100) : 0}%</span></div></td>}</tr>)}</tbody>
       </table></div>}
+      <Pager p={pg} total={rows.length} />
     </section>
   );
 }

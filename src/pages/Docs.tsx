@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Layout } from '../components/Layout';
 import { Button, Card, Empty, Field, Input, Loading, Modal, Select, Table, Td, Textarea, useAction, useLoad, toast } from '../components/ui';
+import { Pager, usePager } from '../components/Pager';
 import { db, storage } from '../lib/sb';
 import { useApp } from '../state';
 import { fmtDate } from '../lib/format';
@@ -11,6 +12,7 @@ export default function Docs() {
   const [cat, setCat] = useState(''); const [q, setQ] = useState(''); const [open, setOpen] = useState(false);
   const { data: cats } = useLoad(() => db.from('doc_categories').select('*').order('sort'), []);
   const { data, loading, reload } = useLoad(async () => {
+  const pg = usePager('docs', [(data as any[])?.length]);
     let qq = db.from('documents').select('*').is('deleted_at', null).order('created_at', { asc: false }).limit(300);
     if (cat) qq = qq.eq('category_id', cat);
     if (q.trim()) qq = qq.or(`title.ilike.*${q.trim()}*,ext_order_code.ilike.*${q.trim()}*,note.ilike.*${q.trim()}*`);
@@ -33,10 +35,10 @@ export default function Docs() {
       </div>
       <Card bodyClass="p-0">
         {loading ? <Loading /> : !(data as any[])?.length ? <Empty>Chưa có tài liệu</Empty> :
-          <Table head={['Tài liệu', 'Loại', 'Mã đơn', 'Người phụ trách', 'Ngày', '']}>{(data as any[]).map(d => (
+          <><Table head={['Tài liệu', 'Loại', 'Mã đơn', 'Người phụ trách', 'Ngày', '']}>{pg.slice(data as any[]).map(d => (
             <tr key={d.id}><Td><button className="text-left font-medium text-brand-700 hover:underline" onClick={() => openDoc(d)}>{d.kind === 'file' ? '📎 ' : '🔗 '}{d.title}</button>{d.note && <div className="text-xs text-ink-400">{d.note}</div>}</Td>
               <Td>{catOpts.find(c => c[0] === d.category_id)?.[1]}</Td><Td>{d.ext_order_code}</Td><Td>{a.personName(d.owner_id)}</Td><Td>{fmtDate(d.created_at)}</Td>
-              <Td>{(d.owner_id === a.me.id || a.isAdmin) && <Button size="sm" variant="ghost" onClick={() => del(d)}>Xóa</Button>}</Td></tr>))}</Table>}
+              <Td>{(d.owner_id === a.me.id || a.isAdmin) && <Button size="sm" variant="ghost" onClick={() => del(d)}>Xóa</Button>}</Td></tr>))}</Table><Pager p={pg} total={(data as any[]).length} /></>}
       </Card>
       <p className="mt-2 text-xs text-ink-500">Mỗi lần mở tài liệu được ghi nhật ký truy cập. File lưu riêng tư, chỉ mở qua link ký tạm 5 phút.</p>
       <NewDoc open={open} cats={catOpts} onClose={() => setOpen(false)} onDone={() => { setOpen(false); reload(); }} />
