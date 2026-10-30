@@ -13,7 +13,7 @@ update public.settings set value = jsonb_set(value, '{accounting_com,profile_ids
 select pg_temp.as_user('kt@nt.vn'); set role authenticated;
 select public.payroll_open('2026-12-01');
 select public.import_order_results((select id from public.payroll_periods where month = '2026-12-01'), '[
- {"ext_order_code":"MDX1","sale_name":"Sale A","order_profit":6000000,"cskh_name":"Thủy CSKH","buyer_name":"Diễm Ngọc MH","purchase_fee":600000,"nego_fee":1500000,"goods_value":60000000},
+ {"ext_order_code":"MDX1","sale_name":"Sale A","order_profit":6000000,"cskh_name":"Thủy CSKH","buyer_name":"Diễm Ngọc MH","purchase_fee":600000,"nego_fee":1500000,"goods_value":58000000,"domestic_ship":2000000},
  {"ext_order_code":"MDX2","sale_name":"Sale A","order_profit":4000000,"cskh_name":"Chưa phân công","buyer_name":"Diễm Ngọc MH","purchase_fee":400000,"nego_fee":500000,"goods_value":20000000}
 ]'::jsonb, true);
 select public.payroll_compute((select id from public.payroll_periods where month = '2026-12-01'));
