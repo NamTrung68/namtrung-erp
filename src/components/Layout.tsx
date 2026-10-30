@@ -58,6 +58,11 @@ export function useNav() {
       { to: '/hr/payroll', label: 'Bảng lương', icon: '💵', show: a.canHR },
       { to: '/hr/staff', label: a.isAdmin || a.has('hcns', 'bgd') ? 'Hồ sơ nhân sự' : 'Hồ sơ của tôi', icon: '🗂️', show: true },
     ]],
+    ['Kế toán – Hóa đơn', [
+      { to: '/acc', label: 'Đối soát xe & HĐ APT', icon: '🧾', show: a.isAdmin || a.has('ke_toan') },
+      { to: '/acc/mine', label: 'Việc HĐ của tôi', icon: '📮', show: a.isSales },
+      { to: '/acc/approve', label: 'Duyệt mở chặn HĐ', icon: '🔓', show: a.isAdmin || (a.settings.accounting?.approver_ids || []).includes(a.me.id) },
+    ]],
     ['Vận hành', [
       { to: '/tickets', label: 'Claim & hỏi đáp', icon: '❓', show: true },
       { to: '/inventory', label: 'Tồn kho', icon: '📦', show: true },

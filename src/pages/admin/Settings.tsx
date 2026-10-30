@@ -8,9 +8,11 @@ import { prepareUpload } from '../../lib/image';
 import { useApp } from '../../state';
 import { BANKS } from '../../lib/vietqr';
 import { fmtDate, fmtDateTime, money, num } from '../../lib/format';
+import { appsScriptCode, saveToDrive } from '../../lib/drive';
+import { DEFAULT_ACC_CFG } from '../../lib/doisoat';
 
 const TG_EVENTS: [string, string][] = [['leave_request', 'Đơn nghỉ / đơn công mới'], ['attendance_flag', 'Chấm công ngoài IP'], ['quote_approval', 'Báo giá chờ duyệt giá'], ['quote_won', 'Chốt đơn'],
-  ['support', 'Gọi hỗ trợ'], ['ticket', 'Ticket mới'], ['announcement', 'Bảng tin toàn công ty'], ['payroll', 'Chốt lương'], ['daily_summary', 'Tóm tắt 9h sáng'], ['report_missing', 'Sale chưa nộp báo cáo 18h'], ['hr', 'Hợp đồng lao động sắp hết hạn'], ['test', 'Tin thử']];
+  ['support', 'Gọi hỗ trợ'], ['ticket', 'Ticket mới'], ['announcement', 'Bảng tin toàn công ty'], ['payroll', 'Chốt lương'], ['daily_summary', 'Tóm tắt 9h sáng'], ['acc_invoice', 'HĐ APT có dòng không đơn / lệch giá'], ['acc_overdue', 'Dòng HĐ quá hạn sale chưa xử lý'], ['report_missing', 'Sale chưa nộp báo cáo 18h'], ['hr', 'Hợp đồng lao động sắp hết hạn'], ['test', 'Tin thử']];
 
 function useSetting(key: string) {
   const a = useApp(); const [v, setV] = useState<any>(a.settings[key] || {}); const { busy, run } = useAction();
@@ -24,6 +26,8 @@ export default function Settings() {
   const tabs: [string, string][] = [];
   if (a.isAdmin) tabs.push(['telegram', 'Telegram']);
   if (a.isAdmin || a.has('ke_toan')) tabs.push(['quote', 'Báo giá & tỷ giá'], ['company', 'Công ty & VietQR']);
+  if (a.isAdmin || a.has('ke_toan')) tabs.push(['acc', 'Kế toán – Hóa đơn']);
+  if (a.isAdmin) tabs.push(['backup', 'Sao lưu Google Drive']);
   if (a.isAdmin || a.has('hcns', 'bgd')) tabs.push(['login', 'Màn hình đăng nhập']);
   if (a.isAdmin || a.has('hcns')) tabs.push(['attendance', 'Chấm công & lịch'], ['holidays', 'Ngày lễ']);
   if (a.isAdmin) tabs.push(['payroll', 'Lương & KPI'], ['crm', 'Tham số CRM'], ['lookups', 'Danh mục'], ['org', 'Phòng ban']);
@@ -33,7 +37,7 @@ export default function Settings() {
       <Tabs value={tab} onChange={setTab} tabs={tabs} />
       <div className="mt-4 max-w-4xl">
         {tab === 'telegram' && <Telegram />}{tab === 'quote' && <QuoteCfg />}{tab === 'quote' && a.isAdmin && <LibraryCfg />}{tab === 'company' && <Company />}{tab === 'attendance' && <AttendanceCfg />}
-        {tab === 'holidays' && <Holidays />}{tab === 'payroll' && <PayrollCfg />}{tab === 'crm' && <CrmCfg />}{tab === 'lookups' && <Lookups />}{tab === 'org' && <Org />}{tab === 'login' && <LoginCfg />}{tab === 'payroll' && <InventoryCfg />}
+        {tab === 'holidays' && <Holidays />}{tab === 'payroll' && <PayrollCfg />}{tab === 'crm' && <CrmCfg />}{tab === 'lookups' && <Lookups />}{tab === 'org' && <Org />}{tab === 'login' && <LoginCfg />}{tab === 'payroll' && <InventoryCfg />}{tab === 'acc' && <AccCfg />}{tab === 'backup' && <DriveCfg />}
       </div>
     </Layout>
   );
@@ -346,4 +350,58 @@ function LibraryCfg() {
     <Chips options={ROLES.filter(r => r[0] !== 'admin')} value={roles} onChange={s.set('freight_roles')} />
     <Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>
   </Card>;
+}
+
+function AccCfg() {
+  const a = useApp(); const s = useSetting('accounting'); const v = { ...DEFAULT_ACC_CFG, approver_ids: [], ...s.v };
+  const P = ({ k, l }: { k: string; l: string }) => <Field label={l}><NumInput value={v[k] === undefined ? null : Math.round(v[k] * 10000) / 100} onChange={x => s.set(k)((x ?? 0) / 100)} /></Field>;
+  const L = ({ k, l, hint }: { k: string; l: string; hint?: string }) => <Field label={l} hint={hint}><Input value={(v[k] || []).join(', ')} onChange={e => s.set(k)(e.target.value.split(/[,\s]+/).filter(Boolean))} /></Field>;
+  return <div className="space-y-4">
+    <Card title="Quy tắc tự chấm dòng hàng (bước B1)">
+      <div className="grid gap-3 sm:grid-cols-3"><P k="bien_nt_min" l="Biên NT tối thiểu %" /><P k="bien_muc_tieu" l="Biên NT mục tiêu %" /><P k="bien_nt_max" l="Biên NT tối đa %" /></div>
+      <p className="mt-1 text-xs text-ink-500">Biên NT = giá khách ÷ giá HĐ APT − 1. Dưới tối thiểu → chặn, sale giải trình/xin duyệt. Trên tối đa → tự đề xuất APT xuất giá = giá khách ÷ (1 + mục tiêu).</p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3"><Field label="Bỏ qua khi tiền chênh dưới (đ)"><NumInput value={v.tien_bo_qua} onChange={s.set('tien_bo_qua')} /></Field>
+        <Field label="Hạn sale xử lý (giờ)"><NumInput value={v.han_sale_gio} onChange={s.set('han_sale_gio')} /></Field></div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2"><L k="md_xuat_thang" l="Đơn APT xuất thẳng (MD)" hint="Cách nhau dấu phẩy. 2411 hay MD2411 đều được" /><L k="sale_lanchi" l="Tài khoản khách Lanchi" />
+        <L k="hs_hop_quy_chuong" l="Chương HS hàng chờ hợp quy" hint="2 số đầu mã HS, VD 61, 62" /></div>
+      <Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>
+    </Card>
+    <Card title="Người được duyệt mở chặn">
+      <p className="mb-2 text-xs text-ink-500">Duyệt dòng chưa có đơn, giá khách = 0, biên NT dưới khung. {a.isAdmin ? 'Chọn người rồi bấm Lưu.' : 'Chỉ Admin/BGĐ được thay đổi danh sách này.'}</p>
+      <Chips disabled={!a.isAdmin} options={a.people.filter(x => x.status === 'active').map(x => [x.id, x.full_name])} value={v.approver_ids || []} onChange={s.set('approver_ids')} />
+      {a.isAdmin && <Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>}
+    </Card>
+  </div>;
+}
+
+function DriveCfg() {
+  const a = useApp(); const d = a.settings.drive || {}; const { busy, run } = useAction();
+  const [keys, setKeys] = useState<{ backup: string; upload: string } | null>(null); const [url, setUrl] = useState(d.url || '');
+  const rnd = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 57]).join('');
+  const c = window.NT_CONFIG!; const code = appsScriptCode(c.supabaseUrl, c.supabaseAnonKey);
+  const copy = (t: string) => navigator.clipboard.writeText(t).then(() => toast.ok('Đã sao chép'));
+  const gen = () => run(async () => { const k = { backup: rnd(48), upload: rnd(32) }; await db.rpc('backup_set_token', { p_token: k.backup }); await db.rpc('set_drive', { p_value: { upload_key: k.upload } }); setKeys(k); await a.reload(); }, 'Đã tạo mã mới');
+  const Step = ({ n, children }: { n: number; children: React.ReactNode }) => <li className="flex gap-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">{n}</span><div className="min-w-0 flex-1 text-sm">{children}</div></li>;
+  return <div className="space-y-4">
+    <Card title="Trạng thái">
+      <div className="text-sm">Sao lưu gần nhất lên Drive: <b>{d.last_backup_at ? fmtDateTime(d.last_backup_at) : 'chưa có'}</b>{d.last_backup_at && (Date.now() - new Date(d.last_backup_at).getTime() > 36 * 36e5) && <Badge color="red" className="ml-2">quá 36 giờ — kiểm tra Apps Script</Badge>}</div>
+      <div className="mt-1 text-sm">Lưu file lên Drive: {d.url && d.upload_key ? <Badge color="green">Đã bật</Badge> : <Badge>Chưa bật</Badge>}</div>
+      <p className="mt-2 text-xs text-ink-500">Mỗi đêm 1h, Google Drive của anh tự kéo toàn bộ dữ liệu ERP về thư mục <b>NT-ERP/Sao luu</b> (file .json.gz, giữ 60 ngày). File Excel đối soát, XML hóa đơn lưu vào <b>NT-ERP/Ke toan</b>. Không cần nâng gói Supabase. Khôi phục: Dữ liệu · Nhật ký → Khôi phục từ file sao lưu.</p>
+    </Card>
+    <Card title="Cài đặt 1 lần (khoảng 5 phút, đăng nhập Google của công ty)">
+      <ol className="space-y-3">
+        <Step n={1}><Button size="sm" variant="dark" loading={busy} onClick={gen}>Tạo mã bí mật mới</Button> <span className="text-xs text-ink-500">(tạo lại sẽ vô hiệu mã cũ)</span>
+          {keys && <div className="mt-2 space-y-1 rounded-xl bg-amber-50 p-3 text-xs"><div className="font-semibold text-amber-900">Chỉ hiện 1 lần — dán ngay vào Apps Script (bước 3):</div>
+            {[['BACKUP_TOKEN', keys.backup], ['UPLOAD_KEY', keys.upload]].map(([k, v]) => <div key={k} className="flex items-center gap-2"><code className="w-28 font-bold">{k}</code><code className="min-w-0 flex-1 truncate rounded bg-white px-2 py-1">{v}</code><Button size="sm" onClick={() => copy(v)}>Chép</Button></div>)}</div>}</Step>
+        <Step n={2}>Mở <a className="font-semibold text-brand-700 underline" href="https://script.google.com/home/projects/create" target="_blank" rel="noreferrer">script.google.com → Dự án mới</a>, xóa hết, dán mã dưới đây, bấm Lưu. <Button size="sm" onClick={() => copy(code)}>Chép mã Apps Script</Button>
+          <pre className="mt-2 max-h-40 overflow-auto rounded-xl bg-ink-900 p-3 text-[11px] text-ink-100">{code}</pre></Step>
+        <Step n={3}>Bánh răng <b>Project Settings</b> → <b>Script properties</b> → thêm 2 dòng <code>BACKUP_TOKEN</code> và <code>UPLOAD_KEY</code> với giá trị ở bước 1.</Step>
+        <Step n={4}>Quay lại Editor, chọn hàm <b>setup</b> → <b>Run</b> → cho phép quyền. Kiểm tra Drive có thư mục <b>NT-ERP/Sao luu</b> với 1 file mới.</Step>
+        <Step n={5}><b>Deploy → New deployment → Web app</b>: Execute as <b>Me</b>, Who has access <b>Anyone</b> → Deploy → chép link Web app dán vào đây:
+          <div className="mt-2 flex gap-2"><Input placeholder="https://script.google.com/macros/s/…/exec" value={url} onChange={e => setUrl(e.target.value)} />
+            <Button variant="primary" loading={busy} onClick={() => run(async () => { await db.rpc('set_drive', { p_value: { url: url.trim() } }); await a.reload(); }, 'Đã lưu link')}>Lưu</Button></div></Step>
+        <Step n={6}><Button size="sm" loading={busy} onClick={() => run(async () => { const u = await saveToDrive(a.settings.drive, new Blob(['NT-ERP thử lưu Drive ' + new Date().toLocaleString('vi-VN')], { type: 'text/plain' }), 'thu-luu-drive.txt', 'Thu nghiem'); window.open(u, '_blank'); }, 'Lưu thử thành công')}>Thử lưu 1 file lên Drive</Button></Step>
+      </ol>
+    </Card>
+  </div>;
 }

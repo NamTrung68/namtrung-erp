@@ -82,7 +82,7 @@ export async function readTable(file: File): Promise<any[][]> {
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '');
 const colName = (i: number) => { let s = ''; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
 /** Ghi file .xlsx 1 sheet (dòng đầu là tiêu đề, in đậm, cố định) */
-export async function writeXlsx(name: string, rows: any[][], sheet = 'Data') {
+export async function writeXlsx(name: string, rows: any[][], sheet = 'Data', download = true): Promise<Blob> {
   const { makeZip } = await import('./zip');
   const widths = (rows[0] || []).map((_, j) => Math.min(60, Math.max(8, ...rows.slice(0, 200).map(r => String(r[j] ?? '').length + 2))));
   const body = rows.map((r, i) => `<row r="${i + 1}">${r.map((v, j) => {
@@ -100,7 +100,8 @@ export async function writeXlsx(name: string, rows: any[][], sheet = 'Data') {
     { name: 'xl/styles.xml', data: x('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE8E3FF"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1"/></cellXfs></styleSheet>') },
     { name: 'xl/worksheets/sheet1.xml', data: x(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${widths.map((w, j) => `<col min="${j + 1}" max="${j + 1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${body}</sheetData></worksheet>`) },
   ];
-  const blob = await makeZip(files);
-  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([blob], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-  a.download = name.endsWith('.xlsx') ? name : name + '.xlsx'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  const out = new Blob([await makeZip(files)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  if (download) { const a = document.createElement('a'); a.href = URL.createObjectURL(out);
+    a.download = name.endsWith('.xlsx') ? name : name + '.xlsx'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); }
+  return out;
 }

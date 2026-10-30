@@ -118,6 +118,7 @@ function Backups() {
     </Card>
     <Card title="Tải bản sao lưu về máy"><p className="mb-3 text-sm text-ink-600">Tải toàn bộ dữ liệu (khách hàng, báo giá, chấm công, nhân sự…) thành 1 file .zip để cất ở Google Drive. Nên tải mỗi tuần.</p>
       <Button variant="primary" loading={busy && !!dl} onClick={download}>⬇ Tải file sao lưu (.zip)</Button>{dl && <span className="ml-3 text-xs text-ink-500">Đang lấy {dl}…</span>}</Card>
+    <DriveRestore />
     <Card title="Khôi phục khi có sự cố">
       <ol className="list-decimal space-y-1.5 pl-5 text-sm text-ink-700">
         <li>Vào Supabase → <b>SQL Editor</b> → New query.</li>
@@ -127,4 +128,32 @@ function Backups() {
       </ol>
     </Card>
   </div>;
+}
+
+// Khôi phục từ file sao lưu Google Drive (nt-erp_YYYY-MM-DD_HHmm.json.gz)
+function DriveRestore() {
+  const a = useApp(); const { busy, run } = useAction(); const [bk, setBk] = useState<any>(null); const [pick, setPick] = useState<string[]>([]); const [log, setLog] = useState<string[]>([]);
+  const open = (f: File | undefined) => run(async () => {
+    if (!f) return; let text: string;
+    if (/\.gz$/i.test(f.name)) text = await new Response(f.stream().pipeThrough(new (globalThis as any).DecompressionStream('gzip'))).text(); else text = await f.text();
+    const j = JSON.parse(text); if (!j.tables) throw new Error('Không phải file sao lưu NT-ERP'); setBk({ name: f.name, at: j.generated_at, tables: j.tables }); setPick([]); setLog([]);
+  });
+  const restore = () => run(async () => {
+    if (!pick.length) throw new Error('Chọn bảng cần khôi phục');
+    if (!(await ask({ title: 'Khôi phục dữ liệu', message: `Ghi đè ${pick.length} bảng về đúng lúc sao lưu ${fmtDateTime(bk.at)}. Dòng tạo sau đó vẫn giữ. Nên bấm “Sao lưu ngay” trước.`, ok: 'Khôi phục', danger: true }))) return;
+    const out: string[] = [];
+    for (const t of pick) { const rows: any[] = bk.tables[t] || []; let n = 0;
+      try { for (let i = 0; i < rows.length; i += 1000) n += Number(await db.rpc('backup_restore_json', { p_table: t, p_rows: rows.slice(i, i + 1000) })); out.push(`✓ ${t}: ${n} dòng`); }
+      catch (e: any) { out.push(`✗ ${t}: ${e.message}`); } setLog([...out]); }
+  }, 'Đã chạy khôi phục');
+  if (!a.isAdmin) return null;
+  return <Card title="Khôi phục từ file sao lưu Google Drive">
+    <p className="mb-2 text-sm text-ink-600">Tải file <b>nt-erp_…json.gz</b> trong thư mục Drive <b>NT-ERP/Sao luu</b> về máy rồi chọn ở đây.</p>
+    <input type="file" accept=".gz,.json" onChange={e => open(e.target.files?.[0])} />
+    {bk && <div className="mt-3"><div className="mb-2 text-sm">File {bk.name} · sao lưu lúc <b>{fmtDateTime(bk.at)}</b></div>
+      <div className="grid max-h-60 grid-cols-2 gap-1 overflow-auto rounded-xl border border-ink-200 p-2 text-xs sm:grid-cols-3">{Object.keys(bk.tables).sort().map(t => <label key={t} className="flex items-center gap-1.5">
+        <input type="checkbox" checked={pick.includes(t)} onChange={e => setPick(p => e.target.checked ? [...p, t] : p.filter(x => x !== t))} />{t} <span className="text-ink-400">({bk.tables[t].length})</span></label>)}</div>
+      <Button className="mt-2" variant="danger" loading={busy} onClick={restore}>Khôi phục bảng đã chọn</Button>
+      {log.map((x, i) => <div key={i} className="text-xs">{x}</div>)}</div>}
+  </Card>;
 }
