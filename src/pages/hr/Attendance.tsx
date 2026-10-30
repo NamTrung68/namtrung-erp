@@ -88,12 +88,55 @@ function Consent() {
 // Bộ lọc làm đẹp: b sáng · c tương phản · s bão hòa · w ấm · sm mịn da (0–1). css dùng cho xem trước.
 const FILTERS: { k: string; l: string; b: number; c: number; s: number; w: number; sm: number; css: string }[] = [
   { k: 'none', l: 'Tự nhiên', b: 1, c: 1, s: 1, w: 0, sm: 0, css: 'none' },
+  { k: 'glow', l: 'Rạng rỡ', b: 1.17, c: 0.93, s: 1.1, w: 7, sm: 0.4, css: 'brightness(1.17) contrast(0.93) saturate(1.1) sepia(0.05)' },
   { k: 'bright', l: 'Sáng da', b: 1.12, c: 0.95, s: 1.04, w: 4, sm: 0.25, css: 'brightness(1.12) contrast(0.95) saturate(1.04)' },
   { k: 'soft', l: 'Mịn da', b: 1.1, c: 0.92, s: 1.03, w: 6, sm: 0.5, css: 'brightness(1.1) contrast(0.92) saturate(1.03)' },
   { k: 'rosy', l: 'Hồng hào', b: 1.08, c: 0.97, s: 1.18, w: 10, sm: 0.3, css: 'brightness(1.08) contrast(0.97) saturate(1.18) sepia(0.06)' },
   { k: 'korea', l: 'Hàn Quốc', b: 1.16, c: 0.88, s: 0.9, w: 2, sm: 0.45, css: 'brightness(1.16) contrast(0.88) saturate(0.9)' },
   { k: 'warm', l: 'Nắng ấm', b: 1.05, c: 1.02, s: 1.12, w: 18, sm: 0.2, css: 'brightness(1.05) contrast(1.02) saturate(1.12) sepia(0.15)' },
 ];
+// ---- Trang điểm (son môi + má hồng) bằng nhận diện khuôn mặt MediaPipe, tải khi mở camera, lỗi mạng thì tự bỏ qua ----
+const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+let facePromise: Promise<any> | null = null;
+function loadFace(): Promise<any> {
+  if (!facePromise) facePromise = (async () => {
+    const imp = new Function('u', 'return import(u)') as (u: string) => Promise<any>;
+    const v = await imp(`${MP}/vision_bundle.mjs`); const fs = await v.FilesetResolver.forVisionTasks(`${MP}/wasm`);
+    const opts = (delegate: string) => ({ baseOptions: { modelAssetPath: FACE_MODEL, delegate }, runningMode: 'VIDEO', numFaces: 1 });
+    try { return await v.FaceLandmarker.createFromOptions(fs, opts('GPU')); } catch { return await v.FaceLandmarker.createFromOptions(fs, opts('CPU')); }
+  })().catch(e => { facePromise = null; throw e; });
+  return facePromise;
+}
+const LIP_OUT = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146];
+const LIP_IN = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95];
+const LIPS: { k: string; l: string; c: string }[] = [
+  { k: 'none', l: 'Không son', c: '' }, { k: 'peach', l: 'Hồng đào', c: '226,92,120' }, { k: 'coral', l: 'Đỏ cam', c: '220,70,58' },
+  { k: 'nude', l: 'Hồng nude', c: '200,112,120' }, { k: 'red', l: 'Đỏ thuần', c: '196,30,58' }, { k: 'berry', l: 'Đỏ mận', c: '150,34,64' },
+];
+type Pt = { x: number; y: number };
+// Vẽ son + má hồng lên ctx (toạ độ ảnh gốc chưa lật). blend=true: dùng phép trộn của canvas (ảnh chụp); false: lớp phủ đặt mix-blend-mode bằng CSS (xem trước)
+function drawMakeup(ctx: CanvasRenderingContext2D, lm: Pt[], w: number, h: number, lip: string, blush: boolean, blend: boolean) {
+  if (!lm?.length) return;
+  const P = (i: number) => [lm[i].x * w, lm[i].y * h] as const;
+  const faceW = Math.hypot((lm[454].x - lm[234].x) * w, (lm[454].y - lm[234].y) * h);
+  ctx.save();
+  if (blush) for (const i of [50, 280]) {
+    const [x, y] = P(i); const r = faceW * 0.16; const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(255,105,130,0.30)'); g.addColorStop(1, 'rgba(255,105,130,0)');
+    ctx.globalCompositeOperation = blend ? 'multiply' : 'source-over'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  const col = LIPS.find(x => x.k === lip)?.c;
+  if (col) {
+    const path = new Path2D(); LIP_OUT.forEach((i, j) => { const [x, y] = P(i); j ? path.lineTo(x, y) : path.moveTo(x, y); }); path.closePath();
+    [...LIP_IN].reverse().forEach((i, j) => { const [x, y] = P(i); j ? path.lineTo(x, y) : path.moveTo(x, y); }); path.closePath();
+    try { (ctx as any).filter = `blur(${Math.max(1, faceW / 220)}px)`; } catch { /* Safari cũ không có filter */ }
+    ctx.globalCompositeOperation = blend ? 'multiply' : 'source-over'; ctx.fillStyle = `rgba(${col},0.55)`; ctx.fill(path, 'evenodd');
+    if (blend) { ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = `rgba(${col},0.45)`; ctx.fill(path, 'evenodd'); }
+  }
+  ctx.restore();
+}
+
 function applyBeauty(c: HTMLCanvasElement, f: typeof FILTERS[number]) {
   if (f.k === 'none') return;
   const ctx = c.getContext('2d')!; const w = c.width, h = c.height;
@@ -114,9 +157,35 @@ function applyBeauty(c: HTMLCanvasElement, f: typeof FILTERS[number]) {
 
 function Camera({ kind, onClose, onDone }: { kind: 'in' | 'out'; onClose: () => void; onDone: () => void }) {
   const a = useApp(); const video = useRef<HTMLVideoElement>(null); const soft = useRef<HTMLVideoElement>(null);
-  const [fk, setFk] = useState(() => { try { return localStorage.getItem('nt_cam_filter') || 'bright'; } catch { return 'bright'; } });
+  const [fk, setFk] = useState(() => { try { return localStorage.getItem('nt_cam_filter') || 'glow'; } catch { return 'glow'; } });
   const flt = FILTERS.find(x => x.k === fk) || FILTERS[0];
-  useEffect(() => { try { localStorage.setItem('nt_cam_filter', fk); } catch { /* */ } }, [fk]); const [shot, setShot] = useState<Blob | null>(null); const [url, setUrl] = useState(''); const [err, setErr] = useState('');
+  useEffect(() => { try { localStorage.setItem('nt_cam_filter', fk); } catch { /* */ } }, [fk]);
+  const ls = (k: string, d: string) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+  const [lip, setLip] = useState(() => ls('nt_cam_lip', 'peach')); const [blush, setBlush] = useState(() => ls('nt_cam_blush', '1') === '1');
+  useEffect(() => { try { localStorage.setItem('nt_cam_lip', lip); localStorage.setItem('nt_cam_blush', blush ? '1' : '0'); } catch { /* */ } }, [lip, blush]);
+  const overlay = useRef<HTMLCanvasElement>(null); const lmRef = useRef<Pt[] | null>(null); const [mk, setMk] = useState<'off' | 'loading' | 'ready' | 'fail'>('off');
+  const wantMk = lip !== 'none' || blush;
+  useEffect(() => {
+    if (!wantMk || mk === 'ready' || mk === 'loading') return;
+    setMk('loading'); let live = true;
+    loadFace().then(() => live && setMk('ready')).catch(() => live && setMk('fail'));
+    return () => { live = false; };
+  }, [wantMk]);
+  useEffect(() => {
+    if (mk !== 'ready') return; let raf = 0; let last = 0; let stop = false;
+    const tick = async (t: number) => {
+      if (stop) return; raf = requestAnimationFrame(tick);
+      const v = video.current, cv = overlay.current; if (!v || !cv || v.readyState < 2 || t - last < 66) return; last = t;
+      try {
+        const fl = await loadFace(); const r = fl.detectForVideo(v, performance.now()); lmRef.current = r?.faceLandmarks?.[0] || null;
+        if (cv.width !== v.videoWidth) { cv.width = v.videoWidth; cv.height = v.videoHeight; }
+        const ctx = cv.getContext('2d')!; ctx.clearRect(0, 0, cv.width, cv.height);
+        if (lmRef.current) drawMakeup(ctx, lmRef.current, cv.width, cv.height, lip, blush, false);
+      } catch { /* bỏ qua khung hình lỗi */ }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { stop = true; cancelAnimationFrame(raf); };
+  }, [mk, lip, blush]); const [shot, setShot] = useState<Blob | null>(null); const [url, setUrl] = useState(''); const [err, setErr] = useState('');
   const [note, setNote] = useState(''); const { busy, run } = useAction(); const stream = useRef<MediaStream | null>(null);
   useEffect(() => {
     navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'user', width: { ideal: 960 } }, audio: false })
@@ -127,6 +196,7 @@ function Camera({ kind, onClose, onDone }: { kind: 'in' | 'out'; onClose: () => 
   const capture = async () => {
     const v = video.current!; const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
     const ctx = c.getContext('2d', { willReadFrequently: true } as any)!; ctx.translate(c.width, 0); ctx.scale(-1, 1); ctx.drawImage(v, 0, 0);
+    if (mk === 'ready' && lmRef.current) drawMakeup(ctx, lmRef.current, c.width, c.height, lip, blush, true);
     ctx.setTransform(1, 0, 0, 1, 0, 0); applyBeauty(c, flt); ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(0, c.height - 34, c.width, 34); ctx.fillStyle = '#fff'; ctx.font = '18px sans-serif';
     ctx.fillText(`${a.me.full_name} · ${new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}`, 10, c.height - 11);
     const b = await compressImage(c); setShot(b); setUrl(URL.createObjectURL(b));
@@ -148,10 +218,17 @@ function Camera({ kind, onClose, onDone }: { kind: 'in' | 'out'; onClose: () => 
         {url ? <img src={url} className="w-full" alt="selfie" /> : <>
           <video ref={video} playsInline muted className="w-full -scale-x-100" style={{ filter: flt.css }} />
           <video ref={soft} playsInline muted aria-hidden className="pointer-events-none absolute inset-0 h-full w-full -scale-x-100 object-cover" style={{ filter: `${flt.css === 'none' ? '' : flt.css} blur(6px)`, opacity: flt.sm }} />
+          <canvas ref={overlay} aria-hidden className="pointer-events-none absolute inset-0 h-full w-full -scale-x-100" style={{ mixBlendMode: 'multiply', display: mk === 'ready' ? 'block' : 'none' }} />
+          {mk === 'loading' && <div className="absolute left-2 top-2 rounded-full bg-black/50 px-2.5 py-1 text-[11px] text-white">💄 Đang tải trang điểm…</div>}
         </>}
       </div>
       {!url && !err && <div className="-mx-1 mt-2 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none]">{FILTERS.map(x =>
         <button key={x.k} onClick={() => setFk(x.k)} className={cx('shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition', fk === x.k ? 'border-brand-600 bg-brand-600 text-white shadow-sm' : 'border-ink-200 bg-white text-ink-700')}>✨ {x.l}</button>)}</div>}
+      {!url && !err && <div className="-mx-1 mt-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none]">
+        {LIPS.map(x => <button key={x.k} onClick={() => setLip(x.k)} title={x.l} className={cx('flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold transition', lip === x.k ? 'border-rose-500 bg-rose-50 text-rose-700 ring-2 ring-rose-200' : 'border-ink-200 bg-white text-ink-700')}>
+          {x.c ? <span className="h-3.5 w-3.5 rounded-full border border-white shadow" style={{ background: `rgb(${x.c})` }} /> : '🚫'}{x.l}</button>)}
+        <button onClick={() => setBlush(b => !b)} className={cx('shrink-0 rounded-full border px-2.5 py-1.5 text-xs font-semibold', blush ? 'border-rose-500 bg-rose-50 text-rose-700' : 'border-ink-200 bg-white text-ink-700')}>🌸 Má hồng {blush ? 'bật' : 'tắt'}</button></div>}
+      {!url && !err && mk === 'fail' && wantMk && <div className="mt-1 text-[11px] text-ink-400">Chưa tải được son/má hồng (mạng yếu) — bộ lọc sáng da vẫn dùng bình thường.</div>}
       {shot && <div className="mt-2 text-xs text-ink-500">Ảnh đã nén: {Math.round(shot.size / 1024)} KB</div>}
       <Field label="Ghi chú (nếu có)" className="mt-3"><Input value={note} onChange={e => setNote(e.target.value)} /></Field>
     </Modal>

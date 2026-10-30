@@ -7,7 +7,7 @@ import { ROLES } from './Users';
 import { prepareUpload } from '../../lib/image';
 import { useApp } from '../../state';
 import { BANKS } from '../../lib/vietqr';
-import { fmtDate, fmtDateTime, money } from '../../lib/format';
+import { fmtDate, fmtDateTime, money, num } from '../../lib/format';
 
 const TG_EVENTS: [string, string][] = [['leave_request', 'Đơn nghỉ / đơn công mới'], ['attendance_flag', 'Chấm công ngoài IP'], ['quote_approval', 'Báo giá chờ duyệt giá'], ['quote_won', 'Chốt đơn'],
   ['support', 'Gọi hỗ trợ'], ['ticket', 'Ticket mới'], ['announcement', 'Bảng tin toàn công ty'], ['payroll', 'Chốt lương'], ['daily_summary', 'Tóm tắt 9h sáng'], ['report_missing', 'Sale chưa nộp báo cáo 18h'], ['hr', 'Hợp đồng lao động sắp hết hạn'], ['test', 'Tin thử']];
@@ -181,15 +181,25 @@ function PayrollCfg() {
         <Button className="mt-3" variant="primary" loading={p.busy} onClick={p.save}>Lưu</Button>
       </Card>
       <Card title="COM theo bộ phận (Mua hàng · CSKH · TP Kế toán)">
-        {(() => { const b = p.v.buyer_com || {}; const c = p.v.cskh_com || {}; const k = p.v.accounting_com || {}; const nm: number[] = b.nego_pct_by_month || [2, 3, 4, 5];
+        {(() => { const b = p.v.buyer_com || {}; const c = p.v.cskh_com || {}; const k = p.v.accounting_com || {}; const nm: number[] = b.nego_pct_by_month || [2, 3, 4, 5]; const tg: number[] = b.target_pct_by_month || [2, 2.4, 2.7, 3];
+          const tiers: { from: number; coef: number }[] = b.coef_tiers || [{ from: 50, coef: 70 }, { from: 80, coef: 85 }, { from: 95, coef: 100 }, { from: 120, coef: 110 }, { from: 130, coef: 120 }]; const bk = p.v.buyer_kpi || {}; const skp = (x: any) => p.set('buyer_kpi')({ ...bk, ...x });
           const sb = (x: any) => p.set('buyer_com')({ ...b, ...x }); const sc = (x: any) => p.set('cskh_com')({ ...c, ...x }); const sk = (x: any) => p.set('accounting_com')({ ...k, ...x });
           return <div className="space-y-4 text-sm">
-            <div><div className="mb-2 flex items-center gap-2 font-semibold"><input type="checkbox" checked={b.enabled !== false} onChange={e => sb({ enabled: e.target.checked })} /> Mua hàng: (Phí mua hàng × a% + Hoa hồng đàm phán × b%) × Hệ số</div>
-              <div className="grid gap-3 sm:grid-cols-6">
-                <Field label="a% phí mua hàng"><NumInput value={b.fee_pct ?? 2} onChange={v => sb({ fee_pct: v ?? 0 })} /></Field>
-                {[0, 1, 2, 3].map(i => <Field key={i} label={`b% tháng thứ ${i < 3 ? i + 1 : '4+'}`}><NumInput value={nm[i]} onChange={v => sb({ nego_pct_by_month: [0, 1, 2, 3].map(j => j === i ? v ?? 0 : nm[j] ?? 0) })} /></Field>)}
-                <Field label="Hệ số %" hint="100 = không xét số đơn"><NumInput value={b.coef_pct ?? 100} onChange={v => sb({ coef_pct: v ?? 0 })} /></Field>
-              </div><p className="mt-1 text-xs text-ink-500">Tháng thâm niên tính từ “Ngày vào làm”. Người mua hàng lấy theo cột “Nhân viên mua hàng” trong file đơn.</p></div>
+            <div><div className="mb-2 flex items-center gap-2 font-semibold"><input type="checkbox" checked={b.enabled !== false} onChange={e => sb({ enabled: e.target.checked })} /> Mua hàng: Phí mua hàng × a% + Hoa hồng đàm phán × b% × Hệ số</div>
+              <div className="overflow-x-auto"><table className="w-full min-w-[520px] text-sm"><thead><tr className="text-left text-xs text-ink-500"><th className="py-1 pr-2" />{['Tháng thứ 1', 'Tháng thứ 2', 'Tháng thứ 3', 'Từ tháng thứ 4'].map(x => <th key={x} className="px-1 py-1">{x}</th>)}</tr></thead>
+                <tbody>{([['target_pct_by_month', 'Chỉ tiêu đàm phán %', tg], ['nego_pct_by_month', 'b% hoa hồng đàm phán', nm]] as const).map(([key, l, arr]) => <tr key={key}><td className="whitespace-nowrap py-1 pr-2 text-xs font-semibold text-ink-600">{l}</td>
+                  {[0, 1, 2, 3].map(i => <td key={i} className="px-1 py-1"><NumInput value={arr[i]} onChange={v => sb({ [key]: [0, 1, 2, 3].map(j => j === i ? v ?? 0 : arr[j] ?? 0) })} /></td>)}</tr>)}</tbody></table></div>
+              <div className="mt-2 text-xs font-semibold text-ink-600">Hệ số hoa hồng theo % hoàn thành chỉ tiêu đàm phán (dưới mức thấp nhất = 0%)</div>
+              <div className="mt-1 grid grid-cols-2 gap-2 sm:grid-cols-5">{tiers.map((t, i) => <div key={i} className="rounded-xl border border-ink-200 p-2"><div className="text-[11px] text-ink-500">Từ % hoàn thành</div><NumInput value={t.from} onChange={v => sb({ coef_tiers: tiers.map((x, j) => j === i ? { ...x, from: v ?? 0 } : x) })} />
+                <div className="mt-1 text-[11px] text-ink-500">Hệ số %</div><NumInput value={t.coef} onChange={v => sb({ coef_tiers: tiers.map((x, j) => j === i ? { ...x, coef: v ?? 0 } : x) })} /></div>)}</div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-4"><Field label="a% phí mua hàng"><NumInput value={b.fee_pct ?? 2} onChange={v => sb({ fee_pct: v ?? 0 })} /></Field>
+                <label className="flex items-end gap-2 pb-2 text-xs sm:col-span-3"><input type="checkbox" checked={!!b.coef_on_fee} onChange={e => sb({ coef_on_fee: e.target.checked })} /> Nhân hệ số cả phần phí mua hàng (mặc định chỉ nhân phần đàm phán)</label></div>
+              <p className="mt-1 text-xs text-ink-500">% đàm phán đạt = Σ Tiền hoa hồng đàm phán ÷ Σ Tổng giá trị sản phẩm quy đổi (VND) các đơn hoàn thành trong tháng. % hoàn thành = % đạt ÷ chỉ tiêu theo tháng thâm niên (tính từ “Ngày vào làm”, trống = từ tháng 4).
+                VD: chỉ tiêu 3%, đạt 2,5% → 83,33% → hệ số 85% → COM = phí mua hàng × 2% + đàm phán × 5% × 85%.</p>
+              <div className="mt-3 rounded-xl bg-ink-50 p-3"><div className="mb-2 flex items-center gap-2 font-semibold"><input type="checkbox" checked={!!bk.enabled} onChange={e => skp({ enabled: e.target.checked })} /> Lương Mua hàng theo KPI số đơn <span className="text-xs font-normal text-ink-500">(đang {bk.enabled ? 'áp dụng' : 'tắt'})</span></div>
+                <div className="grid gap-3 sm:grid-cols-3"><Field label="Chỉ tiêu đơn / tháng"><NumInput value={bk.orders ?? 900} onChange={v => skp({ orders: v ?? 0 })} /></Field><Field label="% lương theo KPI"><NumInput value={bk.share_pct ?? 30} onChange={v => skp({ share_pct: v ?? 0 })} /></Field></div>
+                <Field label="Áp dụng cho" className="mt-2"><Chips options={a.people.filter(x => x.status === 'active').map(x => [x.id, x.full_name])} value={bk.profile_ids || []} onChange={v => skp({ profile_ids: v })} /></Field>
+                <p className="mt-1 text-xs text-ink-500">Lương = lương theo công × (100% − {bk.share_pct ?? 30}%) + lương theo công × {bk.share_pct ?? 30}% × số đơn ÷ {num(bk.orders ?? 900)} (tối đa 100%). VD lương 7tr, 800 đơn: 4,9tr + 2,1tr × 800/900.</p></div></div>
             <div><div className="mb-2 flex items-center gap-2 font-semibold"><input type="checkbox" checked={c.enabled !== false} onChange={e => sc({ enabled: e.target.checked })} /> CSKH: Phí dịch vụ × % + Phí đàm phán × %</div>
               <div className="grid gap-3 sm:grid-cols-4"><Field label="% phí dịch vụ"><NumInput value={c.fee_pct ?? 2} onChange={v => sc({ fee_pct: v ?? 0 })} /></Field><Field label="% phí đàm phán"><NumInput value={c.nego_pct ?? 1} onChange={v => sc({ nego_pct: v ?? 0 })} /></Field></div></div>
             <div><div className="mb-2 font-semibold">Trưởng phòng Kế toán: % × % LN đơn hoàn thành cả công ty</div>

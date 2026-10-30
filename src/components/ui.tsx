@@ -23,15 +23,17 @@ export function Button({ variant = 'secondary', size = 'md', loading, className,
 }
 
 export const inputCls = 'w-full h-9 rounded-xl border border-ink-200 bg-white px-3 text-sm text-ink-900 placeholder:text-ink-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-ink-50 disabled:text-ink-500';
+// Có lớp w-xx / max-w riêng thì bỏ w-full để không bị đè độ rộng
+const icls = (className?: string) => className && /(^|\s)w-/.test(className) ? inputCls.replace('w-full ', '') : inputCls;
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...p }, ref) {
-  return <input ref={ref} {...p} className={cx(inputCls, className)} />;
+  return <input ref={ref} {...p} className={cx(icls(className), className)} />;
 });
 export function NumInput({ value, onChange, className, ...p }: { value: any; onChange: (v: number | null) => void } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
   const [txt, setTxt] = useState(value === null || value === undefined || value === '' ? '' : String(value));
   useEffect(() => { const cur = txt === '' ? null : Number(txt.replace(',', '.')); if (cur !== value && !(cur === null && (value === '' || value === undefined))) setTxt(value === null || value === undefined ? '' : String(value)); }, [value]);
   return <input inputMode="decimal" {...p} value={txt}
     onChange={e => { const t = e.target.value.replace(/[^0-9.,-]/g, ''); setTxt(t); const n = t === '' || t === '-' ? null : Number(t.replace(',', '.')); onChange(n === null || Number.isNaN(n) ? null : n); }}
-    className={cx(inputCls, 'text-right tabular-nums', className)} />;
+    className={cx(icls(className), 'text-right tabular-nums', className)} />;
 }
 export function Textarea({ className, ...p }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <textarea {...p} className={cx(inputCls, 'h-auto min-h-[72px] py-2', className)} />;
@@ -39,7 +41,7 @@ export function Textarea({ className, ...p }: React.TextareaHTMLAttributes<HTMLT
 export function Select({ options, value, onChange, placeholder, className, ...p }:
   { options: [string, string][]; value: any; onChange: (v: string) => void; placeholder?: string } & Omit<React.SelectHTMLAttributes<HTMLSelectElement>, 'onChange'>) {
   return (
-    <select {...p} value={value ?? ''} onChange={e => onChange(e.target.value)} className={cx(inputCls, 'pr-8', className)}>
+    <select {...p} value={value ?? ''} onChange={e => onChange(e.target.value)} className={cx(icls(className), 'pr-8', className)}>
       {placeholder !== undefined && <option value="">{placeholder}</option>}
       {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
     </select>

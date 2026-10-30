@@ -41,6 +41,12 @@ const errors = []; const ok = (c, m) => { if (!c) { errors.push('FAIL ' + m); } 
   txt = await admin.textContent('body'); ok(/COM theo bộ phận/.test(txt), 'settings COM card');
   await admin.screenshot({ path: `${SHOTS}/v7-settings.png`, fullPage: true });
   await go(admin, '/hr/payroll'); await admin.screenshot({ path: `${SHOTS}/v7-payroll.png` });
+  // bản 8: nhớ tháng khi quay lại + xem nhanh
+  await admin.click('button[title="Tháng trước"]'); await admin.waitForTimeout(500);
+  const m1 = await admin.inputValue('input[type=month]');
+  await go(admin, '/crm/quotes'); await go(admin, '/hr/payroll');
+  ok(await admin.inputValue('input[type=month]') === m1, 'payroll month persists ' + m1);
+  ok(await admin.locator('text=Xem nhanh').count() === 1, 'quick months');
   // khách hàng / báo giá có pager
   await go(admin, '/crm/customers'); await go(admin, '/crm/quotes'); await go(admin, '/crm/library');
   // sale: camera filter (mobile)

@@ -13,7 +13,10 @@ const SS: Record<string, [string, string]> = { draft: ['Nháp', 'gray'], sent: [
 
 export function Payroll() {
   const a = useApp(); const { run, busy } = useAction();
-  const [month, setMonth] = useState(addDays(monthStart(), -1).slice(0, 7));
+  const defMonth = addDays(monthStart(), -1).slice(0, 7);
+  const [month, setMonthRaw] = useState(() => { try { return sessionStorage.getItem('nt_pay_month') || defMonth; } catch { return defMonth; } });
+  const setMonth = (m: string) => { if (!/^\d{4}-\d{2}$/.test(m)) return; setMonthRaw(m); try { sessionStorage.setItem('nt_pay_month', m); } catch { /* */ } };
+  const [sort, setSort] = useState<{ k: string; d: 1 | -1 }>({ k: 'name', d: 1 }); const [f, setF] = useState<Record<string, string>>({});
   const { data: per, reload: rp } = useLoad(() => db.from('payroll_periods').select('*').eq('month', month + '-01').maybeSingle(), [month]);
   const { data: slips, loading, reload } = useLoad(() => per ? db.from('payslips').select('*').eq('period_id', per.id) : Promise.resolve([]), [per?.id]);
   const { data: orders, reload: ro } = useLoad(() => per ? db.from('order_results').select('id,ext_order_code,sale_name,profile_id,order_profit,completed_at,customer_ext') .eq('period_id', per.id).limit(5000) : Promise.resolve([]), [per?.id]);
@@ -22,11 +25,31 @@ export function Payroll() {
   if (!a.canHR) return <Layout title="Bảng lương"><Card>Chỉ HCNS, Kế toán, BGĐ.</Card></Layout>;
   const rows = ((slips as any[]) || []).slice().sort((x, y) => a.personName(x.profile_id).localeCompare(a.personName(y.profile_id)));
   const total = rows.reduce((s, r) => s + Number(r.net), 0);
+  const unitOf = (r: any) => a.people.find(x => x.id === r.profile_id)?.org_unit_id || '';
+  const levelOf = (r: any) => a.people.find(x => x.id === r.profile_id)?.job_level || '';
+  const comDeptOf = (r: any) => Number(r.com_buyer || 0) + Number(r.com_cskh || 0) + Number(r.com_accounting || 0);
+  const COLS: { k: string; l: string; v?: (r: any) => any; num?: boolean }[] = [
+    { k: 'stt', l: 'STT' }, { k: 'name', l: 'Nhân sự', v: r => a.personName(r.profile_id) }, { k: 'paid_days', l: 'Công', num: true }, { k: 'late_minutes', l: 'Muộn/sớm', num: true },
+    { k: 'salary_by_days', l: 'Lương theo công', num: true }, { k: 'allowance', l: 'Phụ cấp', num: true }, { k: 'profit_total', l: 'LN đơn', num: true }, { k: 'commission', l: 'Hoa hồng Sale', num: true },
+    { k: 'com_dept', l: 'COM bộ phận', v: comDeptOf, num: true }, { k: 'team_bonus', l: 'Thưởng đội', num: true }, { k: 'minus', l: 'Trừ', v: r => Number(r.flex_deduction) + Number(r.insurance), num: true },
+    { k: 'adjustments', l: 'Điều chỉnh', num: true }, { k: 'net', l: 'Thực lĩnh', num: true }, { k: 'status', l: 'Trạng thái', v: r => SS[r.status]?.[0] }, { k: 'act', l: '' }];
+  const val = (c: typeof COLS[number], r: any) => c.v ? c.v(r) : c.num ? Number(r[c.k] || 0) : r[c.k];
+  const view = rows.filter(r => {
+    if (f.name && !stripVN(a.personName(r.profile_id)).toLowerCase().includes(stripVN(f.name).toLowerCase())) return false;
+    if (f.unit && unitOf(r) !== f.unit) return false; if (f.level && levelOf(r) !== f.level) return false; if (f.status && r.status !== f.status) return false;
+    for (const c of COLS) if (c.num && f[c.k]) { const x = val(c, r); if (f[c.k] === 'nz' ? !x : f[c.k] === 'z' ? !!x : f[c.k] === 'neg' ? x >= 0 : false) return false; }
+    return true;
+  }).sort((x, y) => { const c = COLS.find(z => z.k === sort.k); if (!c) return 0; const p = val(c, x), q = val(c, y); return (typeof p === 'number' ? p - q : String(p ?? '').localeCompare(String(q ?? ''), 'vi')) * sort.d; });
+  const filtered = view.length !== rows.length; const viewTotal = view.reduce((s, r) => s + Number(r.net), 0);
+  const shift = (m: string, k: number) => { const [y, mo] = m.split('-').map(Number); const d = new Date(y, mo - 1 + k, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+  const cur = monthStart().slice(0, 7); const quick = [-4, -3, -2, -1, 0, 1].map(k => shift(cur, k));
   const unmapped = Array.from(new Set(((orders as any[]) || []).filter(o => !o.profile_id).map(o => o.sale_name)));
   const exportCsv = () => downloadCSV(`bang-luong-${month}`, [['STT', 'Mã NV', 'Họ tên', 'Công chuẩn', 'Công hưởng lương', 'Đi làm', 'Phép có lương', 'Nghỉ không lương', 'Phút muộn/sớm', 'Vượt quỹ', 'Lương cơ bản', 'Lương theo công', 'Phụ cấp', 'LN đơn', 'LN tính thưởng', 'Hoa hồng', 'Bù trừ lỗ', 'COM Mua hàng', 'COM CSKH', 'COM Kế toán', 'Thưởng đội', 'Trừ vượt quỹ phút', 'BHXH', 'Điều chỉnh', 'Thực lĩnh', 'Trạng thái'],
     ...rows.map((r, i) => [i + 1, a.people.find(p => p.id === r.profile_id)?.employee_code, a.personName(r.profile_id), r.standard_days, r.paid_days, r.worked_days, r.paid_leave_days, r.unpaid_days, r.late_minutes, r.flex_over_minutes, r.base_salary, r.salary_by_days, r.allowance, r.profit_total, r.commission_base, r.commission, r.loss_offset, r.com_buyer, r.com_cskh, r.com_accounting, r.team_bonus, r.flex_deduction, r.insurance, r.adjustments, r.net, SS[r.status]?.[0]])]);
   return (
-    <Layout title="Bảng lương" actions={<Input type="month" className="w-40" value={month} onChange={e => setMonth(e.target.value)} />}>
+    <Layout title="Bảng lương" actions={<div className="flex items-center gap-1"><Button size="sm" title="Tháng trước" onClick={() => setMonth(shift(month, -1))}>‹</Button><Input type="month" className="w-40" value={month} onChange={e => setMonth(e.target.value)} /><Button size="sm" title="Tháng sau" onClick={() => setMonth(shift(month, 1))}>›</Button></div>}>
+      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs"><span className="text-ink-500">Xem nhanh:</span>{quick.map(m => <button key={m} onClick={() => setMonth(m)}
+        className={cx('rounded-full border px-3 py-1 font-semibold transition', m === month ? 'border-ink-900 bg-ink-900 text-white' : 'border-ink-200 bg-white text-ink-700 hover:border-brand-400')}>T{Number(m.slice(5))}/{m.slice(0, 4)}{m === cur ? ' · tháng này' : ''}</button>)}</div>
       {!per ? <Card><div className="flex flex-wrap items-center gap-3 text-sm">Chưa mở kỳ lương tháng {month}. <Button variant="dark" loading={busy} onClick={() => run(async () => { await db.rpc('payroll_open', { p_month: month + '-01' }); rp(); }, 'Đã mở kỳ lương')}>Mở kỳ lương</Button></div></Card> : <>
         <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
           <Stat label="Trạng thái kỳ" value={<Badge color={PS[per.status][1]} className="text-sm">{PS[per.status][0]}</Badge>} sub={per.computed_at ? `Tính lúc ${fmtDateTime(per.computed_at)}` : 'Chưa tính'} />
@@ -45,8 +68,19 @@ export function Payroll() {
         {unmapped.length > 0 && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Tên sale trong file chưa khớp nhân sự: <b>{unmapped.join(', ')}</b>. Vào <a className="underline" href="#/admin/users">Nhân sự & quyền</a> → thêm "Tên trong file đơn" cho đúng người, rồi nhập lại file.</div>}
         <Card bodyClass="p-0">
           {loading ? <Loading /> : !rows.length ? <Empty>Chưa tính lương kỳ này</Empty> :
-            <Table head={['STT', 'Nhân sự', 'Công', 'Muộn/sớm', 'Lương theo công', 'Phụ cấp', 'LN đơn', 'Hoa hồng Sale', 'COM bộ phận', 'Thưởng đội', 'Trừ', 'Điều chỉnh', 'Thực lĩnh', 'Trạng thái', '']}>
-              {rows.map((r, i) => { const pp = a.people.find(x => x.id === r.profile_id); const comDept = Number(r.com_buyer || 0) + Number(r.com_cskh || 0) + Number(r.com_accounting || 0); return (
+            <div className="overflow-x-auto"><table className="w-full text-sm">
+              <thead className="sticky top-0 z-10"><tr className="border-b border-ink-200 bg-ink-50 text-left text-xs text-ink-500">{COLS.map(c => <th key={c.k} className={cx('whitespace-nowrap px-3 py-2 font-medium', c.num && 'text-right')}>
+                {c.k === 'stt' || c.k === 'act' ? c.l : <button className={cx('inline-flex items-center gap-1 hover:text-ink-900', sort.k === c.k && 'font-bold text-ink-900')} onClick={() => setSort(x => ({ k: c.k, d: x.k === c.k ? (x.d === 1 ? -1 : 1) : (c.num ? -1 : 1) }))}>{c.l}<span className="text-[10px]">{sort.k === c.k ? (sort.d === 1 ? '▲' : '▼') : '↕'}</span></button>}</th>)}</tr>
+                <tr className="border-b border-ink-200 bg-white">{COLS.map(c => <th key={c.k} className="px-2 py-1.5 align-top font-normal">
+                  {c.k === 'name' ? <div className="flex min-w-[180px] flex-col gap-1"><Input className="h-8 text-xs" placeholder="Lọc tên…" value={f.name || ''} onChange={e => setF(x => ({ ...x, name: e.target.value }))} />
+                    <Select className="h-8 text-xs" placeholder="Tất cả bộ phận" options={a.units.map(u => [u.id, u.name])} value={f.unit || ''} onChange={v => setF(x => ({ ...x, unit: v }))} />
+                    <Select className="h-8 text-xs" placeholder="Tất cả cấp" options={a.levels.map(l => [l.code, l.name])} value={f.level || ''} onChange={v => setF(x => ({ ...x, level: v }))} /></div>
+                  : c.k === 'status' ? <Select className="h-8 min-w-[120px] text-xs" placeholder="Tất cả" options={Object.entries(SS).map(([k, v]) => [k, v[0]])} value={f.status || ''} onChange={v => setF(x => ({ ...x, status: v }))} />
+                  : c.num ? <Select className="h-8 min-w-[92px] text-xs" placeholder="Tất cả" options={[['nz', 'Có số'], ['z', '= 0'], ['neg', 'Âm']]} value={f[c.k] || ''} onChange={v => setF(x => ({ ...x, [c.k]: v }))} />
+                  : c.k === 'act' && Object.values(f).some(Boolean) ? <button className="whitespace-nowrap text-xs font-semibold text-brand-700" onClick={() => setF({})}>✕ Bỏ lọc</button> : null}</th>)}</tr></thead>
+              <tbody className="divide-y divide-ink-100">
+              {!view.length && <tr><td colSpan={COLS.length} className="px-3 py-8 text-center text-ink-400">Không có phiếu lương khớp bộ lọc</td></tr>}
+              {view.map((r, i) => { const pp = a.people.find(x => x.id === r.profile_id); const comDept = comDeptOf(r); return (
                 <tr key={r.id} className="hover:bg-ink-50">
                   <Td className="text-center text-ink-400">{i + 1}</Td>
                   <Td className="whitespace-nowrap font-medium"><a className="hover:underline" href={`#/hr/payslip?id=${r.id}`}>{a.personName(r.profile_id)}</a>
@@ -63,9 +97,11 @@ export function Payroll() {
                   <Td><Badge color={SS[r.status][1]}>{SS[r.status][0]}</Badge>{r.dispute_note && <div className="max-w-[160px] text-xs text-red-600">{r.dispute_note}</div>}</Td>
                   <Td><Button size="sm" onClick={() => setQr(r)}>QR trả</Button></Td>
                 </tr>); })}
-            </Table>}
+              </tbody>
+              {filtered && <tfoot><tr className="border-t border-ink-200 bg-ink-50 text-xs"><td colSpan={12} className="px-3 py-2 text-right text-ink-500">Đang lọc {view.length}/{rows.length} người · tổng thực lĩnh</td><td className="px-3 py-2 text-right font-bold">{money(viewTotal)}</td><td colSpan={2} /></tr></tfoot>}
+            </table></div>}
         </Card>
-        <p className="mt-2 text-xs text-ink-500">COM bộ phận: Mua hàng = (phí mua hàng × {a.settings.payroll?.buyer_com?.fee_pct ?? 2}% + đàm phán × {(a.settings.payroll?.buyer_com?.nego_pct_by_month || [2, 3, 4, 5]).join('/')}% theo tháng thâm niên) × hệ số {a.settings.payroll?.buyer_com?.coef_pct ?? 100}% · CSKH = phí dịch vụ × {a.settings.payroll?.cskh_com?.fee_pct ?? 2}% + đàm phán × {a.settings.payroll?.cskh_com?.nego_pct ?? 1}% · TP Kế toán = {a.settings.payroll?.accounting_com?.pct ?? 0.5}% × {a.settings.payroll?.accounting_com?.base_pct ?? 60}% LN đơn hoàn thành cả công ty. Hệ thống khác: Kế toán tính ngoài rồi nhập ở “± COM hệ thống khác”.</p>
+        <p className="mt-2 text-xs text-ink-500">COM bộ phận: Mua hàng = phí mua hàng × {a.settings.payroll?.buyer_com?.fee_pct ?? 2}% + đàm phán × {(a.settings.payroll?.buyer_com?.nego_pct_by_month || [2, 3, 4, 5]).join('/')}% (tháng thâm niên 1/2/3/4+) × hệ số theo % hoàn thành chỉ tiêu đàm phán {(a.settings.payroll?.buyer_com?.target_pct_by_month || [2, 2.4, 2.7, 3]).join('/')}% · CSKH = phí dịch vụ × {a.settings.payroll?.cskh_com?.fee_pct ?? 2}% + đàm phán × {a.settings.payroll?.cskh_com?.nego_pct ?? 1}% · TP Kế toán = {a.settings.payroll?.accounting_com?.pct ?? 0.5}% × {a.settings.payroll?.accounting_com?.base_pct ?? 60}% LN đơn hoàn thành cả công ty. Hệ thống khác: Kế toán tính ngoài rồi nhập ở “± COM hệ thống khác”.</p>
         <p className="mt-1 text-xs text-ink-500">Hoa hồng = tỷ lệ theo cấp + lũy tiến (0–30tr, 30–65tr +3%, 65–100tr +5%, trên 100tr +7%) trên LN tính thưởng = {a.settings.payroll?.commission_base_pct ?? 60}% LN đơn. Đơn lỗ bù trừ tối đa 50% hoa hồng mỗi kỳ, phần còn lại chuyển kỳ sau. Thưởng quản lý 3% LN tính thưởng của đội (không gồm đơn của chính mình).</p>
         <ImportOrders open={importOpen} periodId={per.id} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); ro(); }} />
         {qr && <PayQr slip={qr} month={month} priv={((privs as any[]) || []).find(p => p.profile_id === qr.profile_id)} onClose={() => setQr(null)} />}
@@ -142,8 +178,8 @@ function OtherCom({ slips, onClose, onDone }: { slips: any[]; onClose: () => voi
     <p className="mb-2 text-xs text-ink-500">Kế toán tính COM của các hệ thống phụ ở ngoài, nhập tổng số tiền cho từng người. Mỗi người 1 dòng “{OTHER}” trong phiếu lương, sửa lại bất cứ lúc nào trước khi chốt.</p>
     <Input className="mb-2" placeholder="Tìm nhân sự…" value={q} onChange={e => setQ(e.target.value)} />
     <div className="max-h-[55vh] divide-y divide-ink-100 overflow-y-auto rounded-xl border border-ink-200">{list.map(s => { const old: any = cur.get(s.id); const pp = a.people.find(x => x.id === s.profile_id);
-      return <div key={s.id} className="flex items-center gap-3 px-3 py-2"><div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{a.personName(s.profile_id)}</div><div className="text-[11px] text-ink-400">{a.units.find(u => u.id === pp?.org_unit_id)?.name}</div></div>
-        <NumInput className="w-40" placeholder="0" value={s.id in v ? v[s.id] : (old ? Number(old.amount) : null)} onChange={x => setV(m => ({ ...m, [s.id]: x }))} /></div>; })}</div>
+      return <div key={s.id} className="flex items-center gap-3 px-3 py-2"><div className="min-w-0 flex-1"><div className="truncate text-sm font-medium text-ink-900">{a.personName(s.profile_id)}</div><div className="text-[11px] text-ink-400">{a.units.find(u => u.id === pp?.org_unit_id)?.name}</div></div>
+        <NumInput className="w-36 shrink-0" placeholder="0" value={s.id in v ? v[s.id] : (old ? Number(old.amount) : null)} onChange={x => setV(m => ({ ...m, [s.id]: x }))} /></div>; })}</div>
   </Modal>;
 }
 
@@ -211,7 +247,9 @@ export function PayslipView() {
           <L l="Hoa hồng lũy tiến" v={s.commission} sub={`tỷ lệ cơ bản ${num(d.commission_pct)}% + lũy tiến`} />
           {Number(s.loss_offset) > 0 && <L l="Bù trừ đơn lỗ" v={s.loss_offset} neg sub={`còn chuyển kỳ sau ${money(s.carry_loss)}`} />}
           {Number(s.team_bonus) > 0 && <L l="Thưởng quản lý đội" v={s.team_bonus} />}
-          {Number(s.com_buyer) > 0 && <L l="COM Mua hàng" v={s.com_buyer} sub={`${d.buyer?.orders ?? 0} đơn · phí mua hàng ${money(d.buyer?.purchase_fee)} × ${num(d.buyer?.fee_pct)}% + đàm phán ${money(d.buyer?.nego_fee)} × ${num(d.buyer?.nego_pct)}% (tháng thứ ${d.buyer?.month >= 99 ? '4+' : d.buyer?.month}) × hệ số ${num(d.buyer?.coef_pct)}%`} />}
+          {d.buyer_kpi && <L l="Lương theo KPI số đơn" v={null as any} sub={`${num(d.buyer_kpi.orders)} / ${num(d.buyer_kpi.target)} đơn = ${num(d.buyer_kpi.pct, 2)}% · ${num(d.buyer_kpi.share_pct)}% lương xét theo số đơn (đã tính vào lương theo công)`} />}
+          {(Number(s.com_buyer) > 0 || d.buyer?.orders > 0) && <L l="COM Mua hàng" v={s.com_buyer} sub={`${d.buyer?.orders ?? 0} đơn · tháng thứ ${d.buyer?.month >= 4 ? '4+' : d.buyer?.month} · đàm phán đạt ${num(d.buyer?.rate_pct, 2)}% / chỉ tiêu ${num(d.buyer?.target_pct, 2)}% = hoàn thành ${num(d.buyer?.ach_pct, 2)}% → hệ số ${num(d.buyer?.coef_pct)}%
+            · Phí mua hàng ${money(d.buyer?.purchase_fee)} × ${num(d.buyer?.fee_pct)}%${d.buyer?.coef_on_fee ? ' × hệ số' : ''} + Đàm phán ${money(d.buyer?.nego_fee)} × ${num(d.buyer?.nego_pct)}% × ${num(d.buyer?.coef_pct)}%`} />}
           {Number(s.com_cskh) > 0 && <L l="COM Chăm sóc khách hàng" v={s.com_cskh} sub={`${d.cskh?.orders ?? 0} đơn · phí dịch vụ ${money(d.cskh?.purchase_fee)} × ${num(d.cskh?.fee_pct)}% + đàm phán ${money(d.cskh?.nego_fee)} × ${num(d.cskh?.nego_pct)}%`} />}
           {Number(s.com_accounting) > 0 && <L l="COM Trưởng phòng Kế toán" v={s.com_accounting} sub={`LN đơn hoàn thành cả công ty ${money(d.accounting?.total_profit)} × ${num(d.accounting?.base_pct)}% × ${num(d.accounting?.pct)}%`} />}
           <L l="Đi muộn / về sớm" v={null as any} sub={`${s.late_minutes} phút · quỹ ${d.flex_minutes ?? 100} phút${d.flex_active ? '' : ' (chưa áp dụng)'} · vượt ${s.flex_over_minutes} phút`} />

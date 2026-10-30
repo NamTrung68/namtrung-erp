@@ -13,13 +13,24 @@ update public.settings set value = jsonb_set(value, '{accounting_com,profile_ids
 select pg_temp.as_user('kt@nt.vn'); set role authenticated;
 select public.payroll_open('2026-12-01');
 select public.import_order_results((select id from public.payroll_periods where month = '2026-12-01'), '[
- {"ext_order_code":"MDX1","sale_name":"Sale A","order_profit":6000000,"cskh_name":"Thủy CSKH","buyer_name":"Diễm Ngọc MH","purchase_fee":600000,"nego_fee":1500000},
- {"ext_order_code":"MDX2","sale_name":"Sale A","order_profit":4000000,"cskh_name":"Chưa phân công","buyer_name":"Diễm Ngọc MH","purchase_fee":400000,"nego_fee":500000}
+ {"ext_order_code":"MDX1","sale_name":"Sale A","order_profit":6000000,"cskh_name":"Thủy CSKH","buyer_name":"Diễm Ngọc MH","purchase_fee":600000,"nego_fee":1500000,"goods_value":60000000},
+ {"ext_order_code":"MDX2","sale_name":"Sale A","order_profit":4000000,"cskh_name":"Chưa phân công","buyer_name":"Diễm Ngọc MH","purchase_fee":400000,"nego_fee":500000,"goods_value":20000000}
 ]'::jsonb, true);
 select public.payroll_compute((select id from public.payroll_periods where month = '2026-12-01'));
 reset role;
--- Mua hàng: (1.000.000 × 2% + 2.000.000 × 4%) × 100% = 100.000
-select pg_temp.check((select com_buyer from public.payslips s join public.profiles p on p.id = s.profile_id where p.email = 'b@nt.vn' and s.period_id = (select id from public.payroll_periods where month = '2026-12-01')) = 100000, 'COM mua hàng = 100.000');
+-- Mua hàng tháng thứ 3: đàm phán đạt 2.000.000/80.000.000 = 2,5% / chỉ tiêu 2,7% = 92,59% → hệ số 85%
+--   1.000.000 × 2% + 2.000.000 × 4% × 85% = 20.000 + 68.000 = 88.000
+select pg_temp.check((select com_buyer from public.payslips s join public.profiles p on p.id = s.profile_id where p.email = 'b@nt.vn' and s.period_id = (select id from public.payroll_periods where month = '2026-12-01')) = 88000, 'COM mua hàng = 88.000');
+select pg_temp.check((select (details->'buyer'->>'coef_pct')::numeric = 85 and (details->'buyer'->>'target_pct')::numeric = 2.7 and (details->'buyer'->>'ach_pct')::numeric = 92.59 from public.payslips s join public.profiles p on p.id = s.profile_id where p.email = 'b@nt.vn' and s.period_id = (select id from public.payroll_periods where month = '2026-12-01')), 'chi tiết hệ số MH');
+-- KPI số đơn (bật thử): 2/4 đơn = 50% → lương × (70% + 30% × 50%) = 85% lương theo công
+update public.settings set value = jsonb_set(value, '{buyer_kpi}', jsonb_build_object('enabled', true, 'orders', 4, 'share_pct', 30, 'profile_ids', jsonb_build_array((select id::text from public.profiles where email = 'b@nt.vn')))) where key = 'payroll';
+update public.profile_private set base_salary = 7000000 where profile_id = (select id from public.profiles where email = 'b@nt.vn');
+insert into public.profile_private(profile_id, base_salary) select id, 7000000 from public.profiles where email = 'b@nt.vn' on conflict do nothing;
+select pg_temp.as_user('kt@nt.vn'); set role authenticated;
+select public.payroll_compute((select id from public.payroll_periods where month = '2026-12-01'));
+reset role;
+select pg_temp.check((select (details->'buyer_kpi'->>'pct')::numeric = 50 and salary_by_days > 0 from public.payslips s join public.profiles p on p.id = s.profile_id where p.email = 'b@nt.vn' and s.period_id = (select id from public.payroll_periods where month = '2026-12-01')), 'KPI số đơn MH');
+update public.settings set value = jsonb_set(value, '{buyer_kpi,enabled}', 'false') where key = 'payroll';
 -- CSKH: 600.000 × 2% + 1.500.000 × 1% = 27.000 (đơn "Chưa phân công" không tính)
 select pg_temp.check((select com_cskh from public.payslips s join public.profiles p on p.id = s.profile_id where p.email = 'hr@nt.vn' and s.period_id = (select id from public.payroll_periods where month = '2026-12-01')) = 27000, 'COM CSKH = 27.000');
 -- TP Kế toán: 10.000.000 × 60% × 0,5% = 30.000
