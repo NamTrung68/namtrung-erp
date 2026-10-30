@@ -361,8 +361,10 @@ function AccCfg() {
       <div className="grid gap-3 sm:grid-cols-3"><P k="bien_nt_min" l="Biên NT tối thiểu %" /><P k="bien_muc_tieu" l="Biên NT mục tiêu %" /><P k="bien_nt_max" l="Biên NT tối đa %" /></div>
       <p className="mt-1 text-xs text-ink-500">Biên NT = giá khách ÷ giá HĐ APT − 1. Dưới tối thiểu → chặn, sale giải trình/xin duyệt. Trên tối đa → tự đề xuất APT xuất giá = giá khách ÷ (1 + mục tiêu).</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-3"><Field label="Bỏ qua khi tiền chênh dưới (đ)"><NumInput value={v.tien_bo_qua} onChange={s.set('tien_bo_qua')} /></Field>
-        <Field label="Hạn sale xử lý (giờ)"><NumInput value={v.han_sale_gio} onChange={s.set('han_sale_gio')} /></Field></div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2"><L k="md_xuat_thang" l="Đơn APT xuất thẳng (MD)" hint="Cách nhau dấu phẩy. 2411 hay MD2411 đều được" /><L k="sale_lanchi" l="Tài khoản khách Lanchi" />
+        <Field label="Hạn sale xử lý (giờ)"><NumInput value={v.han_sale_gio} onChange={s.set('han_sale_gio')} /></Field>
+        <Field label="HĐ APT về muộn sau (ngày)" hint="Tính từ ngày xe"><NumInput value={v.han_hd_ngay ?? 15} onChange={s.set('han_hd_ngay')} /></Field></div>
+      <p className="mt-1 text-xs text-ink-500">Đơn APT xuất thẳng khai báo riêng từng xe khi nạp file (mỗi xe một khác).</p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2"><L k="sale_lanchi" l="Tài khoản khách Lanchi" />
         <L k="hs_hop_quy_chuong" l="Chương HS hàng chờ hợp quy" hint="2 số đầu mã HS, VD 61, 62" /></div>
       <Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>
     </Card>

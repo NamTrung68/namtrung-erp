@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { parseApt, parseKhaiBao, parseTkn, reconcile, parseInvoiceXml, judgeInvoiceLine, normMd, sim, vnNum, assign } from '../src/lib/doisoat';
+import { DEFAULT_ACC_CFG, parseApt, parseKhaiBao, parseTkn, reconcile, parseInvoiceXml, judgeInvoiceLine, normMd, sim, vnNum, assign } from '../src/lib/doisoat';
 
 test('tiện ích', () => {
   assert.equal(normMd('2411'), 'MD2411'); assert.equal(normMd('MD2411'), 'MD2411'); assert.equal(normMd(2411), 'MD2411');
@@ -19,7 +19,7 @@ test('xe 25/10 khớp kết quả skill', { skip: !existsSync(FX) }, () => {
   const map: Record<string, string> = { 'lê thị minh khơi': 'khoile', 'đỗ văn trung': 'trungdv22', 'đắc thị kiều trang': 'trangdtk', 'nguyễn thị linh': 'Linhnt', 'vũ thị huệ': 'huevt',
     'lê thị phương thúy': 'thuyltp', 'đào bích ngọc': 'ngocdtb', 'trần thị thanh huyền': 'huyenttt' };
   const acc = (s: string) => map[s.toLowerCase().trim()] || (['khoile', 'trungdv22', 'trangdtk', 'linhnt', 'huevt', 'thuyltp', 'ngocdtb', 'huyenttt', 'huyennk29', 'yenttt'].includes(s.toLowerCase()) ? s : null);
-  const r = reconcile(apt.rows, sys, tk, undefined, acc);
+  const r = reconcile(apt.rows, sys, tk, { ...DEFAULT_ACC_CFG, md_xuat_thang: ['MD2421', 'MD2744', 'MD2784', 'MD2785'] }, acc);
   // cặp ghép APT ↔ hệ thống giống skill
   const pairs = fx.baseline.pairs as Record<string, number | null>; let diff = 0;
   for (const l of r.lines.filter(x => x.apt_stt)) if ((pairs[String(l.apt_stt)] ?? null) !== (l.sys_row ?? null)) diff++;

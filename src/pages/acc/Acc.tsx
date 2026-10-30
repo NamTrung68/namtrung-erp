@@ -7,7 +7,7 @@ import { db, fetchAll } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { readTable, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
-import { DEFAULT_ACC_CFG, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, parseApt, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile } from '../../lib/doisoat';
+import { DEFAULT_ACC_CFG, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, normMd, parseApt, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile } from '../../lib/doisoat';
 import { driveReady, saveToDrive } from '../../lib/drive';
 import { bienTone, dueTxt, lineName, LuongBadge, Money, pctTxt, REPLY, ST, StatusBadge } from './common';
 
@@ -20,8 +20,8 @@ export default function Acc() {
   if (query.truck) return <TruckDetail id={query.truck} />;
   return (
     <Layout title="Kế toán – Hóa đơn">
-      <Tabs value={tab} onChange={setTab} tabs={[['trucks', 'Đối soát xe APT'], ['invoices', 'HĐ đầu vào (XML)'], ['sales', 'Ghép tên sale']]} />
-      <div className="mt-4">{tab === 'trucks' && <Trucks />}{tab === 'invoices' && <Invoices />}{tab === 'sales' && <SaleMap />}</div>
+      <Tabs value={tab} onChange={setTab} tabs={[['trucks', 'Đối soát xe APT'], ['invoices', 'HĐ đầu vào (XML)'], ['track', 'Theo dõi HĐ chưa về · xuất muộn'], ['sales', 'Ghép tên sale']]} />
+      <div className="mt-4">{tab === 'trucks' && <Trucks />}{tab === 'invoices' && <Invoices />}{tab === 'track' && <Track />}{tab === 'sales' && <SaleMap />}</div>
     </Layout>
   );
 }
@@ -29,7 +29,7 @@ export default function Acc() {
 // ============ Danh sách xe ============
 function Trucks() {
   const [imp, setImp] = useState(false);
-  const { data, loading, reload } = useLoad(() => db.from<any[]>('acc_trucks').select('id,name,truck_date,stats,status,created_at,files').order('created_at', { asc: false }).limit(200), []);
+  const { data, loading, reload } = useLoad(() => db.from<any[]>('acc_trucks').select('id,name,truck_date,stats,status,created_at,files,is_test').order('created_at', { asc: false }).limit(200), []);
   const { data: open } = useLoad(() => db.from<any[]>('acc_lines').select('truck_id,status').in('status', ['blocked', 'replied', 'pending_approval']).limit(5000), []);
   const cnt = useMemo(() => { const m = new Map<string, Record<string, number>>(); (open || []).forEach(l => { const x = m.get(l.truck_id) || {}; x[l.status] = (x[l.status] || 0) + 1; m.set(l.truck_id, x); }); return m; }, [open]);
   const pg = usePager('acc_trucks', []); const rows = data || [];
@@ -44,7 +44,7 @@ function Trucks() {
           <Td className="text-right">{c.blocked ? <b className="text-red-600">{c.blocked}</b> : <span className="text-ink-300">0</span>}</Td>
           <Td className="text-right">{c.replied || ''}</Td><Td className="text-right">{c.pending_approval || ''}</Td>
           <Td className="text-right"><Money v={s.tt_apt} /></Td><Td className="text-xs text-ink-500">{fmtDateTime(t.created_at)}</Td>
-          <Td>{t.status === 'closed' ? <Badge>Đã đóng</Badge> : <Badge color="blue">Đang xử lý</Badge>}</Td></tr>; })}</Table>}
+          <Td>{t.is_test ? <Badge color="amber">Nạp thử</Badge> : t.status === 'closed' ? <Badge>Đã đóng</Badge> : <Badge color="blue">Đang xử lý</Badge>}</Td></tr>; })}</Table>}
       <Pager p={pg} total={rows.length} /></Card>
     {imp && <ImportTruck onClose={() => setImp(false)} onDone={id => { setImp(false); reload(); go(`/acc?truck=${id}`); }} />}
   </>;
@@ -66,40 +66,70 @@ function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: () => v
   const [name, setName] = useState(truck?.name || ''); const [date, setDate] = useState(truck?.truck_date || today());
   const [files, setFiles] = useState<Record<string, File | null>>({ kb: null, apt: null, tkn: null });
   const [res, setRes] = useState<any>(null); const [err, setErr] = useState('');
+  const [xt, setXt] = useState<string>((truck?.md_xuat_thang || []).join(', ')); const [test, setTest] = useState(false);
+  const [target, setTarget] = useState<any>(truck || null); // nạp lại vào xe cũ khi phát hiện trùng
+  const xtList = () => Array.from(new Set(xt.split(/[^A-Za-z0-9]+/).map(normMd).filter(Boolean)));
   const analyze = async () => {
     setErr(''); setRes(null);
     try {
       if (!files.kb || !files.apt) throw new Error('Chọn đủ file khai báo hệ thống và file check APT');
       const [kbRows, aptRows, tkRows] = await Promise.all([readTable(files.kb), readTable(files.apt), files.tkn ? readTable(files.tkn) : Promise.resolve(null)]);
       const sys = parseKhaiBao(kbRows); const apt = parseApt(aptRows); const tk = tkRows ? parseTkn(tkRows) : [];
-      const r = reconcile(apt.rows, sys, tk, cfg, s => sm.find(s)?.id || null);
+      const r = reconcile(apt.rows, sys, tk, { ...cfg, md_xuat_thang: xtList() }, s => sm.find(s)?.id || null);
+      // dòng kế toán đã đánh dấu xuất thẳng ở lần nạp trước
+      const keys = new Set<string>(target?.xt_keys || []);
+      r.lines.forEach(l => { if (keys.has(l.line_key)) Object.assign(l, { luong: 'C', status: 'info', level: 3, issues: [], phan_hoi: l.apt_stt ? 'XUẤT THẲNG' : '', notes: ['Kế toán đánh dấu APT xuất thẳng.', ...l.notes] }); });
+      r.stats.ok = r.lines.filter(l => l.status === 'ok').length; r.stats.blocked = r.lines.filter(l => l.status === 'blocked').length; r.stats.info = r.lines.filter(l => l.status === 'info').length;
+      // chống trùng: mã HH / file khai báo đã có ở xe khác
+      const hhs = Array.from(new Set(apt.rows.map(x => x.hh).filter(Boolean))).slice(0, 150);
+      const dupL: any[] = hhs.length ? await db.from<any[]>('acc_lines').select('truck_id,acc_trucks(id,name,truck_date,is_test,md_xuat_thang,xt_keys)').in('hh', hhs).limit(2000) : [];
+      const dupF: any[] = await db.from<any[]>('acc_trucks').select('id,name,truck_date,is_test,md_xuat_thang,xt_keys').eq('files->>kb', files.kb.name).limit(5);
+      const dups = new Map<string, any>(); dupL.forEach(x => x.acc_trucks && dups.set(x.truck_id, x.acc_trucks)); dupF.forEach(x => dups.set(x.id, x));
+      if (target) dups.delete(target.id);
       r.stats.apt_header_total = apt.total;
       if (!tkRows) r.warnings.push('Chưa có tờ khai nháp: chưa so được thuế NK theo tờ khai.');
       if (apt.total && Math.abs(apt.total - r.stats.tt_apt) > 1000) r.warnings.push(`Tổng tiền dòng đầu file APT ${money(apt.total)} khác tổng cộng các dòng ${money(r.stats.tt_apt)} (do giá NOTE/đề xuất).`);
       const unmapped = Array.from(new Set(r.lines.filter(l => l.sale_name && !sm.find(l.sale_name) && (l.md || l.luong === 'A')).map(l => l.sale_name!)));
-      setRes({ ...r, unmapped, sysCount: sys.length });
+      setRes({ ...r, unmapped, sysCount: sys.length, dups: Array.from(dups.values()) });
       if (!name) setName('Xe ' + (date ? fmtDate(date).slice(0, 5) : ''));
     } catch (e: any) { setErr(e.message || String(e)); }
   };
   const save = () => run(async () => {
     const lines = res.lines.map((l: any) => ({ ...l, sale_id: sm.find(l.sale_name)?.id || sm.find(l.sale_apt)?.id || null, sale_acc: sm.find(l.sale_name)?.name || null }));
-    const id = await db.rpc<string>('acc_truck_save', { p_truck: truck?.id || null, p_info: { name: name || 'Xe ' + fmtDate(date), truck_date: date, stats: res.stats, warnings: res.warnings,
+    const nm = name || 'Xe ' + fmtDate(date);
+    const id = await db.rpc<string>('acc_truck_save', { p_truck: target?.id || null, p_info: { name: nm, truck_date: date, stats: res.stats, warnings: res.warnings,
+      is_test: target ? undefined : test, md_xuat_thang: xtList(),
       files: { kb: files.kb?.name, apt: files.apt?.name, tkn: files.tkn?.name, by: a.me.full_name } }, p_lines: lines });
+    // lưu 3 file gốc lên Drive theo từng xe
+    if (driveReady(a.settings.drive)) {
+      const links: Record<string, string> = {}; const folder = `Ke toan/Doi soat xe/${(date || today()).slice(0, 7)}/${stripVN(nm).replace(/[^A-Za-z0-9 _-]+/g, '-')}`;
+      for (const k of ['kb', 'apt', 'tkn']) { const f = files[k]; if (f) { try { links[k] = await saveToDrive(a.settings.drive, f, f.name, folder); } catch (e: any) { toast.err('Lưu Drive: ' + e.message); break; } } }
+      if (Object.keys(links).length) await db.from('acc_trucks').update({ file_links: links }).eq('id', id);
+    }
     onDone(id);
-  }, truck ? 'Đã nạp lại, giữ nguyên trả lời của sale' : 'Đã lưu đối soát, đã báo sale dòng bị chặn');
+  }, target ? 'Đã nạp lại, giữ nguyên trả lời của sale' : test ? 'Đã lưu xe nạp thử — sale chưa thấy' : 'Đã lưu đối soát, đã báo sale dòng bị chặn');
   const F = ({ k, l, hint }: { k: string; l: string; hint: string }) => <Field label={l} hint={hint}>
     <label className={cx('flex cursor-pointer items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-sm', files[k] ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : 'border-ink-300 hover:border-brand-400')}>
       <input type="file" accept=".xlsx,.csv" className="hidden" onChange={e => { setFiles(f => ({ ...f, [k]: e.target.files?.[0] || null })); setRes(null); }} />
       {files[k] ? '✓ ' + files[k]!.name : '⇪ Chọn file .xlsx'}</label></Field>;
   return <Modal open onClose={onClose} size="lg" title={truck ? `Nạp lại file · ${truck.name}` : 'Nạp xe mới'}
-    footer={<>{res && <Button variant="primary" loading={busy} disabled={!sm.ready} onClick={save}>Lưu & báo sale ({res.stats.blocked} dòng chặn)</Button>}{!res && <Button variant="dark" disabled={!sm.ready} onClick={analyze}>Phân tích</Button>}</>}>
+    footer={<>{res && <Button variant="primary" loading={busy} disabled={!sm.ready} onClick={save}>{target && !truck ? `Nạp lại vào “${target.name}”` : test && !target ? 'Lưu xe nạp thử' : `Lưu & báo sale (${res.stats.blocked} dòng chặn)`}</Button>}{!res && <Button variant="dark" disabled={!sm.ready} onClick={analyze}>Phân tích</Button>}</>}>
     <div className="grid gap-3 sm:grid-cols-2"><Field label="Tên xe"><Input value={name} placeholder="VD: Xe 25/10" onChange={e => setName(e.target.value)} /></Field>
       <Field label="Ngày xe"><Input type="date" value={date} onChange={e => setDate(e.target.value)} /></Field></div>
     <div className="mt-3 grid gap-3 sm:grid-cols-3">
       <F k="kb" l="1. File khai báo hệ thống *" hint="Xuất từ NamtrungLog (KhaiBao_XH…)" /><F k="apt" l="2. File check APT *" hint="APT gửi (hoadonnhap…), dòng đầu STT" />
       <F k="tkn" l="3. Tờ khai nháp TKN" hint="Listxe APT gửi — nên có" /></div>
+    <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+      <Field label="MD APT xuất thẳng của xe này" hint="Gõ hoặc dán danh sách, cách nhau dấu phẩy/xuống dòng. 2411 hay MD2411 đều được. Dòng có NOTE “XUẤT THẲNG” trên file APT tự nhận.">
+        <Textarea rows={2} value={xt} onChange={e => { setXt(e.target.value); setRes(null); }} placeholder="VD: MD2744, MD2784" /></Field>
+      {!truck && <label className="mb-6 flex items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900"><input type="checkbox" checked={test} onChange={e => setTest(e.target.checked)} /> Nạp thử — không báo sale</label>}
+    </div>
     {err && <div className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{err}</div>}
     {res && <div className="mt-4 space-y-3">
+      {!truck && res.dups.length > 0 && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800"><b>Có thể trùng xe đã nạp:</b> {res.dups.map((d: any) => <span key={d.id} className="ml-1">
+        “{d.name}”{d.is_test ? ' (nạp thử)' : ''} <button className={cx('ml-1 rounded-md border px-2 py-0.5 text-xs font-semibold', target?.id === d.id ? 'border-red-600 bg-red-600 text-white' : 'border-red-300 bg-white')}
+          onClick={() => { setTarget(target?.id === d.id ? null : d); setXt((d.md_xuat_thang || []).join(', ')); setRes(null); }}>{target?.id === d.id ? '✓ Sẽ nạp lại vào xe này — bấm Phân tích lại' : 'Nạp lại vào xe này'}</button></span>)}
+        <div className="mt-1 text-xs">Nạp lại giữ nguyên trả lời của sale và kết quả HĐ đã ghép. Nếu đúng là xe mới thì cứ lưu bình thường.</div></div>}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat label="Dòng file APT" value={res.stats.apt} sub={`hệ thống ${res.sysCount} · tờ khai ${res.stats.tk}`} />
         <Stat label="Tự chốt (TRUE)" value={res.stats.ok} tone="green" sub={`${Math.round(res.stats.ok / Math.max(1, res.stats.apt) * 100)}% dòng`} />
@@ -143,11 +173,17 @@ function TruckDetail({ id }: { id: string }) {
     const blob = await writeXlsx(fname(k === 'fb' ? 'Phan_hoi_APT' : 'Doi_soat'), k === 'fb' ? fbRows() : fullRows(), k === 'fb' ? 'Phản hồi APT' : 'Đối soát', !drive);
     if (drive) { const url = await saveToDrive(a.settings.drive, blob, fname(k === 'fb' ? 'Phan_hoi_APT' : 'Doi_soat') + '.xlsx', `Ke toan/Doi soat xe/${(t?.truck_date || today()).slice(0, 7)}`); window.open(url, '_blank'); }
   }, drive ? 'Đã lưu lên Drive' : undefined);
+  const del = () => run(async () => {
+    const n = all.filter(l => l.inv_no).length, r = all.filter(l => l.reply).length;
+    if (!(await ask({ title: `Xóa “${t.name}”?`, message: <>Xóa toàn bộ {all.length} dòng đối soát của xe này{r ? `, gồm ${r} dòng sale đã trả lời` : ''}{n ? `, ${n} dòng đã ghép HĐ (chỉ Admin xóa được)` : ''}. Không khôi phục từ màn hình được (có nhật ký và bản sao lưu).</>, ok: 'Xóa xe', danger: true }))) return;
+    await db.rpc('acc_truck_delete', { p_id: t.id }); go('/acc');
+  }, 'Đã xóa xe');
   if (!t) return <Layout title="Đối soát xe"><Loading /></Layout>;
   return (
     <Layout title={<span>Đối soát · {t.name}</span>} actions={<Button onClick={() => go('/acc')}>← Danh sách xe</Button>}>
       <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant="dark" loading={busy} onClick={() => exp('fb')}>⬇ Phản hồi gửi APT</Button><Button loading={busy} onClick={() => exp('full')}>⬇ Đối soát đầy đủ</Button>
         {driveReady(a.settings.drive) && <Button loading={busy} onClick={() => exp('full', true)}>☁ Lưu Drive</Button>}<Button onClick={() => setRe(true)}>⇪ Nạp lại file</Button>
+        <Button variant="danger" loading={busy} onClick={del}>🗑 Xóa xe</Button>
         <span className="text-xs text-ink-500">Nạp lúc {fmtDateTime(t.created_at)}{t.files?.by ? ' · ' + t.files.by : ''} · {[t.files?.kb, t.files?.apt, t.files?.tkn].filter(Boolean).join(' · ')}</span></div>
       <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Dòng file APT" value={all.filter(l => l.apt_stt).length} sub={`${all.filter(l => !l.apt_stt).length} dòng hệ thống không lên xe`} />
@@ -156,6 +192,9 @@ function TruckDetail({ id }: { id: string }) {
         <Stat label="Sale trả lời / chờ duyệt" value={`${c('replied')} / ${c('pending_approval')}`} tone={c('replied') ? 'amber' : undefined} onClick={() => setSt('replied')} />
         <Stat label="Biên NT bình quân" value={sumA ? pctTxt(sumK / sumA - 1) : '—'} sub={`mục tiêu ${pctTxt(cfg.bien_muc_tieu)}, khung ${pctTxt(cfg.bien_nt_min)}–${pctTxt(cfg.bien_nt_max)}`} />
       </div>
+      {t.is_test && <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"><b>Xe nạp thử</b> — sale và người duyệt chưa thấy, chưa báo ai, HĐ đầu vào không ghép vào xe này.
+        <Button size="sm" variant="primary" loading={busy} onClick={() => run(async () => { if (!(await ask({ title: 'Chuyển thành chính thức', message: `Báo ${c('blocked')} dòng bị chặn cho sale, hạn tính từ bây giờ.`, ok: 'Chuyển & báo sale' }))) return; await db.rpc('acc_truck_publish', { p_id: t.id }); rt(); reload(); }, 'Đã chuyển chính thức, đã báo sale')}>Chuyển thành chính thức & báo sale</Button></div>}
+      {Object.keys(t.file_links || {}).length > 0 && <div className="mb-3 flex flex-wrap gap-2 text-xs">File gốc trên Drive: {Object.entries(t.file_links).map(([k, u]: any) => <a key={k} className="font-semibold text-brand-700 underline" href={u} target="_blank" rel="noreferrer">{({ kb: 'Khai báo', apt: 'Check APT', tkn: 'Tờ khai nháp' } as any)[k] || k}</a>)}</div>}
       {(t.warnings || []).length > 0 && <div className="mb-3 space-y-1">{t.warnings.map((w: string, i: number) => <div key={i} className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-900">• {w}</div>)}</div>}
       <StatusChips value={st} onChange={setSt} items={[['', 'Tất cả', all.length, 'dark'], ...Object.entries(ST).map(([k, [l, tone]]) => [k, l, c(k), tone] as [string, string, number, string])]} />
       <div className="mb-3 flex flex-wrap gap-2"><Input className="max-w-xs" placeholder="🔎 MD, mã HH, tên hàng, sale…" value={q} onChange={e => setQ(e.target.value)} />
@@ -194,7 +233,8 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
   const set = (s: 'ok' | 'blocked') => run(async () => { const note = await ask({ title: s === 'ok' ? 'Chốt dòng (TRUE)' : 'Trả lại cho sale', input: { label: 'Ghi chú', required: s === 'blocked' } }); if (note === null) return; await db.rpc('acc_line_set', { p_id: l.id, p_status: s, p_note: note }); onChanged(); }, 'Đã cập nhật');
   return <Modal open onClose={onClose} size="lg" title={<span>{l.ma_dong || l.md || 'Dòng không có đơn'} · STT APT {l.apt_stt ?? '—'}</span>}
     footer={acc ? <>{l.status !== 'ok' && l.status !== 'approved' && <Button variant="success" loading={busy} onClick={() => set('ok')}>✓ Chốt dòng</Button>}
-      {l.status !== 'blocked' && l.luong !== 'C' && l.luong !== 'D' && <Button variant="danger" loading={busy} onClick={() => set('blocked')}>Trả lại sale</Button>}</> : undefined}>
+      {l.status !== 'blocked' && l.luong !== 'C' && l.luong !== 'D' && <Button variant="danger" loading={busy} onClick={() => set('blocked')}>Trả lại sale</Button>}
+      <Button loading={busy} onClick={() => run(async () => { await db.rpc('acc_line_xuat_thang', { p_id: l.id, p_on: l.luong !== 'C' }); onChanged(); }, 'Đã cập nhật')}>{l.luong === 'C' ? 'Bỏ đánh dấu xuất thẳng' : 'Đánh dấu APT xuất thẳng'}</Button></> : undefined}>
     <div className="mb-3 flex flex-wrap gap-2"><StatusBadge s={l.status} /><LuongBadge l={l.luong} />{l.phan_hoi && <Badge color="dark">{l.phan_hoi}</Badge>}</div>
     {(l.issues || []).map((x: string, i: number) => <div key={i} className="mb-1 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">⚠ {x}</div>)}
     {(l.notes || []).map((x: string, i: number) => <div key={i} className="mb-1 rounded-lg bg-ink-50 px-3 py-1.5 text-xs text-ink-600">• {x}</div>)}
@@ -243,7 +283,7 @@ function Invoices() {
       if (!/\.xml$/i.test(f.name)) { out.push({ file: f.name, error: 'Chỉ nhận file .xml (PDF không đối chiếu chính xác được)' }); continue; }
       try {
         const inv = parseInvoiceXml(await f.text()); const hhs = Array.from(new Set(inv.lines.map(l => l.hh).filter(Boolean)));
-        const found: any[] = hhs.length ? await db.from<any[]>('acc_lines').select('id,hh,md,gia_khach,gia_note,gia_de_xuat,gia_nhap,sl_tk,sl_apt').in('hh', hhs).order('updated_at', { asc: false }) : [];
+        const found: any[] = hhs.length ? await db.from<any[]>('acc_lines').select('id,hh,md,gia_khach,gia_note,gia_de_xuat,gia_nhap,sl_tk,sl_apt').eq('is_test', false).in('hh', hhs).order('updated_at', { asc: false }) : [];
         const byHH = new Map<string, any>(); found.forEach(x => { if (!byHH.has(x.hh)) byHH.set(x.hh, x); });
         const lines = inv.lines.map(l => { const m = byHH.get(l.hh) || null; return { ...l, line_id: m?.id || null, result: judgeInvoiceLine(l, m) }; });
         const stats: Record<string, number> = {}; lines.forEach(l => { stats[l.result] = (stats[l.result] || 0) + 1; });
@@ -305,4 +345,47 @@ function SaleMap() {
         <Td><Select className="w-56" placeholder="— Chọn —" options={sm.dir.map(p => [p.id, p.full_name] as [string, string])} value={pick[g.acc] || cur?.id || ''} onChange={v => setPick(x => ({ ...x, [g.acc]: v }))} /></Td>
         <Td><Button size="sm" loading={busy} disabled={!pick[g.acc] || pick[g.acc] === cur?.id} onClick={() => save(g)}>Lưu</Button></Td></tr>; })}</Table>
   </Card>;
+}
+
+// ============ Theo dõi HĐ chưa về / xuất muộn (xuyên các xe) ============
+function Track() {
+  const a = useApp(); const cfg = useAccCfg(); const X = Number(cfg.han_hd_ngay) || 15;
+  const [mode, setMode] = useState<'open' | 'late'>('open'); const [lu, setLu] = useState(''); const [only, setOnly] = useState(false); const [q, setQ] = useState(''); const [sel, setSel] = useState<any>(null);
+  const SEL = 'id,truck_id,line_key,md,ma_dong,hh,sale_id,sale_name,ten_apt,ten_ht,sl_apt,dvt_apt,tt_apt,gia_khach,luong,status,inv_id,inv_no,inv_result,issues,notes,phan_hoi,acc_trucks(name,truck_date)';
+  const { data, loading } = useLoad(async () => {
+    if (mode === 'open') return fetchAll<any>(() => db.from('acc_lines').select(SEL).is('inv_no', null).eq('is_test', false).gt('apt_stt', 0).in('luong', ['A', 'B']).in('status', ['ok', 'approved', 'info', 'blocked', 'replied', 'pending_approval']));
+    const ls = await fetchAll<any>(() => db.from('acc_lines').select(SEL).eq('is_test', false).gt('apt_stt', 0).gte('inv_no', '0'));
+    const ids = Array.from(new Set(ls.map(l => l.inv_id).filter(Boolean))); const inv = new Map<string, any>();
+    for (let i = 0; i < ids.length; i += 150) (await db.from<any[]>('acc_invoices').select('id,ngay,ky_hieu,so_hd').in('id', ids.slice(i, i + 150))).forEach(x => inv.set(x.id, x));
+    return ls.map(l => ({ ...l, inv: inv.get(l.inv_id) }));
+  }, [mode]);
+  const days = (from?: string, to?: string) => from ? Math.round((Date.parse((to || today()).slice(0, 10)) - Date.parse(from.slice(0, 10))) / 864e5) : null;
+  const rows = (data || []).map(l => ({ ...l, d: mode === 'open' ? days(l.acc_trucks?.truck_date) : days(l.acc_trucks?.truck_date, l.inv?.ngay) }))
+    .filter(l => (mode === 'open' || (l.d ?? 0) > X) && (!lu || l.luong === lu) && (!only || (l.d ?? 0) > X)
+      && (!q || stripVN([l.md, l.hh, l.ten_apt, l.sale_name, l.acc_trucks?.name].join(' ')).toLowerCase().includes(stripVN(q).toLowerCase())))
+    .sort((x, y) => (y.d ?? 0) - (x.d ?? 0));
+  const pg = usePager('acc_track', [mode, lu, only, q]); const total = rows.reduce((t, l) => t + Number(l.tt_apt || 0), 0);
+  const exp = () => writeXlsx(mode === 'open' ? 'HD_chua_ve' : 'HD_xuat_muon', [['Xe', 'Ngày xe', 'Số ngày', 'Luồng', 'Trạng thái', 'Sale', 'MD', 'Mã HH', 'Tên hàng', 'SL', 'Tiền hàng APT', 'Số HĐ', 'Ngày HĐ'],
+    ...rows.map(l => [l.acc_trucks?.name, fmtDate(l.acc_trucks?.truck_date), l.d, l.luong + '. ' + (LUONG as any)[l.luong], ST[l.status]?.[0], a.personName(l.sale_id) || l.sale_name, l.md, l.hh, lineName(l), Number(l.sl_apt) || '', Number(l.tt_apt) || '', l.inv_no || '', l.inv?.ngay ? fmtDate(l.inv.ngay) : ''])], mode === 'open' ? 'HĐ chưa về' : 'HĐ xuất muộn');
+  return <>
+    <div className="mb-3 flex flex-wrap items-center gap-2">
+      <Tabs value={mode} onChange={v => setMode(v as any)} tabs={[['open', 'Chưa có HĐ đầu vào'], ['late', `Xuất muộn (> ${X} ngày)`]]} />
+      <Input className="max-w-xs" placeholder="🔎 MD, mã HH, tên hàng, sale, xe…" value={q} onChange={e => setQ(e.target.value)} />
+      <Select className="w-48" placeholder="Mọi luồng" options={[['A', 'A. Qua Nam Trung'], ['B', 'B. Chờ hợp quy']]} value={lu} onChange={setLu} />
+      {mode === 'open' && <label className="flex items-center gap-1.5 text-sm"><input type="checkbox" checked={only} onChange={e => setOnly(e.target.checked)} /> Chỉ dòng quá {X} ngày</label>}
+      <Button onClick={exp}>⬇ Excel</Button>
+    </div>
+    <p className="mb-2 text-xs text-ink-500">{mode === 'open' ? `Dòng đã lên xe (qua Nam Trung hoặc chờ hợp quy) mà chưa nạp được HĐ APT tương ứng. Số ngày tính từ ngày xe; đỏ khi quá ${X} ngày (sửa ở Cấu hình → Kế toán – Hóa đơn).` : `Dòng có HĐ APT nhưng ngày HĐ cách ngày xe quá ${X} ngày.`} Không tính xe nạp thử.</p>
+    <Card bodyClass="p-0">{loading ? <Loading /> : !rows.length ? <Empty>Không có dòng</Empty> :
+      <Table head={['Xe', 'Số ngày', 'Sale · MD', 'Tên hàng', 'SL', 'Tiền hàng APT', 'Luồng', 'Trạng thái', ...(mode === 'late' ? ['HĐ'] : [])]}>{pg.slice(rows).map(l =>
+        <tr key={l.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setSel(l)}><Td className="whitespace-nowrap">{l.acc_trucks?.name}<div className="text-[11px] text-ink-400">{fmtDate(l.acc_trucks?.truck_date)}</div></Td>
+          <Td className={cx('text-right font-bold tabular-nums', (l.d ?? 0) > X ? 'text-red-600' : 'text-ink-700')}>{l.d}</Td>
+          <Td className="whitespace-nowrap">{a.personName(l.sale_id) || l.sale_name}<div className="text-[11px] text-ink-500">{l.ma_dong || l.md || 'không có đơn'} · {l.hh}</div></Td>
+          <Td className="min-w-[220px] text-xs">{lineName(l).slice(0, 110)}</Td><Td className="text-right">{num(l.sl_apt, 0)} <span className="text-[11px] text-ink-400">{l.dvt_apt}</span></Td>
+          <Td className="text-right"><Money v={l.tt_apt} /></Td><Td><LuongBadge l={l.luong} /></Td><Td><StatusBadge s={l.status} /></Td>
+          {mode === 'late' && <Td className="whitespace-nowrap text-xs">{l.inv_no}<div className="text-ink-400">{l.inv?.ngay ? fmtDate(l.inv.ngay) : ''}</div></Td>}</tr>)}</Table>}
+      <div className="flex items-center justify-between border-t border-ink-100 px-4 py-2 text-xs text-ink-500"><span>{rows.length} dòng · tiền hàng APT <b className="text-ink-800">{money(total)} đ</b></span></div>
+      <Pager p={pg} total={rows.length} /></Card>
+    {sel && <LineModal line={sel} onClose={() => setSel(null)} onChanged={() => setSel(null)} />}
+  </>;
 }

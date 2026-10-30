@@ -3,11 +3,11 @@
 
 export interface AccCfg {
   bien_muc_tieu: number; bien_nt_min: number; bien_nt_max: number; dung_sai_bien: number; tien_bo_qua: number; nguong_ghep: number;
-  sale_lanchi: string[]; md_xuat_thang: string[]; hs_hop_quy_chuong: string[]; han_sale_gio: number;
+  sale_lanchi: string[]; md_xuat_thang: string[]; hs_hop_quy_chuong: string[]; han_sale_gio: number; han_hd_ngay?: number;
 }
 export const DEFAULT_ACC_CFG: AccCfg = {
   bien_muc_tieu: 0.03, bien_nt_min: 0.025, bien_nt_max: 0.04, dung_sai_bien: 0.001, tien_bo_qua: 50000, nguong_ghep: 0.65,
-  sale_lanchi: ['huyennk29', 'yenttt', 'Yentth'], md_xuat_thang: ['MD2421', 'MD2744', 'MD2784', 'MD2785'],
+  sale_lanchi: ['huyennk29', 'yenttt', 'Yentth'], md_xuat_thang: [], han_hd_ngay: 15,
   hs_hop_quy_chuong: ['50', '51', '52', '53', '54', '55', '56', '57', '58', '59', '60', '61', '62', '63'], han_sale_gio: 24,
 };
 
