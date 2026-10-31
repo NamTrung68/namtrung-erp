@@ -54,7 +54,7 @@ select pg_temp.check((public.out_items_import('[
   {"ma_hang":"HH0002-8888-2026","stt_so":2,"ten":"Hàng lẻ","dvt":"Cái","vat":0.08,"sl_nhap":10,"dg_nhap":1000,"so_hd_vao":"8888","ky_hieu":"C26TYT","stt_hd":2},
   {"ma_hang":"HH0003-8888-2026","stt_so":3,"ten":"Hàng cũ","dvt":"Cái","vat":0.08,"sl_nhap":5,"dg_nhap":1000,"so_hd_vao":"8888","ky_hieu":"C26TYT","stt_hd":3,"md":"MD7777","nvkd":"trungdv22"}]')->>'new')::int = 3, 'nạp sổ');
 select pg_temp.check(public.out_legacy_import('[{"status":"da_ky","so_hd":"638","ngay":"2026-10-16","info":"CTY CŨ\nMST 0101","lines":[{"ma_hang":"HH0003-8888-2026","sl":3,"gia":1100}]},
-  {"status":"da_nhap","so_hd":"","info":"x","lines":[{"ma_hang":"HH0002-8888-2026","sl":10,"gia":1}]}]') = 1, 'phiếu cũ: chỉ dòng đã ký');
+  {"status":"da_nhap","so_hd":"","info":"x","lines":[{"ma_hang":"HH0002-8888-2026","sl":10,"gia":1}]}]') = 2, 'phiếu cũ: đã ký + đã xuất nháp');
 reset role;
 select pg_temp.check((select md = 'MD8101' and sale_id = (select id from public.profiles where email='b@nt.vn') and gia_khach = 128700 and match_src = 'hd_xml' from public.out_items where ma_hang='HH0001-8888-2026'), 'gắn đơn/sale theo HĐ XML');
 select pg_temp.check((select sale_id is null from public.out_items where ma_hang='HH0002-8888-2026'), 'dòng chưa có sale');

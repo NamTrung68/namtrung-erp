@@ -50,9 +50,10 @@ const maHang = (t: any) => t.ma_hang + (t.part > 1 ? ` (${t.part})` : '');
 function useDebounced<T>(v: T, ms = 350): T { const [d, setD] = useState(v); React.useEffect(() => { const t = setTimeout(() => setD(v), ms); return () => clearTimeout(t); }, [v]); return d; }
 function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean }) {
   const a = useApp(); const { busy, run } = useAction(); const mode = acc ? 'acc' : free ? 'free' : 'mine';
-  const [q, setQ] = useState(''); const qd = useDebounced(q); const [f, setF] = useState(acc ? 'ton' : ''); const [hd, setHd] = useState(''); const [xe, setXe] = useState(''); const [sale, setSale] = useState('');
-  const pg = usePager(acc ? 'out_items' : free ? 'out_free' : 'out_mine', [qd, f, hd, xe, sale]);
-  const { data, loading, reload: reloadRows } = useLoad(() => db.rpc<any>('out_items_page', { p: { mode, f, q: qd, hd, xe, sale, offset: pg.from, limit: pg.size } }), [mode, f, qd, hd, xe, sale, pg.from, pg.size]);
+  const [q, setQ] = useState(''); const qd = useDebounced(q); const [f, setF] = useState(acc ? 'ton' : ''); const [hd, setHd] = useState(''); const [xe, setXe] = useState(''); const [sale, setSale] = useState(''); const [kh, setKh] = useState('');
+  const pg = usePager(acc ? 'out_items' : free ? 'out_free' : 'out_mine', [qd, f, hd, xe, sale, kh]);
+  const { data, loading, reload: reloadRows } = useLoad(() => db.rpc<any>('out_items_page', { p: { mode, f, q: qd, hd, xe, sale, kh, offset: pg.from, limit: pg.size } }), [mode, f, qd, hd, xe, sale, kh, pg.from, pg.size]);
+  const { data: saleOpts } = useLoad(() => acc || (a.isLead && !free) ? db.rpc<any[]>('out_sale_opts') : Promise.resolve([]), [acc, free]);
   const { data: st, reload: reloadSt } = useLoad(() => db.rpc<any>('out_items_stats', { p_mode: mode }), [mode]);
   const { data: ic } = useLoad(async () => {
     if (acc || free) return null;
@@ -99,9 +100,12 @@ function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean })
     {!acc && !free && <p className="mb-3 text-sm text-ink-600">Tick các dòng cùng 1 đơn vị nhận HĐ → <b>Lập phiếu xuất HĐ</b>: xác nhận giá + thông tin xuất HĐ. Dòng đã ký nằm ở “Phiếu của tôi → Đã ký”.</p>}
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <Input className="max-w-xs" placeholder="🔎 Mã hàng, tên, ID đơn, khách, sale, số HĐ, xe…" value={q} onChange={e => setQ(e.target.value)} />
-      <Select className="w-40" placeholder="Mọi xe" options={xes.map(x => [x, x === '—' ? '— Chưa gán xe' : x] as [string, string])} value={xe} onChange={setXe} />
-      <Select className="w-40" placeholder="Mọi HĐ vào" options={hds.map(h => [h, 'HĐ ' + h] as [string, string])} value={hd} onChange={setHd} />
-      {acc && <Select className="w-44" placeholder="Mọi sale" options={sales.map(x => [x, x === '—' ? '— Chưa có sale' : a.personName(x)] as [string, string])} value={sale} onChange={setSale} />}
+      <Select className="w-40" placeholder="Tất cả xe" options={xes.map(x => [x, x === '—' ? '— Chưa gán xe' : x] as [string, string])} value={xe} onChange={setXe} />
+      <Select className="w-40" placeholder="Tất cả HĐ vào" options={hds.map(h => [h, 'HĐ ' + h] as [string, string])} value={hd} onChange={setHd} />
+      {acc && <Select className="w-44" placeholder="Tất cả sale" options={sales.map(x => [x, x === '—' ? '— Chưa có sale' : a.personName(x)] as [string, string])} value={sale} onChange={setSale} />}
+      {!acc && !free && a.isLead && (saleOpts || []).length > 1 && <Select className="w-44" placeholder="Tất cả sale" options={(saleOpts || []).map((x: any) => [x.id, x.full_name] as [string, string])} value={sale} onChange={setSale} />}
+      {!acc && <Select className="w-52" placeholder="Tất cả khách" options={((S.kh || []) as [string, string][]).map(([k, t]) => [k, t] as [string, string])} value={kh} onChange={setKh} />}
+      {!acc && !free && <Select className="w-48" placeholder="Tất cả dòng còn tồn" options={[['nokhach', `Chưa gắn khách (${S.nokhach ?? 0})`], ['nomd', `Chưa gắn đơn (${S.nomd ?? 0})`], ['nogia', `Chưa có giá xuất (${S.nogia ?? 0})`]] as [string, string][]} value={f} onChange={setF} />}
       {acc && <Select className="w-48" placeholder="Tất cả dòng" options={[['ton', 'Còn tồn'], ['het', 'Đã xuất hết'], ['nosale', 'Chưa gắn sale'], ['nomd', 'Chưa có ID đơn'], ['nogia', 'Chưa có giá xuất'], ['daky_nosale', 'Đã ký không sale']] as [string, string][]} value={f} onChange={setF} />}
       {!free && chosen.length > 0 && <Button className="hidden sm:inline-flex" variant="primary" onClick={() => setNewInv(chosen)}>Lập phiếu xuất HĐ ({chosen.length} dòng)</Button>}
       {!free && chosen.length > 0 && <button className="hidden text-xs text-ink-500 underline sm:inline" onClick={() => setPick({})}>Bỏ chọn</button>}
@@ -204,9 +208,9 @@ function ImportSo({ onClose, onDone }: { onClose: () => void; onDone: () => void
     if (rows.length) { let nn = 0, nu = 0;
       for (let i = 0; i < rows.length; i += 150) { setStep(`Đang nạp sổ ${Math.min(i + 150, rows.length)}/${rows.length}…`); const x = await db.rpc<any>('out_items_import', { p_rows: rows.slice(i, i + 150) }); nn += x.new; nu += x.upd; }
       msg.push(`${nn} dòng mới, ${nu} dòng cập nhật`);
-      const leg = res.legacy.filter((g: any) => g.status === 'da_ky'); let nl = 0;
-      for (let i = 0; i < leg.length; i += 40) { setStep(`Đang chuyển dòng đã ký ${Math.min(i + 40, leg.length)}/${leg.length}…`); nl += await db.rpc<number>('out_legacy_import', { p_legacy: leg.slice(i, i + 40) }); }
-      if (nl) msg.push(`${nl} phiếu đã ký từ sổ cũ`); }
+      const leg = res.legacy; let nl = 0;
+      for (let i = 0; i < leg.length; i += 40) { setStep(`Đang chuyển dòng đã ký / đã xuất nháp ${Math.min(i + 40, leg.length)}/${leg.length}…`); nl += await db.rpc<number>('out_legacy_import', { p_legacy: leg.slice(i, i + 40) }); }
+      if (nl) msg.push(`${nl} phiếu từ sổ cũ (đã ký / đã xuất nháp)`); }
     if (res.orders.length) { let n = 0; for (let i = 0; i < res.orders.length; i += 500) { setStep(`Đang nạp đơn hàng ${Math.min(i + 500, res.orders.length)}/${res.orders.length}…`); n += await db.rpc<number>('out_orders_import', { p_rows: res.orders.slice(i, i + 500) }); } msg.push(`${res.orders.length} mã đơn (${n} dòng được gắn)`); }
     if (res.buyers.length) { setStep('Đang nạp đơn vị nhận HĐ…'); const n = await db.rpc<number>('out_buyers_import', { p_rows: res.buyers }); msg.push(`${n} đơn vị nhận HĐ`); }
     setStep('Đang gắn lại sale / khách / giá…'); await db.rpc<number>('out_rematch'); setStep('');
@@ -329,8 +333,8 @@ function Invoices({ acc }: { acc: boolean }) {
   const rows: any[] = data?.rows || []; const total = data?.total || 0; const cnt = data?.counts || {};
   const c = (k: string) => Number(cnt[k] || 0); const allN = Object.entries(cnt).filter(([k]) => k !== 'huy').reduce((x, [, v]) => x + Number(v), 0);
   const chosen = Object.values(pick);
-  const { data: sales } = useLoad(() => acc || a.isLead ? db.from<any[]>('out_invoices').select('sale_id').in('status', ['cho_nhap', 'da_nhap', 'xac_nhan_ky', 'soan']).limit(2000) : Promise.resolve([]), [acc]);
-  const saleOpts = Array.from(new Set((sales || []).map((x: any) => x.sale_id).filter(Boolean))) as string[];
+  const { data: sales } = useLoad(() => acc || a.isLead ? db.rpc<any[]>('out_sale_opts') : Promise.resolve([]), [acc]);
+  const saleOpts = (sales || []).map((x: any) => x.id) as string[];
   const exportMisa = () => run(async () => {
     const ids = chosen.length ? chosen.map((v: any) => v.id) : null;
     let qq = db.from<any[]>('out_invoices').select(INV_SEL).order('status_at');
@@ -350,7 +354,7 @@ function Invoices({ acc }: { acc: boolean }) {
     <StatusChips value={st} onChange={setSt} items={stItems} />
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <Input className="max-w-xs" placeholder="🔎 Mã phiếu, đơn vị mua, MST, mã hàng, MD, số HĐ…" value={q} onChange={e => setQ(e.target.value)} />
-      {(acc || a.isLead) && <Select className="w-48" placeholder="Mọi sale" options={saleOpts.map(s => [s, a.personName(s)] as [string, string])} value={sale} onChange={setSale} />}
+      {(acc || a.isLead) && saleOpts.length > 1 && <Select className="w-48" placeholder="Tất cả sale" options={(sales || []).map((x: any) => [x.id, x.full_name] as [string, string])} value={sale} onChange={setSale} />}
       <Button onClick={reload}>↻ Tải lại</Button>
       {acc && <Button variant="primary" loading={busy} onClick={exportMisa}>⬇ Xuất file nháp{chosen.length ? ` (${chosen.length} phiếu)` : ' (tất cả chờ xuất nháp)'}</Button>}
       {acc && chosen.length > 0 && <button className="text-xs text-ink-500 underline" onClick={() => setPick({})}>Bỏ chọn</button>}
