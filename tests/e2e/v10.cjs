@@ -42,7 +42,7 @@ const sql = q => execSync(`psql -h /var/tmp/pg -p 5433 -U postgres -d nt_e2e -At
   await ad.screenshot({ path: SHOTS + '/v10-invoices.png', fullPage: true });
   const r = sql("select string_agg(result || '=' || c, ',' order by result) from (select result, count(*) c from acc_invoice_lines group by result) x"); console.log('invoice results', r);
   ok(/khong_don=10/.test(r) && /khop=49/.test(r), 'HĐ: 49 khớp, 10 không đơn');
-  await ad.click('button:has-text("Theo dõi HĐ chưa về")'); await ad.waitForTimeout(2500); await ad.screenshot({ path: SHOTS + '/v10-track.png' });
+  await ad.click('button:has-text("Theo dõi HĐ đầu vào")'); await ad.waitForTimeout(2500); await ad.screenshot({ path: SHOTS + '/v10-track.png' });
   ok(/Không thuộc|dòng · tiền hàng/.test(await ad.textContent('body')), 'tab theo dõi');
   // nạp trùng → cảnh báo
   await ad.click('button:has-text("Đối soát xe APT")'); await ad.waitForTimeout(600); await ad.click('text=+ Nạp xe mới'); await ad.waitForTimeout(400);

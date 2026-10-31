@@ -6,8 +6,8 @@ $PSQL -d nt_e2e -f supabase/tests/00_supabase_stub.sql
 for f in supabase/migrations/*.sql; do $PSQL -d nt_e2e -f "$f" >/dev/null; done
 $PSQL -d nt_e2e <<'SQL'
 insert into auth.users(email) values ('namtrung20266@gmail.com');
-insert into public.invites(email, full_name, roles, job_level) values ('lead@nt.vn','Trần Trưởng Nhóm','{tn_kd}','truong_nhom'),('a@nt.vn','Lê Văn Khơi','{sale}','chuyen_vien'),('hr@nt.vn','Nguyễn HCNS','{hcns}','chuyen_vien');
-insert into auth.users(email) values ('lead@nt.vn'),('a@nt.vn'),('hr@nt.vn');
+insert into public.invites(email, full_name, roles, job_level) values ('lead@nt.vn','Trần Trưởng Nhóm','{tn_kd}','truong_nhom'),('a@nt.vn','Lê Văn Khơi','{sale}','chuyen_vien'),('hr@nt.vn','Nguyễn HCNS','{hcns}','chuyen_vien'),('b@nt.vn','Đỗ Văn Trung','{sale}','chuyen_vien'),('kt@nt.vn','Phạm Kế Toán','{ke_toan}','chuyen_vien');
+insert into auth.users(email) values ('lead@nt.vn'),('a@nt.vn'),('hr@nt.vn'),('b@nt.vn'),('kt@nt.vn');
 update public.profiles set manager_id = (select id from public.profiles where email='lead@nt.vn'), sale_aliases='{Khơi Lê}' where email='a@nt.vn';
 update public.profiles set full_name='Giám Đốc' where email='namtrung20266@gmail.com';
 SQL

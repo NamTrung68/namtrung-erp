@@ -104,17 +104,18 @@ export function parseKhaiBao(rows: any[][]): SysRow[] {
   const H = (rows[hi] || []).map(x => clean(x).toUpperCase());
   const ci = (k: string, req = true) => { const i = H.findIndex(c => c.includes(k)); if (i < 0 && req) throw new Error(`File khai báo: thiếu cột "${k}"`); return i; };
   const m = { ten: ci('TÊN KHAI BÁO'), sale: ci('SALES'), don: ci('ĐƠN HÀNG'), sl: ci('SỐ LƯỢNG'), dvt: ci('DVT'), gia: ci('GIÁ TRÊN TỜ KHAI'),
-    nk: ci('THUẾ NK', false), hs: ci('HS CODE', false), mahang: ci('MÃ HÀNG', false), makh: H.findIndex(c => c === 'MÃ KH' || c.startsWith('MÃ KH') || c.includes('MÃ KHÁCH')) };
-  const out: SysRow[] = []; let sale = '', md = ''; const cnt: Record<string, number> = {};
+    nk: ci('THUẾ NK', false), hs: ci('HS CODE', false), mahang: ci('MÃ HÀNG', false), makh: H.findIndex(c => c.startsWith('MÃ KH') || c.includes('MÃ KHÁCH') || c.includes('USERNAME') || c === 'USER' || c.includes('TÀI KHOẢN KH') || c.includes('MÃ HỆ THỐNG')) };
+  const out: SysRow[] = []; let sale = '', md = '', kh = ''; const cnt: Record<string, number> = {};
   rows.slice(hi + 1).forEach((r, k) => {
     const ten = clean(r?.[m.ten]); if (!ten) return;
     if (clean(r[m.don])) md = normMd(r[m.don]);
     if (clean(r[m.sale])) sale = clean(r[m.sale]);
+    if (m.makh >= 0 && clean(r[m.makh])) kh = clean(r[m.makh]); else if (clean(r[m.don])) kh = '';
     cnt[md] = (cnt[md] || 0) + 1;
     const mdf = m.mahang >= 0 ? clean(r[m.mahang]) : '';
     out.push({ sys_row: hi + 2 + k, ten, sale, md, ma_dong: /^MD\d+-\d+$/i.test(mdf) ? mdf.toUpperCase() : `${md}-${cnt[md]}`, ma_dong_file: mdf,
       sl: vnNum(r[m.sl]), dvt: clean(r[m.dvt]), gia_khach: vnNum(r[m.gia]), nk: m.nk >= 0 ? pct(r[m.nk]) : 0, hs: m.hs >= 0 ? clean(r[m.hs]).replace(/\.0+$/, '') : '',
-      ma_kh: m.makh >= 0 ? clean(r[m.makh]) : '' });
+      ma_kh: kh });
   });
   if (!out.length) throw new Error('File khai báo: không có dòng hàng nào');
   return out;
@@ -200,10 +201,10 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
       else if (!gk) add(1, 'Giá khách trên hệ thống = 0 → không xuất được HĐ đầu ra. Sale nhập giá khách đã chốt.');
       else if (ga && bien !== null) {
         if (bien > hi + tol) {
-          if (gnote) add(2, `Biên NT ${(bien * 100).toFixed(2)}% > ${hi * 100}% ngay cả theo giá sale ghi NOTE.`);
-          else { gde = Math.round(gk / (1 + tgt)); notes.push(`Biên NT ${(bien * 100).toFixed(2)}% > ${hi * 100}% → tự đề xuất APT xuất giá ${gde.toLocaleString('vi-VN')}`); }
-        } else if (bien < lo - tol && (lo - bien) * ttApt > cfg.tien_bo_qua) add(1, `Biên NT ${(bien * 100).toFixed(2)}% < ${lo * 100}% → đề nghị APT xuất giá ${Math.round(gk / (1 + tgt)).toLocaleString('vi-VN')} (biên NT ${tgt * 100}%), hoặc sale giải trình / xin duyệt.`);
-        else if (bien < lo - tol) notes.push(`Biên NT ${(bien * 100).toFixed(2)}% < ${lo * 100}% nhưng tiền chênh dưới ${cfg.tien_bo_qua.toLocaleString('vi-VN')}đ — bỏ qua.`);
+          if (gnote) add(2, `Biên NT ${(bien * 100).toFixed(2)}% > ${pc(hi)}% ngay cả theo giá sale ghi NOTE.`);
+          else { gde = Math.round(gk / (1 + tgt)); notes.push(`Biên NT ${(bien * 100).toFixed(2)}% > ${pc(hi)}% → tự đề xuất APT xuất giá ${gde}`); }
+        } else if (bien < lo - tol && (lo - bien) * ttApt > cfg.tien_bo_qua) add(1, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}% → đề nghị APT xuất giá ${Math.round(gk / (1 + tgt))} (biên NT ${pc(tgt)}%), hoặc sale giải trình / xin duyệt.`);
+        else if (bien < lo - tol) notes.push(`Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}% nhưng tiền chênh dưới ${cfg.tien_bo_qua.toLocaleString('vi-VN')}đ — bỏ qua.`);
       }
       if (s && t && Math.abs((s.nk || 0) - t.nk) > 0.001) add(1, `Thuế NK hệ thống ${Math.round((s.nk || 0) * 100)}% ≠ tờ khai ${Math.round(t.nk * 100)}% → sửa hệ thống theo tờ khai.`);
       if (s && a && a.gia_khach_sale_ghi && gk && Math.abs(a.gia_khach_sale_ghi - gk) > 1) add(2, `Sale ghi giá khách ${a.gia_khach_sale_ghi.toLocaleString('vi-VN')} trên file APT nhưng hệ thống là ${gk.toLocaleString('vi-VN')}.`);
@@ -225,8 +226,8 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
     if (a) {
       if (luong === 'C') phan_hoi = 'XUẤT THẲNG'; else if (luong === 'D') phan_hoi = 'CHỜ QUYẾT ĐỊNH (Lanchi)'; else if (status === 'blocked') phan_hoi = 'CHỜ SALE — chưa xuất';
       else if (luong === 'B') phan_hoi = 'CHỜ HỢP QUY';
-      else if (gnote && Math.abs(gnote - (gn || 0)) > 0.5) phan_hoi = `XUẤT GIÁ ${gnote.toLocaleString('vi-VN')}`;
-      else if (gde) phan_hoi = `XUẤT GIÁ ${gde.toLocaleString('vi-VN')}`;
+      else if (gnote && Math.abs(gnote - (gn || 0)) > 0.5) phan_hoi = `XUẤT GIÁ ${Math.round(gnote)}`;
+      else if (gde) phan_hoi = `XUẤT GIÁ ${gde}`;
       else phan_hoi = 'CHỐT';
     }
     const gad = gde || ga; const gvon = t && t.nh ? t.nh + (t.sl ? t.tnk / t.sl : 0) : null;
@@ -284,6 +285,8 @@ export function judgeInvoiceLine(l: InvLine, line: Pick<AccLine, 'md' | 'gia_kha
   return 'khop';
 }
 
+/** % gọn: 0.035 → 3.5 (tránh 3.5000000000000004) */
+export const pc = (x: number) => String(+(x * 100).toFixed(2));
 /** Nội dung gửi APT đề nghị xuất lại giá (biên NT ngoài khung → đưa về mục tiêu). Trả '' nếu không có dòng nào */
 export function aptPriceMsg(lines: any[], cfg: Pick<AccCfg, 'bien_muc_tieu' | 'bien_nt_min' | 'bien_nt_max'>, title = ''): string {
   const out = lines.filter(l => l.apt_stt && l.gia_khach && (l.gia_nhap || l.gia_ap_dung) && !['C', 'D'].includes(l.luong)).map(l => {
@@ -292,8 +295,8 @@ export function aptPriceMsg(lines: any[], cfg: Pick<AccCfg, 'bien_muc_tieu' | 'b
     return b > cfg.bien_nt_max + 0.001 || b < cfg.bien_nt_min - 0.001 ? { l, target, cur } : null;
   }).filter(Boolean) as { l: any; target: number; cur: number }[];
   if (!out.length) return '';
-  const f = (n: number) => n.toLocaleString('vi-VN');
+  const f = (n: number) => String(Math.round(n * 100) / 100);
   return [`Nam Trung đề nghị APT xuất giá các dòng sau${title ? ' — ' + title : ''}:`,
-    ...out.sort((a, b) => a.l.apt_stt - b.l.apt_stt).map(({ l, target, cur }) => `• STT ${l.apt_stt} | ${l.hh || ''} | ${String(l.ten_apt || l.ten_ht || '').slice(0, 60)} | SL ${f(Number(l.sl_apt || 0))} | giá nháp ${f(cur)} → xuất giá ${f(target)}`),
+    ...out.sort((a, b) => a.l.apt_stt - b.l.apt_stt).map(({ l, target, cur }) => `• STT ${l.apt_stt} | ${l.hh || ''} | ${String(l.ten_apt || l.ten_ht || '').slice(0, 60)} | SL ${f(Number(l.sl_apt || 0))} | giá nháp ${f(cur)} → Đề nghị APT xuất giá ${target}`),
     `(${out.length} dòng)`].join('\n');
 }
