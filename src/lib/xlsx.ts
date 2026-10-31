@@ -61,10 +61,14 @@ export async function readXlsx(file: Blob, opt: { fillMerged?: boolean } = {}): 
 /** Chuyển dd/mm/yyyy hoặc số ngày Excel → yyyy-mm-dd */
 export function toISODate(v: any): string | null {
   if (v === null || v === undefined || v === '') return null;
-  if (typeof v === 'number') { const d = new Date(Math.round((v - 25569) * 86400000)); return d.toISOString().slice(0, 10); }
-  const m = String(v).trim().match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/);
-  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
-  const m2 = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/); return m2 ? m2[0] : null;
+  // ngày gõ nhầm (năm 20026, 1900…) → bỏ qua, không làm hỏng cả lần nạp
+  const ok = (iso: string | null) => { if (!iso) return null; const y = Number(iso.slice(0, 4)), mo = Number(iso.slice(5, 7)), d = Number(iso.slice(8, 10));
+    const dt = new Date(Date.UTC(y, mo - 1, d));
+    return /^\d{4}-\d{2}-\d{2}$/.test(iso) && y >= 2000 && y <= 2100 && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d ? iso : null; };
+  if (typeof v === 'number') { if (!Number.isFinite(v) || v < 36526 || v > 73051) return null; const d = new Date(Math.round((v - 25569) * 86400000)); return ok(d.toISOString().slice(0, 10)); }
+  const m = String(v).trim().match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})(?!\d)/);
+  if (m) return ok(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`);
+  const m2 = String(v).trim().match(/^(\d{4})-(\d{2})-(\d{2})(?!\d)/); return ok(m2 ? m2[0] : null);
 }
 
 /** Đọc file bảng: .xlsx (sheet đầu có dữ liệu) hoặc .csv */
