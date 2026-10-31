@@ -184,7 +184,9 @@ function TruckDetail({ id }: { id: string }) {
   }, 'Đã xóa xe');
   if (!t) return <Layout title="Đối soát xe"><Loading /></Layout>;
   return (
-    <Layout title={<span>Đối soát · {t.name}</span>} actions={<Button onClick={() => go('/acc')}>← Danh sách xe</Button>}>
+    <Layout title={<span>Đối soát · {t.name} <button className="ml-1 rounded-lg px-1.5 text-sm text-ink-400 hover:bg-ink-100 hover:text-ink-700" title="Đổi tên xe" onClick={() => run(async () => {
+        const n = await ask({ title: 'Đổi tên xe', input: { label: 'Tên xe', required: true, value: t.name } }); if (n === null || n.trim() === t.name) return;
+        await db.rpc('acc_truck_rename', { p_id: t.id, p_name: n }); rt(); }, 'Đã đổi tên xe')}>✎</button></span>} actions={<Button onClick={() => go('/acc')}>← Danh sách xe</Button>}>
       <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant="dark" loading={busy} onClick={() => exp('fb')}>⬇ Phản hồi gửi APT</Button><Button loading={busy} onClick={() => exp('full')}>⬇ Đối soát đầy đủ</Button>
         {driveReady(a.settings.drive) && <Button loading={busy} onClick={() => exp('full', true)}>☁ Lưu Drive</Button>}<Button onClick={() => setRe(true)}>⇪ Nạp lại file</Button>
         <Button onClick={() => copyApt(view.length !== all.length ? view : all)}>📋 Copy đề xuất giá gửi APT{view.length !== all.length ? ' (đang lọc)' : ''}</Button>
