@@ -61,6 +61,7 @@ export function useNav() {
     ['Kế toán – Hóa đơn', [
       { to: '/acc', label: 'Đối soát xe & HĐ APT', icon: '🧾', show: a.isAdmin || a.has('ke_toan') },
       { to: '/acc/mine', label: 'Việc HĐ của tôi', icon: '📮', show: a.isSales },
+      { to: '/out', label: 'Xuất HĐ đầu ra', icon: '🧮', show: a.isSales || a.isAdmin || a.has('ke_toan') },
       { to: '/acc/approve', label: 'Duyệt mở chặn HĐ', icon: '🔓', show: a.isAdmin || (a.settings.accounting?.approver_ids || []).includes(a.me.id) },
     ]],
     ['Vận hành', [

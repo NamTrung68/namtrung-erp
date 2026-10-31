@@ -200,10 +200,15 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
       if (!s) add(1, 'Có trên tờ khai/file APT nhưng KHÔNG có đơn trên hệ thống → không có giá khách; nếu APT xuất HĐ, Nam Trung nhận hàng vào sổ mà không xuất được đầu ra. Sale nhập đơn lên hệ thống.');
       else if (!gk) add(1, 'Giá khách trên hệ thống = 0 → không xuất được HĐ đầu ra. Sale nhập giá khách đã chốt.');
       else if (ga && bien !== null) {
+        // Biên NT ngoài khung → chặn; sale copy giá đề xuất gửi APT rồi bấm "Đã gửi APT giá đề xuất" để chốt
+        const de = Math.round(gk / (1 + tgt)); const gvon0 = t && t.nh ? t.nh + (t.sl ? t.tnk / t.sl : 0) : null;
         if (bien > hi + tol) {
           if (gnote) add(2, `Biên NT ${(bien * 100).toFixed(2)}% > ${pc(hi)}% ngay cả theo giá sale ghi NOTE.`);
-          else { gde = Math.round(gk / (1 + tgt)); notes.push(`Biên NT ${(bien * 100).toFixed(2)}% > ${pc(hi)}% → tự đề xuất APT xuất giá ${gde}`); }
-        } else if (bien < lo - tol && (lo - bien) * ttApt > cfg.tien_bo_qua) add(1, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}% → đề nghị APT xuất giá ${Math.round(gk / (1 + tgt))} (biên NT ${pc(tgt)}%), hoặc sale giải trình / xin duyệt.`);
+          else { gde = de; add(1, `Biên NT ${(bien * 100).toFixed(2)}% > ${pc(hi)}% → đề nghị APT xuất giá ${de} (biên NT ${pc(tgt)}%). Sale gửi APT rồi bấm “Đã gửi APT giá đề xuất”.`); }
+        } else if (bien < lo - tol && (lo - bien) * ttApt > cfg.tien_bo_qua) {
+          if (!gvon0 || de >= gvon0) { gde = de; add(1, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}% → đề nghị APT hạ giá xuống ${de} (biên NT ${pc(tgt)}%). Sale gửi APT rồi bấm “Đã gửi APT giá đề xuất”, hoặc giải trình / xin duyệt.`); }
+          else add(1, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}%; giá cần để biên ${pc(tgt)}% là ${de} — thấp hơn giá vốn tờ khai ${Math.round(gvon0)} nên APT không hạ được → sale sửa giá khách hoặc xin duyệt.`);
+        }
         else if (bien < lo - tol) notes.push(`Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}% nhưng tiền chênh dưới ${cfg.tien_bo_qua.toLocaleString('vi-VN')}đ — bỏ qua.`);
       }
       if (s && t && Math.abs((s.nk || 0) - t.nk) > 0.001) add(1, `Thuế NK hệ thống ${Math.round((s.nk || 0) * 100)}% ≠ tờ khai ${Math.round(t.nk * 100)}% → sửa hệ thống theo tờ khai.`);
@@ -211,7 +216,7 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
       if (s) {
         const sAcc = acc(s.sale), aAcc = acc(a?.sale_apt || t?.sale || '');
         if (!sAcc) add(1, `Tên sale "${s.sale}" trên hệ thống chưa ghép với nhân sự ERP → vào Cấu hình kế toán ghép tên.`);
-        else if (norm(sAcc) !== norm(aAcc || '')) notes.push(`Gộp đơn: file APT ghi sale "${a?.sale_apt || t?.sale || 'trống'}", hệ thống là ${sAcc} (${s.md}) → đã gán lại theo hệ thống.`);
+        else if (norm(sAcc) !== norm(aAcc || '')) notes.push(`Gộp đơn: file APT ghi sale "${a?.sale_apt || t?.sale || 'trống'}", hệ thống là ${s.sale} (${s.md}) → đã gán lại theo hệ thống.`);
         if (t && !mdSet(t.md_header).has(s.md)) notes.push(`${s.md} không có trong cột MÃ DH NTG của ${t.dh} (đầu khối ghi ${t.md_header || 'trống'}).`);
       }
       if (s && score !== null && score < 0.8) notes.push(`Độ khớp tên với hệ thống thấp (${Math.round(score * 100)}%) — kế toán liếc lại.`);
@@ -227,10 +232,9 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
       if (luong === 'C') phan_hoi = 'XUẤT THẲNG'; else if (luong === 'D') phan_hoi = 'CHỜ QUYẾT ĐỊNH (Lanchi)'; else if (status === 'blocked') phan_hoi = 'CHỜ SALE — chưa xuất';
       else if (luong === 'B') phan_hoi = 'CHỜ HỢP QUY';
       else if (gnote && Math.abs(gnote - (gn || 0)) > 0.5) phan_hoi = `XUẤT GIÁ ${Math.round(gnote)}`;
-      else if (gde) phan_hoi = `XUẤT GIÁ ${gde}`;
       else phan_hoi = 'CHỐT';
     }
-    const gad = gde || ga; const gvon = t && t.nh ? t.nh + (t.sl ? t.tnk / t.sl : 0) : null;
+    const gad = ga; const gvon = t && t.nh ? t.nh + (t.sl ? t.tnk / t.sl : 0) : null;
     return {
       line_key: a ? `A${a.apt_stt}` : `S${s!.ma_dong}`, ma_dong: s?.ma_dong || null, md: s?.md || null, sale_name: s?.sale || a?.sale_apt || t?.sale || null,
       sale_acc: acc(s?.sale || a?.sale_apt || t?.sale || ''), ma_kh: s?.ma_kh || null,

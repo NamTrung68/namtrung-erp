@@ -9,10 +9,9 @@ import { fmtDateTime, money, num, stripVN } from '../../lib/format';
 import { bienTone, deXuat, dueTxt, GiaApt, lineName, LuongBadge, Money, pctTxt, REPLY, ST, StatusBadge, useAccCfg } from './common';
 import { LineModal } from './Acc';
 import { ClaimForm, ReplyForm } from './forms';
-import { DraftInvoice } from './Draft';
 import { aptPriceMsg, INV_RESULT, InvResult } from '../../lib/doisoat';
 
-const SEL = 'id,customer_id,ma_kh,claim_md,claim_gia,claimed_by,claimed_at,inv_qty,tt_khach,sl_tk,gia_von,bien_apt,apt_stt,truck_id,line_key,ma_dong,md,sale_id,sale_name,hh,dh,ten_apt,ten_ht,ten_tk,sl_apt,sl_ht,dvt_apt,dvt_ht,gia_khach,gia_nhap,gia_note,gia_de_xuat,gia_ap_dung,bien_nt,nk_ht,nk_tk,luong,status,issues,notes,phan_hoi,due_at,reply,reply_price,reply_note,replied_by,replied_at,approved_by,approved_at,approve_note,inv_no,inv_result,acc_trucks(name)';
+const SEL = 'id,reply_sub,gia_nhap_goc,released_from,customer_id,ma_kh,claim_md,claim_gia,claimed_by,claimed_at,inv_qty,tt_khach,sl_tk,gia_von,bien_apt,apt_stt,truck_id,line_key,ma_dong,md,sale_id,sale_name,hh,dh,ten_apt,ten_ht,ten_tk,sl_apt,sl_ht,dvt_apt,dvt_ht,gia_khach,gia_nhap,gia_note,gia_de_xuat,gia_ap_dung,bien_nt,nk_ht,nk_tk,luong,status,issues,notes,phan_hoi,due_at,reply,reply_price,reply_note,replied_by,replied_at,approved_by,approved_at,approve_note,inv_no,inv_result,acc_trucks(name)';
 
 function LineCard({ l, children, onOpen }: { l: any; children?: React.ReactNode; onOpen: () => void }) {
   const a = useApp(); const cfg = useAccCfg(); const [dt, dc] = dueTxt(l.status === 'blocked' ? l.due_at : null);
@@ -31,9 +30,9 @@ function LineCard({ l, children, onOpen }: { l: any; children?: React.ReactNode;
   </div>;
 }
 
-type MTab = 'todo' | 'all' | 'price' | 'free' | 'draft';
+type MTab = 'todo' | 'all' | 'price' | 'free';
 export function AccMine() {
-  const a = useApp(); const cfg = useAccCfg(); const [tab, setTab] = useState<MTab>(() => (sessionStorage.getItem('nt_accmine') as MTab) || 'todo');
+  const a = useApp(); const cfg = useAccCfg(); const [tab, setTab] = useState<MTab>(() => { const t = sessionStorage.getItem('nt_accmine') as MTab; return ['todo', 'all', 'price', 'free'].includes(t) ? t : 'todo'; });
   const [st, setSt] = useState(''); const [sel, setSel] = useState<any>(null); const [hd, setHd] = useState(''); const [q, setQ] = useState('');
   const go2 = (t: MTab) => { setTab(t); sessionStorage.setItem('nt_accmine', t); };
   const { data, loading, reload } = useLoad(() => fetchAll<any>(() => db.from('acc_lines').select(SEL).eq('is_test', false).order('updated_at', { asc: false }), 20000), []);
@@ -41,23 +40,26 @@ export function AccMine() {
   const mine = all.filter(l => l.sale_id && (l.sale_id === a.me.id || a.isLead));
   const free = all.filter(l => !l.sale_id && ['A', 'B'].includes(l.luong) && ['blocked', 'replied'].includes(l.status));
   const todo = mine.filter(l => ['blocked', 'replied', 'pending_approval'].includes(l.status));
-  const price = mine.filter(l => ['ok', 'approved'].includes(l.status) && l.apt_stt && !l.inv_no && deXuat(l, cfg));
+  const price = mine.filter(l => l.status === 'blocked' && l.apt_stt && l.gia_de_xuat && !l.gia_note && ['A', 'B'].includes(l.luong));
+  const { busy, run } = useAction();
+  const sentAll = () => run(async () => { if (!(await ask({ title: `Xác nhận đã gửi APT ${price.length} dòng?`, message: 'Giá nháp APT các dòng đổi theo giá đề xuất, dòng chốt ngay. HĐ chính thức lệch giá sẽ báo đỏ.', ok: 'Đã gửi APT' }))) return;
+    for (const l of price) await db.rpc('acc_line_reply', { p_id: l.id, p_reply: 'da_gui_gia', p_note: 'Gửi APT hàng loạt' }); reload(); }, 'Đã chốt các dòng theo giá đề xuất');
   const c = (k: string) => todo.filter(l => l.status === k).length;
   const match = (l: any) => !q || stripVN([l.md, l.hh, l.ten_apt, l.ten_ht, l.inv_no, l.acc_trucks?.name].join(' ')).toLowerCase().includes(stripVN(q).toLowerCase());
   const view = (tab === 'todo' ? todo.filter(l => !st || l.status === st) : tab === 'price' ? price : tab === 'free' ? free
     : mine.filter(l => !hd || (hd === 'co' ? !!l.inv_no : hd === 'mot' ? l.inv_result === 'mot_phan' : !l.inv_no))).filter(match);
   const pg = usePager('acc_mine', [tab, st, hd, q]);
-  const copyAll = () => { const t = aptPriceMsg(price, cfg); if (!t) return toast.info('Không có dòng'); navigator.clipboard.writeText(t).then(() => toast.ok('Đã sao chép — dán vào Zalo gửi APT')); };
+  const copyAll = () => { const t = ['Nam Trung đề nghị APT xuất giá các dòng sau:', ...price.slice().sort((x, y) => (x.apt_stt || 0) - (y.apt_stt || 0)).map(l => `• ${l.acc_trucks?.name || ''} | STT ${l.apt_stt} | ${l.hh || ''} | ${String(lineName(l)).slice(0, 60)} | giá nháp ${Math.round(l.gia_nhap)} → Đề nghị APT xuất giá ${Math.round(l.gia_de_xuat)}`), `(${price.length} dòng)`].join('\n'); if (!price.length) return toast.info('Không có dòng'); navigator.clipboard.writeText(t).then(() => toast.ok('Đã sao chép — dán vào Zalo gửi APT')); };
   return <Layout title="Việc HĐ của tôi">
     <Tabs value={tab} onChange={v => go2(v as MTab)} tabs={[['todo', <>Cần xử lý {todo.length > 0 && <Badge color="red">{todo.length}</Badge>}</>], ['all', `Tất cả dòng của tôi (${mine.length})`],
-      ['price', <>Đề xuất giá gửi APT {price.length > 0 && <Badge color="purple">{price.length}</Badge>}</>], ['free', <>Dòng chưa có chủ {free.length > 0 && <Badge color="amber">{free.length}</Badge>}</>], ['draft', 'HĐ nháp gửi khách']]} />
+      ['price', <>Đề xuất giá gửi APT {price.length > 0 && <Badge color="purple">{price.length}</Badge>}</>], ['free', <>Dòng chưa có chủ {free.length > 0 && <Badge color="amber">{free.length}</Badge>}</>]]} />
     <div className="mt-3">
-    {tab === 'draft' ? <DraftInvoice lines={mine} /> : <>
+    {<>
     {tab === 'todo' && <><p className="mb-3 text-sm text-ink-600">Dòng hàng trên HĐ APT <b>chưa đủ điều kiện tự chốt</b>. Chọn 1 cách xử lý trong {cfg.han_sale_gio}h. Sửa trên NamtrungLog trước rồi mới bấm “Đã sửa hệ thống”.</p>
       <StatusChips value={st} onChange={setSt} items={[['', 'Tất cả', todo.length, 'dark'], ['blocked', ST.blocked[0], c('blocked'), 'red'], ['replied', ST.replied[0], c('replied'), 'amber'], ['pending_approval', ST.pending_approval[0], c('pending_approval'), 'purple']]} /></>}
     {tab === 'free' && <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Hàng đã lên xe nhưng <b>không tìm thấy đơn / sale trên hệ thống</b>. Nếu là hàng khách của bạn: tạo đơn trên NamtrungLog → bấm “Nhận dòng này”, nhập MD + giá khách. Kế toán kiểm rồi chốt.</p>}
-    {tab === 'price' && price.length > 0 && <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm">Biên NT ngoài khung — hệ thống tính giá để biên NT về {pctTxt(cfg.bien_muc_tieu)}.
-      <Button size="sm" variant="primary" onClick={copyAll}>📋 Copy tất cả gửi APT</Button></div>}
+    {tab === 'price' && price.length > 0 && <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm">Biên NT ngoài khung — hệ thống tính giá để biên NT về {pctTxt(cfg.bien_muc_tieu)}. Copy gửi APT, gửi xong bấm xác nhận.
+      <Button size="sm" variant="primary" onClick={copyAll}>📋 Copy tất cả gửi APT</Button><Button size="sm" variant="success" loading={busy} onClick={sentAll}>✓ Đã gửi APT tất cả</Button></div>}
     <div className="mb-3 flex flex-wrap items-center gap-2"><Input className="max-w-xs" placeholder="🔎 MD, mã HH, tên hàng, số HĐ, xe…" value={q} onChange={e => setQ(e.target.value)} />
       {tab === 'all' && <Select className="w-48" placeholder="HĐ đầu vào: tất cả" options={[['co', 'Đã có HĐ'], ['chua', 'Chưa có HĐ'], ['mot', 'Mới xuất một phần']]} value={hd} onChange={setHd} />}</div>
     {loading ? <Loading /> : !view.length ? <Card><Empty>{tab === 'todo' ? '🎉 Không có dòng nào cần bạn xử lý' : 'Không có dòng'}</Empty></Card> :
@@ -69,9 +71,8 @@ export function AccMine() {
           <Td><StatusBadge s={l.status} /><div className="mt-0.5"><LuongBadge l={l.luong} /></div></Td>
           <Td className="whitespace-nowrap text-xs">{l.inv_no ? <>{l.inv_no}<div><Badge color={INV_RESULT[l.inv_result as InvResult]?.[1]}>{INV_RESULT[l.inv_result as InvResult]?.[0].slice(0, 18)}</Badge></div></> : <span className="text-ink-400">Chưa có</span>}</Td></tr>)}</Table></Card> :
       <div className="space-y-3">{pg.slice(view).map(l => <LineCard key={l.id} l={l} onOpen={() => setSel(l)}>
-        {tab === 'price' && <div className="mt-2 flex items-center justify-between rounded-lg bg-brand-50 px-3 py-2 text-sm"><span>Đề nghị APT xuất giá <b>{deXuat(l, cfg)}</b></span>
-          <Button size="sm" onClick={() => navigator.clipboard.writeText(aptPriceMsg([l], cfg, l.acc_trucks?.name)).then(() => toast.ok('Đã sao chép'))}>📋 Copy</Button></div>}
-        {tab === 'todo' && ['blocked', 'replied'].includes(l.status) && <ReplyForm line={l} onDone={reload} />}
+        
+        {['todo', 'price'].includes(tab) && ['blocked', 'replied'].includes(l.status) && <ReplyForm line={l} onDone={reload} />}
         {tab === 'free' && <ClaimForm line={l} onDone={reload} />}</LineCard>)}</div>}
     <Pager p={pg} total={view.length} /></>}
     </div>

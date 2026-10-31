@@ -9,7 +9,7 @@ import { readTable, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
 import { aptPriceMsg, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, normMd, parseApt, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile } from '../../lib/doisoat';
 import { driveReady, saveToDrive } from '../../lib/drive';
-import { bienTone, deXuat, dueTxt, GiaApt, lineName, LuongBadge, Money, pctTxt, REPLY, ST, StatusBadge, useAccCfg } from './common';
+import { bienTone, deXuat, dueTxt, GiaApt, lineName, LuongBadge, Money, pctTxt, REPLY, REPLY_SUB, ST, StatusBadge, useAccCfg } from './common';
 import { AssignModal, ChotModal, ClaimForm, ReplyForm } from './forms';
 export { useAccCfg, ReplyForm };
 
@@ -240,7 +240,7 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
   const [chot, setChot] = useState(false); const [asg, setAsg] = useState(false);
   const { data: cus } = useLoad(() => l.customer_id ? db.from<any>('customers').select('code,sys_code,sys_username,company_name,contact_name').eq('id', l.customer_id).maybeSingle() : Promise.resolve(null), [l.customer_id]);
   const back = () => run(async () => { const note = await ask({ title: 'Trả lại cho sale', input: { label: 'Ghi chú', required: true } }); if (note === null) return; await db.rpc('acc_line_set', { p_id: l.id, p_status: 'blocked', p_note: note }); onChanged(); }, 'Đã trả lại sale');
-  const mine = l.sale_id === a.me.id || (a.isLead && !!l.sale_id); const dx = deXuat(l, cfg);
+  const mine = l.sale_id === a.me.id || (a.isLead && !!l.sale_id); const dx = l.status === 'blocked' && l.gia_de_xuat && !l.gia_note ? Math.round(l.gia_de_xuat) : deXuat(l, cfg);
   return <Modal open onClose={onClose} size="lg" title={<span>{l.ma_dong || l.md || 'Dòng không có đơn'} · STT APT {l.apt_stt ?? '—'}</span>}
     footer={acc ? <>{l.status !== 'ok' && l.status !== 'approved' && <Button variant="success" loading={busy} onClick={() => setChot(true)}>✓ Chốt dòng</Button>}
       {['A', 'B'].includes(l.luong) && <Button loading={busy} onClick={() => setAsg(true)}>Gán sale / đơn</Button>}
@@ -255,7 +255,7 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
         <R k="SL · ĐVT" v={`${num(l.sl_ht, 2)} ${l.dvt_ht || ''}`} /><R k="Giá khách" v={<Money v={l.gia_khach} />} /><R k="Thuế NK" v={pctTxt(l.nk_ht)} /></div>
       <div><div className="mb-1 text-xs font-bold uppercase text-ink-400">APT · tờ khai</div>
         <R k="Mã HH · DH" v={`${l.hh || '—'} · ${l.dh || '—'}`} /><R k="Sale ghi trên APT" v={l.sale_apt || '—'} /><R k="SL APT · tờ khai" v={`${num(l.sl_apt, 2)} · ${num(l.sl_tk, 2)} ${l.dvt_apt || ''}`} />
-        <R k="Giá nháp APT" v={<Money v={l.gia_nhap} />} />{l.gia_note && <R k="Giá sale ghi NOTE" v={<Money v={l.gia_note} />} />}{l.gia_de_xuat && <R k="Giá đề xuất (biên 3%)" v={<Money v={l.gia_de_xuat} />} tone="text-brand-700 font-semibold" />}
+        <R k="Giá nháp APT" v={<><Money v={l.gia_nhap} />{l.gia_nhap_goc && <span className="ml-1 text-xs text-ink-400 line-through"><Money v={l.gia_nhap_goc} /></span>}</>} />{l.gia_note && <R k="Giá sale ghi NOTE" v={<Money v={l.gia_note} />} />}{l.gia_de_xuat && <R k="Giá đề xuất (biên 3%)" v={<Money v={l.gia_de_xuat} />} tone="text-brand-700 font-semibold" />}
         <R k="Biên NT" v={pctTxt(l.bien_nt)} tone={bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max)} /><R k="Thuế NK tờ khai" v={pctTxt(l.nk_tk)} />
         <R k="Giá vốn tờ khai (giá NH + NK/đv)" v={<Money v={l.gia_von} />} /><R k="Biên APT" v={pctTxt(l.bien_apt)} /></div>
     </div>
@@ -264,7 +264,7 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
       <Button size="sm" variant="primary" onClick={() => navigator.clipboard.writeText(aptPriceMsg([l], cfg) || `STT ${l.apt_stt} | ${l.hh} — Đề nghị APT xuất giá ${dx}`).then(() => toast.ok('Đã sao chép'))}>📋 Copy gửi APT</Button></div>}
     {l.claimed_at && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm"><b>{l.claimed_by === l.sale_id ? 'Sale nhận dòng' : 'Kế toán gán'}:</b> {a.personName(l.sale_id)} · MD {l.claim_md || l.md || '—'}{l.claim_gia ? ` · giá khách ${money(l.claim_gia)}` : ''}
       <div className="text-xs text-ink-500">{a.personName(l.claimed_by)} · {fmtDateTime(l.claimed_at)}{['replied', 'blocked'].includes(l.status) ? ' · chờ kế toán chốt' : ''}</div></div>}
-    {l.reply && !l.claimed_at && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm"><b>Sale trả lời:</b> {REPLY[l.reply]}{l.claim_md ? ` — ${l.claim_md}` : ''}{l.claim_gia ? ` — giá khách ${money(l.claim_gia)}` : ''}{l.reply_price ? ` — giá ${Math.round(l.reply_price)}` : ''}{l.reply_note ? ` — “${l.reply_note}”` : ''}
+    {l.reply && !l.claimed_at && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm"><b>Sale trả lời:</b> {REPLY[l.reply]}{l.reply_sub ? ` (${REPLY_SUB[l.reply_sub]})` : ''}{l.claim_md ? ` — ${l.claim_md}` : ''}{l.claim_gia ? ` — giá khách ${money(l.claim_gia)}` : ''}{l.reply_price ? ` — giá ${Math.round(l.reply_price)}` : ''}{l.reply_note ? ` — “${l.reply_note}”` : ''}
       <div className="text-xs text-ink-500">{a.personName(l.replied_by)} · {fmtDateTime(l.replied_at)}</div></div>}
     {l.approved_at && <div className="mt-2 rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm"><b>{l.status === 'approved' ? 'Đã duyệt' : 'Từ chối'}:</b> {l.approve_note || ''}<div className="text-xs text-ink-500">{a.personName(l.approved_by)} · {fmtDateTime(l.approved_at)}</div></div>}
     {l.inv_no && <div className="mt-2 rounded-xl border border-ink-200 p-3 text-sm">HĐ vào <b>{l.inv_no}</b> dòng {l.inv_stt}: {num(l.inv_qty, 2)} × <Money v={l.inv_price} /> = <Money v={l.inv_amount} /> → <Badge color={INV_RESULT[l.inv_result as InvResult]?.[1]}>{INV_RESULT[l.inv_result as InvResult]?.[0]}</Badge></div>}

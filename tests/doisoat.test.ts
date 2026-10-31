@@ -28,8 +28,9 @@ test('xe 25/10 khớp kết quả skill', { skip: !existsSync(FX) }, () => {
   const noOrder = r.lines.filter(l => l.apt_stt && !l.md && l.luong === 'A');
   assert.equal(noOrder.length, 10, 'xe 25/10 có 10 dòng không có đơn'); // STT 3–7, 48, 49, 67, 68, 70
   assert.ok(blocked.length >= 13, `dòng chặn ${blocked.length}`);
-  // dòng biên > 4% tự đề xuất giá
-  assert.ok(r.lines.some(l => l.gia_de_xuat && l.phan_hoi.startsWith('XUẤT GIÁ')));
+  // bản 14: dòng biên > khung không tự chốt — chặn, có giá đề xuất, biên NT hiển thị theo giá nháp
+  const over = r.lines.filter(l => l.gia_de_xuat && !l.gia_note);
+  assert.ok(over.length > 0 && over.every(l => l.status === 'blocked' && l.gia_ap_dung === l.gia_nhap));
   // HĐ chính thức 2080 + 2081: 10 dòng không có đơn
   const dir = 'tests/fixtures/xml'; const byHH = new Map(r.lines.filter(l => l.hh).map(l => [l.hh!, l]));
   const res: Record<string, number> = {}; let money = 0;

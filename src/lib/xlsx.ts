@@ -21,7 +21,7 @@ async function unzip(buf: ArrayBuffer): Promise<Map<string, Uint8Array>> {
   return files;
 }
 const colIdx = (ref: string) => { const m = ref.match(/^[A-Z]+/)![0]; let c = 0; for (const ch of m) c = c * 26 + ch.charCodeAt(0) - 64; return c - 1; };
-export async function readXlsx(file: Blob): Promise<{ sheet: string; rows: any[][] }[]> {
+export async function readXlsx(file: Blob, opt: { fillMerged?: boolean } = {}): Promise<{ sheet: string; rows: any[][] }[]> {
   const files = await unzip(await file.arrayBuffer()); const dec = new TextDecoder(); const parser = new DOMParser();
   const xml = (p: string) => (files.get(p) ? parser.parseFromString(dec.decode(files.get(p)!), 'application/xml') : null);
   const ss: string[] = [];
@@ -48,6 +48,12 @@ export async function readXlsx(file: Blob): Promise<{ sheet: string; rows: any[]
       }
       rows[ri] = row;
     }
+    if (opt.fillMerged) for (const mc of Array.from(doc.getElementsByTagName('mergeCell'))) {
+      const [a1, b1] = (mc.getAttribute('ref') || '').split(':'); if (!a1 || !b1) continue;
+      const r0 = Number(a1.replace(/^[A-Z]+/, '')) - 1, r1 = Number(b1.replace(/^[A-Z]+/, '')) - 1, c0 = colIdx(a1), c1 = colIdx(b1); const v = rows[r0]?.[c0];
+      if (v === undefined || v === null) continue;
+      for (let i = r0; i <= r1; i++) for (let j = c0; j <= c1; j++) { if (!rows[i]) rows[i] = []; if (i !== r0 || j !== c0) rows[i][j] = v; }
+    }
     out.push({ sheet: s.getAttribute('name') || '', rows: Array.from(rows, r => r || []) });
   }
   return out;
@@ -62,7 +68,7 @@ export function toISODate(v: any): string | null {
 }
 
 /** Đọc file bảng: .xlsx (sheet đầu có dữ liệu) hoặc .csv */
-export async function readTable(file: File): Promise<any[][]> {
+export async function readTable(file: File, opt: { fillMerged?: boolean } = {}): Promise<any[][]> {
   if (/\.(csv|txt)$/i.test(file.name)) {
     const text = (await file.text()).replace(/^﻿/, ''); const sep = (text.split('\n')[0].match(/;/g) || []).length > (text.split('\n')[0].match(/,/g) || []).length ? ';' : text.includes('\t') ? '\t' : ',';
     const rows: any[][] = []; let row: string[] = [], cur = '', q = false;
@@ -75,7 +81,7 @@ export async function readTable(file: File): Promise<any[][]> {
     if (cur || row.length) { row.push(cur); rows.push(row); }
     return rows;
   }
-  const sheets = await readXlsx(file);
+  const sheets = await readXlsx(file, opt);
   return (sheets.find(s => s.rows.some(r => r.filter(x => x !== null && x !== undefined && x !== '').length > 1)) || sheets[0])?.rows || [];
 }
 

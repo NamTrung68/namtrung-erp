@@ -8,7 +8,9 @@ export const ST: Record<string, [string, string]> = {
   ok: ['Tự chốt', 'green'], blocked: ['Bị chặn — chờ sale', 'red'], replied: ['Sale đã trả lời', 'amber'], pending_approval: ['Chờ duyệt mở chặn', 'purple'],
   approved: ['Đã duyệt mở chặn', 'teal'], info: ['Theo dõi', 'slate'],
 };
-export const REPLY: Record<string, string> = { da_sua_ht: 'Đã sửa hệ thống', de_xuat_gia: 'Đề xuất giá khác', chuyen_xe_sau: 'Chuyển xe sau', xin_duyet: 'Xin duyệt ngoại lệ', xuat_thang: 'Đơn APT xuất thẳng' };
+export const REPLY: Record<string, string> = { da_sua_ht: 'Đã sửa hệ thống', de_xuat_gia: 'Đề xuất giá khác', chuyen_xe_sau: 'Chuyển xe sau', xin_duyet: 'Xin duyệt ngoại lệ', xuat_thang: 'Đơn APT xuất thẳng',
+  da_gui_gia: 'Đã gửi APT giá đề xuất', nham: 'Nhầm sale / nhầm đơn', dong_thua: 'Dòng thừa / Không khai' };
+export const REPLY_SUB: Record<string, string> = { khong_phai: 'Không phải hàng của tôi', sai_md: 'Hàng của tôi nhưng sai MD', thua: 'Dòng thừa trên hệ thống', khong_khai: 'Đi đường khác, không xuất HĐ qua APT' };
 export const LUONG_TONE: Record<string, string> = { A: 'blue', B: 'amber', C: 'slate', D: 'indigo', E: 'orange' };
 export const StatusBadge = ({ s }: { s: string }) => <Badge color={ST[s]?.[1] || 'gray'}>{ST[s]?.[0] || s}</Badge>;
 export const LuongBadge = ({ l }: { l: string }) => <Badge color={LUONG_TONE[l] || 'gray'}>{l}. {(LUONG as any)[l]}</Badge>;

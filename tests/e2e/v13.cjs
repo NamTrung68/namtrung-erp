@@ -50,13 +50,6 @@ const sql = q => execSync(`psql -h /var/tmp/pg -p 5433 -U postgres -d nt_e2e -At
   ok(sql("select claim_gia from acc_lines where line_key='F4'") === '21000', 'sale nhập giá khách');
   await s.click('button:has-text("Tất cả dòng của tôi")'); await s.waitForTimeout(500); await s.screenshot({ path: SHOTS + '/v13-all.png', fullPage: true });
   ok((await s.textContent('body')).includes('Túi xách'), 'tab tất cả');
-  await s.click('button:has-text("HĐ nháp gửi khách")'); await s.waitForTimeout(500); await s.screenshot({ path: SHOTS + '/v13-draft.png', fullPage: true });
-  await s.click('button:has-text("Xem HĐ nháp")'); await s.waitForTimeout(1200); await s.screenshot({ path: SHOTS + '/v13-draft-modal.png' });
-  ok((await s.locator(M).inputValue('input >> nth=1').catch(() => '')) !== null, 'modal');
-  ok((await s.locator(M).innerText()).includes('412.000'), 'HĐ nháp: 8 × 51.500');
-  const [pop] = await Promise.all([s.context().waitForEvent('page'), s.click('button:has-text("In / Lưu PDF")')]); await pop.waitForTimeout(500);
-  const ptxt = await pop.textContent('body'); ok(ptxt.includes('Cty Hùng Phát') && ptxt.includes('0109999999') && ptxt.includes('CÔNG TY TNHH NAM TRUNG'), 'in HĐ nháp đủ người bán/mua');
-  await pop.screenshot({ path: SHOTS + '/v13-draft-print.png', fullPage: true });
   // Kế toán chốt
   const ad = await login('kt@nt.vn');
   await ad.goto(BASE + `#/acc?truck=${T}`); await ad.waitForTimeout(1500); await ad.screenshot({ path: SHOTS + '/v13-truck.png' });
