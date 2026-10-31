@@ -63,16 +63,36 @@ export function parseOrders(rows: any[][]): { md: string; nvkd: string; username
   return rows.slice(hi + 1).map(r => ({ md: clean(r?.[im]), nvkd: is >= 0 ? clean(r?.[is]) : '', username: iu >= 0 ? clean(r?.[iu]) : '' })).filter(x => x.md);
 }
 
-const vatTxt = (v: any) => (v === null || v === undefined || v === '' ? '' : Math.round(Number(v) * 100) + '%');
-/** File nhập HĐ nháp hàng loạt (phần mềm HĐĐT): mỗi phiếu = 1 số thứ tự HĐ */
-export function misaRows(invs: any[], personName: (id: string) => string): any[][] {
-  const out: any[][] = [['Số thứ tự hóa đơn', 'Tên đơn vị mua hàng', 'Địa chỉ', 'Mã số thuế', 'Email', 'Hình thức thanh toán', 'Mã hàng', 'Tên hàng hóa, dịch vụ', 'ĐVT', 'Số lượng', 'Đơn giá', 'Thành tiền', 'Thuế suất', 'Tiền thuế GTGT', 'Mã phiếu ERP', 'Sale']];
+/** File nhập HĐ nháp theo đúng mẫu MISA "Hóa đơn GTGT": 6 dòng hướng dẫn, tiêu đề ở dòng 9, mỗi phiếu = 1 số thứ tự HĐ */
+export const MISA_HEAD = ['Số thứ tự hóa đơn (*)', 'Ngày hóa đơn', 'Tên đơn vị mua hàng', 'Địa chỉ', 'Mã số thuế', 'Người mua hàng', 'Email', 'Hình thức thanh toán', 'Mã HH',
+  'Tên hàng hóa/dịch vụ (*)', 'ĐVT', 'Số lượng', 'Đơn giá', 'Thành tiền', 'Thuế suất GTGT (%)', 'Tiền thuế GTGT'];
+export const MISA_HEADER_ROW = 8;
+export function misaRows(invs: any[], ngay = ''): any[][] {
+  const out: any[][] = [['File mẫu danh sách hóa đơn để nhập vào phần mềm '], ['Hướng dẫn:'], ['- Điền dữ liệu hóa đơn cần lập trên phần mềm vào các cột tương ứng trên file này'],
+    ['- Các cột có dấu (*) là những cột bắt buộc'], ['- Nếu muốn nhập thêm thông tin khác, người dùng có thể tự thêm cột trên file này (VD: Mã khách hàng, Mã hàng, Tỷ lệ chiết khấu,...)'],
+    ['- Các dòng dữ liệu phía dưới chỉ là ví dụ minh họa'], [], [], MISA_HEAD];
   invs.forEach((v, i) => (v.out_invoice_lines || []).slice().sort((a: any, b: any) => a.stt - b.stt).forEach((l: any) => {
     const tt = Math.round(Number(l.sl) * Number(l.don_gia)); const vat = l.vat ?? l.out_items?.vat;
-    out.push([i + 1, v.buyer_name, v.address || '', v.tax_code || '', v.email || '', v.payment || 'TM/CK', l.out_items?.ma_hang, l.out_items?.ten, l.out_items?.dvt, Number(l.sl), Number(l.don_gia), tt,
-      vatTxt(vat), vat === null || vat === undefined ? '' : Math.round(tt * Number(vat)), v.code, personName(v.sale_id)]);
+    out.push([i + 1, ngay, v.buyer_name, v.address || '', v.tax_code || '', v.buyer_person || '', v.email || '', v.payment || 'TM/CK', l.out_items?.ma_hang, l.out_items?.ten, l.out_items?.dvt,
+      Number(l.sl), Number(l.don_gia), tt, vat === null || vat === undefined ? '' : Number(vat), vat === null || vat === undefined ? '' : Math.round(tt * Number(vat))]);
   }));
   return out;
+}
+/** Bảng đối chiếu số thứ tự HĐ trong file nháp ↔ mã phiếu ERP (kế toán giữ để đánh dấu) */
+export function misaMap(invs: any[], personName: (id: string) => string): any[][] {
+  return [['Số thứ tự hóa đơn', 'Mã phiếu ERP', 'Sale', 'Đơn vị mua hàng', 'Mã số thuế', 'Số dòng'], ...invs.map((v, i) => [i + 1, v.code, personName(v.sale_id), v.buyer_name, v.tax_code || '', (v.out_invoice_lines || []).length])];
+}
+/** Danh sách đơn vị nhận HĐ (sheet "Thong tin KH": MST, Tên đơn vị, Địa chỉ, mail nhận HĐ) */
+export function parseBuyers(sheets: { sheet: string; rows: any[][] }[]): { tax_code: string; name: string; address: string; email: string }[] {
+  for (const sh of sheets) {
+    const hi = sh.rows.slice(0, 10).findIndex(r => (r || []).some(x => H(x) === 'MST' || H(x).startsWith('MA SO THUE')) && (r || []).some(x => H(x).startsWith('TEN DON VI')));
+    if (hi < 0) continue;
+    const hd = (sh.rows[hi] || []).map(H); const f = (p: (h: string) => boolean) => hd.findIndex(h => !!h && p(h));
+    const im = f(h => h === 'MST' || h.startsWith('MA SO THUE')), it = f(h => h.startsWith('TEN DON VI')), ia = f(h => h.startsWith('DIA CHI')), ie = f(h => h.includes('MAIL'));
+    return sh.rows.slice(hi + 1).map(r => ({ tax_code: intStr(r?.[im]).replace(/\s/g, ''), name: clean(r?.[it]), address: ia >= 0 ? clean(r?.[ia]) : '', email: ie >= 0 ? clean(r?.[ie]) : '' }))
+      .filter(x => x.name && x.tax_code);
+  }
+  throw new Error('Không thấy sheet có cột "MST" và "Tên đơn vị"');
 }
 
 const ST_TXT: Record<string, string> = { soan: 'Sale đang soạn', cho_nhap: 'Chờ xuất nháp', da_nhap: 'Đã xuất nháp', xac_nhan_ky: 'Đã xuất nháp', da_ky: 'Đã ký', huy: 'Hủy' };

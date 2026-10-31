@@ -6,9 +6,9 @@ import { Pager, usePager } from '../../components/Pager';
 import { CustomerPicker } from '../../components/CustomerPicker';
 import { db, fetchAll } from '../../lib/sb';
 import { useApp } from '../../state';
-import { readTable, writeXlsx } from '../../lib/xlsx';
+import { readTable, readXlsx, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
-import { misaRows, parseOrders, parseSoXuat, soRows } from '../../lib/xuathd';
+import { MISA_HEADER_ROW, misaMap, misaRows, parseBuyers, parseOrders, parseSoXuat, soRows } from '../../lib/xuathd';
 import { Money } from '../acc/common';
 import { printDraft } from './print';
 
@@ -60,7 +60,7 @@ function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean })
     await writeXlsx('So_xuat_HD_' + today(), soRows(all, ls, id => a.personName(id)), 'NEW');
   });
   return <>
-    {acc && <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant="primary" onClick={() => setUp(true)}>⇪ Nạp sổ Excel HĐ chính thức</Button>
+    {acc && <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant="primary" onClick={() => setUp(true)}>⇪ Nạp sổ Excel · đơn hàng · đơn vị nhận HĐ</Button>
       <Button loading={busy} onClick={exportSo}>⬇ Xuất sổ (đúng mẫu)</Button>
       <span className="text-xs text-ink-500">Nạp lại cả sổ bất cứ lúc nào: hệ thống cập nhật theo mã hàng, giữ nguyên phiếu đã lập.</span></div>}
     {acc && <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -98,35 +98,39 @@ function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean })
 }
 
 function ImportSo({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
-  const { busy, run } = useAction(); const [file, setFile] = useState<File | null>(null); const [ord, setOrd] = useState<File | null>(null); const [res, setRes] = useState<any>(null); const [err, setErr] = useState('');
+  const { busy, run } = useAction(); const [file, setFile] = useState<File | null>(null); const [ord, setOrd] = useState<File | null>(null); const [buy, setBuy] = useState<File | null>(null);
+  const [res, setRes] = useState<any>(null); const [err, setErr] = useState('');
   const analyze = async () => { setErr(''); setRes(null);
-    try { if (!file) throw new Error('Chọn file sổ'); const p = parseSoXuat(await readTable(file, { fillMerged: true }));
-      const orders = ord ? parseOrders(await readTable(ord)) : [];
-      setRes({ ...p, orders }); } catch (e: any) { setErr(e.message || String(e)); } };
+    try { if (!file && !ord && !buy) throw new Error('Chọn ít nhất 1 file');
+      const p = file ? parseSoXuat(await readTable(file, { fillMerged: true })) : { rows: [], legacy: [], warnings: [] };
+      const orders = ord ? parseOrders(await readTable(ord)) : []; const buyers = buy ? parseBuyers(await readXlsx(buy)) : [];
+      setRes({ ...p, orders, buyers }); } catch (e: any) { setErr(e.message || String(e)); } };
   const save = () => run(async () => {
-    const rows = res.rows.map((r: any) => ({ ...r, row: undefined }));
-    let out: any = { new: 0, upd: 0, legacy: 0, no_sale: 0 };
-    for (let i = 0; i < rows.length; i += 300) { const x = await db.rpc<any>('out_items_import', { p_rows: rows.slice(i, i + 300), p_legacy: i + 300 >= rows.length ? res.legacy : [] });
-      out = { new: out.new + x.new, upd: out.upd + x.upd, legacy: out.legacy + x.legacy, no_sale: x.no_sale }; }
-    if (res.orders.length) { const n = await db.rpc<number>('out_orders_import', { p_rows: res.orders }); out.orders = n; }
-    toast.ok(`Đã nạp: ${out.new} dòng mới, ${out.upd} dòng cập nhật, ${out.legacy} phiếu từ sổ cũ${out.orders ? `, ${out.orders} dòng gắn theo file đơn hàng` : ''}. Còn ${out.no_sale} dòng chưa có sale.`);
-    onDone();
+    const rows = res.rows.map((r: any) => ({ ...r, row: undefined })); const msg: string[] = [];
+    if (rows.length) { let out: any = { new: 0, upd: 0, legacy: 0, no_sale: 0 };
+      for (let i = 0; i < rows.length; i += 300) { const x = await db.rpc<any>('out_items_import', { p_rows: rows.slice(i, i + 300), p_legacy: i + 300 >= rows.length ? res.legacy : [] });
+        out = { new: out.new + x.new, upd: out.upd + x.upd, legacy: out.legacy + x.legacy, no_sale: x.no_sale }; }
+      msg.push(`${out.new} dòng mới, ${out.upd} dòng cập nhật, ${out.legacy} phiếu từ sổ cũ`); }
+    if (res.orders.length) { let n = 0; for (let i = 0; i < res.orders.length; i += 1000) n += await db.rpc<number>('out_orders_import', { p_rows: res.orders.slice(i, i + 1000) }); msg.push(`${n} dòng gắn khách/sale theo file đơn hàng`); }
+    if (res.buyers.length) { const n = await db.rpc<number>('out_buyers_import', { p_rows: res.buyers }); msg.push(`${n} đơn vị nhận HĐ`); }
+    toast.ok('Đã nạp: ' + msg.join(' · ')); onDone();
   });
   const F = ({ f, set, l, hint }: { f: File | null; set: (f: File | null) => void; l: string; hint: string }) => <Field label={l} hint={hint}>
     <label className={cx('flex cursor-pointer items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-sm', f ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : 'border-ink-300 hover:border-brand-400')}>
       <input type="file" accept=".xlsx,.csv" className="hidden" onChange={e => { set(e.target.files?.[0] || null); setRes(null); }} />{f ? '✓ ' + f.name : '⇪ Chọn file .xlsx'}</label></Field>;
-  return <Modal open onClose={onClose} size="lg" title="Nạp sổ HĐ chính thức"
-    footer={res ? <Button variant="primary" loading={busy} onClick={save}>Lưu {res.rows.length} dòng</Button> : <Button variant="dark" onClick={analyze}>Đọc file</Button>}>
-    <div className="grid gap-3 sm:grid-cols-2">
-      <F f={file} set={setFile} l="Sổ Excel (mẫu Xuathd) *" hint="Cột Mã hàng (HH0001-1726-2026), Tên hàng, SL nhập, Số HĐ… ID/NVKD/USER để trống cũng được" />
-      <F f={ord} set={setOrd} l="Danh sách đơn hàng (tùy chọn)" hint="Cột ID/Mã đơn + NVKD + Username — để gắn sale/khách cho dòng còn trống" /></div>
+  return <Modal open onClose={onClose} size="lg" title="Nạp sổ HĐ chính thức · đơn hàng · đơn vị nhận HĐ"
+    footer={res ? <Button variant="primary" loading={busy} onClick={save}>Lưu</Button> : <Button variant="dark" onClick={analyze}>Đọc file</Button>}>
+    <div className="grid gap-3 sm:grid-cols-3">
+      <F f={file} set={setFile} l="1. Sổ Excel HĐ (mẫu Xuathd)" hint="Mã hàng HH0001-1726-2026, Tên hàng, SL nhập, Số HĐ… ID/NVKD/USER trống cũng được" />
+      <F f={ord} set={setOrd} l="2. Danh sách đơn hàng" hint="Order_Export: Mã đơn hàng + Khách hàng (+ Sale) → gắn khách, sale theo chủ khách" />
+      <F f={buy} set={setBuy} l="3. Danh sách đơn vị nhận HĐ" hint="Sheet “Thong tin KH” (MST, Tên đơn vị, Địa chỉ, mail) → sale gõ MST là tự điền" /></div>
+    <div className="mt-2 text-xs text-ink-500">Nạp file nào cũng được, không cần đủ cả 3. Nạp lại nhiều lần không bị trùng.</div>
     {err && <div className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{err}</div>}
     {res && <div className="mt-3 space-y-2 text-sm">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4"><Stat label="Dòng hàng" value={res.rows.length} /><Stat label="Có ID đơn" value={res.rows.filter((r: any) => r.md).length} />
-        <Stat label="Có NVKD" value={res.rows.filter((r: any) => r.nvkd).length} /><Stat label="Phiếu đã nháp/ký trên sổ cũ" value={res.legacy.length} sub="tạo sẵn, không phải làm lại" /></div>
-      {res.orders.length > 0 && <div className="text-xs text-ink-600">File đơn hàng: {res.orders.length} đơn.</div>}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5"><Stat label="Dòng hàng" value={res.rows.length} /><Stat label="Có ID đơn" value={res.rows.filter((r: any) => r.md).length} />
+        <Stat label="Phiếu từ sổ cũ" value={res.legacy.length} sub="tạo sẵn, không làm lại" /><Stat label="Đơn hàng" value={res.orders.length} /><Stat label="Đơn vị nhận HĐ" value={res.buyers.length} /></div>
       {res.warnings.slice(0, 8).map((w: string, i: number) => <div key={i} className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-900">• {w}</div>)}
-      <div className="text-xs text-ink-500">Hệ thống tự gắn ID đơn, sale, khách: theo HĐ XML đã đối chiếu (chuẩn nhất) → ID trên sổ → NVKD → USER (khách trên ERP).</div>
+      <div className="text-xs text-ink-500">Tự gắn ID đơn, sale, khách: theo HĐ XML đã đối chiếu → ID trên sổ → NVKD → mã đơn trong file đơn hàng → username (chủ khách trên ERP).</div>
     </div>}
   </Modal>;
 }
@@ -156,6 +160,12 @@ function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: a
   const { data: buyers } = useLoad(() => c?.id ? db.from<any[]>('out_buyers').select('*').eq('customer_id', c.id).order('created_at', { asc: false }) : Promise.resolve([]), [c?.id]);
   const [b, setB] = useState<any>(inv ? { name: inv.buyer_name || '', mst: inv.tax_code || '', addr: inv.address || '', email: inv.email || '', pay: inv.payment || 'TM/CK', note: inv.note || '' } : { name: '', mst: '', addr: '', email: '', pay: 'TM/CK', note: '' });
   const setF = (k: string, v: string) => setB((x: any) => ({ ...x, [k]: v }));
+  const [look, setLook] = useState('');
+  const lookup = async () => { const m = (b.mst || '').trim(); if (m.length < 10) { setLook(''); return; }
+    try { const r = await db.rpc<any[]>('out_buyer_lookup', { p_mst: m }); const x = (r || [])[0];
+      if (!x) { setLook('Chưa có trong danh sách — nhập tay, lưu phiếu là lưu luôn'); return; }
+      setB((y: any) => ({ ...y, name: y.name || x.name, addr: y.addr || x.address || '', email: y.email || x.email || '' })); setLook('✓ Đã điền theo danh sách đơn vị nhận HĐ');
+    } catch { setLook(''); } };
   const fromCus = () => c && setB((x: any) => ({ ...x, name: c.company_name || c.contact_name || '', mst: c.tax_code || '', addr: c.legal_address || c.address || '', email: c.email || '' }));
   const sub = ls.reduce((t, l) => t + Math.round(Number(l.sl || 0) * Number(l.gia || 0)), 0); const tax = ls.reduce((t, l) => t + Math.round(Number(l.sl || 0) * Number(l.gia || 0) * Number(l.vat ?? 0)), 0);
   const vats = Array.from(new Set(ls.map(l => vatTxt(l.vat))));
@@ -179,7 +189,7 @@ function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: a
         {!!(buyers || []).length && <div className="mt-1 text-[11px] text-ink-500">Đơn vị nhận HĐ đã dùng của khách này — bấm để điền.</div>}</div>
       <div className="grid grid-cols-2 gap-2">
         <Field className="col-span-2" label="Tên đơn vị mua hàng *"><Input value={b.name} onChange={e => setF('name', e.target.value)} placeholder="HỘ KINH DOANH … / CÔNG TY …" /></Field>
-        <Field label="Mã số thuế"><Input value={b.mst} onChange={e => setF('mst', e.target.value.replace(/\s/g, ''))} /></Field>
+        <Field label="Mã số thuế" hint={look}><Input value={b.mst} onChange={e => setF('mst', e.target.value.replace(/\s/g, ''))} onBlur={() => lookup()} /></Field>
         <Field label="Hình thức thanh toán"><Select options={[['TM/CK', 'TM/CK'], ['CK', 'CK'], ['TM', 'TM']]} value={b.pay} onChange={v => setF('pay', v)} /></Field>
         <Field className="col-span-2" label="Địa chỉ"><Input value={b.addr} onChange={e => setF('addr', e.target.value)} /></Field>
         <Field className="col-span-2" label="Email nhận HĐ"><Input value={b.email} onChange={e => setF('email', e.target.value)} /></Field>
@@ -211,7 +221,8 @@ function Invoices({ acc }: { acc: boolean }) {
   const sales = Array.from(new Set(all.map((v: any) => v.sale_id).filter(Boolean))) as string[];
   const exportMisa = () => run(async () => {
     const list = chosen.length ? chosen : rows.filter((v: any) => v.status === 'cho_nhap'); if (!list.length) throw new Error('Không có phiếu chờ xuất nháp');
-    await writeXlsx('HD_nhap_' + today(), misaRows(list, id => a.personName(id)), 'HĐ nháp');
+    await writeXlsx('HD_nhap_MISA_' + today(), misaRows(list), 'Hóa đơn GTGT', true, { headerRow: MISA_HEADER_ROW, fmt: { 11: 'int', 12: 'int', 13: 'int', 14: 'pct', 15: 'int' } });
+    await writeXlsx('HD_nhap_doi_chieu_phieu_' + today(), misaMap(list, id => a.personName(id)), 'Đối chiếu');
     const ids = list.filter((v: any) => v.status === 'cho_nhap').map((v: any) => v.id);
     if (ids.length && await ask({ title: `Đánh dấu ${ids.length} phiếu “Đã xuất nháp”?`, message: 'Bấm sau khi đã nạp file lên phần mềm và tạo nháp xong. Sale được báo để kiểm tra, gửi khách, xác nhận ký.', ok: 'Đã xuất nháp' })) {
       await db.rpc('out_invoice_status', { p_ids: ids, p_status: 'da_nhap' }); setPick({}); reload(); toast.ok('Đã báo sale'); }
