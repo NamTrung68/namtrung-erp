@@ -359,13 +359,14 @@ function AccCfg() {
   return <div className="space-y-4">
     <Card title="Quy tắc tự chấm dòng hàng (bước B1)">
       <div className="grid gap-3 sm:grid-cols-3"><P k="bien_nt_min" l="Biên NT tối thiểu %" /><P k="bien_muc_tieu" l="Biên NT mục tiêu %" /><P k="bien_nt_max" l="Biên NT tối đa %" /></div>
-      <p className="mt-1 text-xs text-ink-500">Biên NT = giá khách ÷ giá HĐ APT − 1. Dưới tối thiểu → chặn, sale giải trình/xin duyệt. Trên tối đa → tự đề xuất APT xuất giá = giá khách ÷ (1 + mục tiêu).</p>
+      <p className="mt-1 text-xs text-ink-500">Biên NT = giá khách ÷ giá HĐ APT − 1. Ngoài khung → dòng bị chặn, hệ thống tính giá đề nghị APT = giá khách ÷ (1 + mục tiêu); sale gửi APT rồi bấm “Đã gửi APT giá đề xuất” là chốt. Biên thấp mà giá đề nghị dưới giá vốn tờ khai → sale sửa giá khách hoặc xin duyệt.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-3"><Field label="Bỏ qua khi tiền chênh dưới (đ)"><NumInput value={v.tien_bo_qua} onChange={s.set('tien_bo_qua')} /></Field>
         <Field label="Hạn sale xử lý (giờ)"><NumInput value={v.han_sale_gio} onChange={s.set('han_sale_gio')} /></Field>
         <Field label="HĐ APT về muộn sau (ngày)" hint="Tính từ ngày xe"><NumInput value={v.han_hd_ngay ?? 15} onChange={s.set('han_hd_ngay')} /></Field></div>
-      <p className="mt-1 text-xs text-ink-500">Đơn APT xuất thẳng khai báo riêng từng xe khi nạp file (mỗi xe một khác).</p>
+      <p className="mt-1 text-xs text-ink-500">Đơn APT xuất thẳng: khai báo riêng từng xe khi nạp file, hoặc sale tự báo “Đơn APT xuất thẳng”. Khách luôn xuất thẳng thì ghi tài khoản ở dưới — nạp 1 lần, các xe sau tự nhận (cần file khai báo có cột username/mã KH).</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2"><L k="sale_lanchi" l="Tài khoản khách Lanchi" />
-        <L k="hs_hop_quy_chuong" l="Chương HS hàng chờ hợp quy" hint="2 số đầu mã HS, VD 61, 62" /></div>
+        <L k="hs_hop_quy_chuong" l="Chương HS hàng chờ hợp quy" hint="2 số đầu mã HS, VD 61, 62" />
+        <L k="kh_xuat_thang" l="Khách luôn APT xuất thẳng" hint="Username / mã KH, VD minhcv" /></div>
       <Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>
     </Card>
     <Card title="Người được duyệt mở chặn">

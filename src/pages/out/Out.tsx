@@ -9,16 +9,25 @@ import { useApp } from '../../state';
 import { readTable, readXlsx, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
 import { MISA_HEADER_ROW, misaMap, misaRows, parseBuyers, parseOrders, parseSoXuat, soRows } from '../../lib/xuathd';
-import { Money } from '../acc/common';
+import { Money, useAccCfg } from '../acc/common';
 import { printDraft } from './print';
 
 export const OST: Record<string, [string, string]> = {
   soan: ['Sale đang soạn', 'slate'], cho_nhap: ['Chờ xuất nháp', 'amber'], da_nhap: ['Đã xuất nháp — chờ sale', 'blue'],
   xac_nhan_ky: ['Sale xác nhận ký', 'purple'], da_ky: ['Đã ký', 'green'], huy: ['Hủy', 'gray'],
 };
+/** Đơn giá xuất so với giá nhập (APT) và giá khách trên hệ thống */
+function giaCheck(gia: number, dgNhap: number | null, gk: number | null, min: number): { tone: string; txt: string; bad: boolean } {
+  if (!gia) return { tone: 'text-ink-400', txt: '', bad: false };
+  const b = dgNhap ? gia / dgNhap - 1 : null; const parts: string[] = [];
+  if (b !== null) parts.push(`biên ${(b * 100).toFixed(2)}%`);
+  if (gk && Math.abs(gk - gia) > 0.5) parts.push(`giá HT ${money(gk)}`);
+  const bad = b !== null && b < 0;
+  return { tone: bad ? 'text-red-600 font-semibold' : b !== null && b < min - 0.001 ? 'text-amber-700' : 'text-ink-500', txt: parts.join(' · '), bad };
+}
 const OBadge = ({ s }: { s: string }) => <Badge color={OST[s]?.[1] || 'gray'}>{OST[s]?.[0] || s}</Badge>;
 const vatTxt = (v: any) => (v === null || v === undefined ? '' : Math.round(Number(v) * 100) + '%');
-const INV_SEL = '*,out_invoice_lines(id,item_id,stt,sl,don_gia,vat,out_items(id,ma_hang,ten,dvt,vat,sl_nhap,so_hd_vao,md))';
+const INV_SEL = '*,out_invoice_lines(id,item_id,stt,sl,don_gia,vat,out_items(id,ma_hang,ten,dvt,vat,sl_nhap,dg_nhap,gia_khach,so_hd_vao,md))';
 const totalOf = (v: any) => (v.out_invoice_lines || []).reduce((t: number, l: any) => { const tt = Math.round(l.sl * l.don_gia); return { tt: t.tt + tt, thue: t.thue + Math.round(tt * Number(l.vat ?? l.out_items?.vat ?? 0)) } as any; }, { tt: 0, thue: 0 } as any);
 
 export default function Out() {
@@ -75,9 +84,20 @@ function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean })
       <Select className="w-44" placeholder="Mọi HĐ đầu vào" options={hds.map(h => [h, 'HĐ ' + h] as [string, string])} value={hd} onChange={setHd} />
       {acc && <Select className="w-44" placeholder="Mọi sale" options={sales.map(s => [s, s === '—' ? '— Chưa có sale' : a.personName(s)] as [string, string])} value={sale} onChange={setSale} />}
       {!free && <Select className="w-44" placeholder="Tất cả dòng" options={[['ton', 'Còn tồn'], ['het', 'Đã lập phiếu hết'], ...(acc ? [['nosale', 'Chưa gắn sale'], ['nomd', 'Chưa có ID đơn']] : [])] as [string, string][]} value={f} onChange={setF} />}
-      {!free && chosen.length > 0 && <Button variant="primary" onClick={() => setNewInv(chosen)}>Lập phiếu xuất HĐ ({chosen.length} dòng)</Button>}
+      {!free && chosen.length > 0 && <Button className="hidden sm:inline-flex" variant="primary" onClick={() => setNewInv(chosen)}>Lập phiếu xuất HĐ ({chosen.length} dòng)</Button>}
     </div>
-    <Card bodyClass="p-0">{loading ? <Loading /> : !rows.length ? <Empty>{free ? 'Không có dòng chưa có sale' : 'Không có dòng'}</Empty> :
+    {!loading && rows.length > 0 && <div className="mb-3 space-y-2 sm:hidden">{pg.slice(rows).map((t: any) =>
+      <div key={t.id} className={cx('rounded-2xl border bg-white p-3 shadow-soft', pick[t.id] ? 'border-brand-500 bg-brand-50/60' : 'border-ink-200')}>
+        <div className="flex items-start gap-2">{!free && <input type="checkbox" className="mt-1 h-5 w-5" disabled={t.ton <= 0.0001 || (!acc && !t.sale_id)} checked={!!pick[t.id]} onChange={e => setPick(p => ({ ...p, [t.id]: e.target.checked }))} />}
+          <div className="min-w-0 flex-1"><div className="text-[11px] text-ink-500">{t.ma_hang} · HĐ {t.so_hd_vao}{t.md ? ' · ' + t.md : ''}{acc ? ' · ' + (a.personName(t.sale_id) || t.nvkd || 'chưa có sale') : t.username ? ' · ' + t.username : ''}</div>
+            <div className="line-clamp-2 text-sm font-medium text-ink-900">{t.ten}</div>
+            <div className="mt-1 flex flex-wrap gap-x-3 text-xs"><span>SL {num(t.sl_nhap, 2)} {t.dvt}</span><span>Giá nhập <Money v={t.dg_nhap} /></span>{t.gia_khach && <span>Giá khách <b><Money v={t.gia_khach} /></b></span>}
+              <span className={t.ton > 0.0001 ? 'font-semibold text-amber-700' : 'text-ink-400'}>Tồn {num(t.ton, 2)}</span></div>
+            {t.phieu && <div className="mt-1 text-[11px] text-ink-500">{t.phieu.split(',').map((p: string) => { const [c, st] = p.split(':'); return `${c} · ${OST[st]?.[0] || st}`; }).join(' | ')}</div>}</div>
+          {free ? <Button size="sm" variant="primary" loading={busy} onClick={() => claim(t)}>Nhận</Button> : acc ? <Button size="sm" onClick={() => setEdit(t)}>Sửa</Button> : null}</div></div>)}
+      <Pager p={pg} total={rows.length} /></div>}
+    {!free && chosen.length > 0 && <div className="fixed inset-x-3 bottom-3 z-30 sm:hidden"><Button className="w-full" variant="primary" onClick={() => setNewInv(chosen)}>Lập phiếu xuất HĐ ({chosen.length} dòng)</Button></div>}
+    <Card className={rows.length ? 'hidden sm:block' : ''} bodyClass="p-0">{loading ? <Loading /> : !rows.length ? <Empty>{free ? 'Không có dòng chưa có sale' : 'Không có dòng'}</Empty> :
       <div className="overflow-x-auto"><Table head={[...(free ? [] : ['']), 'Mã hàng', 'Tên hàng', 'SL nhập', 'Đơn giá nhập', 'VAT', 'HĐ vào', 'ID đơn', ...(acc ? ['NVKD · User'] : ['Khách']), 'Giá khách', 'Còn tồn', 'Phiếu', '']}>{pg.slice(rows).map((t: any) =>
         <tr key={t.id} className={cx(pick[t.id] && 'bg-brand-50/60')}>
           {!free && <Td><input type="checkbox" disabled={t.ton <= 0.0001 || (!acc && !t.sale_id)} checked={!!pick[t.id]} onChange={e => setPick(p => ({ ...p, [t.id]: e.target.checked }))} /></Td>}
@@ -150,7 +170,7 @@ function ItemEdit({ t, onClose, onDone }: { t: any; onClose: () => void; onDone:
 
 // ============ Lập / sửa phiếu ============
 function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: any; onClose: () => void; onDone: () => void }) {
-  const a = useApp(); const { busy, run } = useAction();
+  const a = useApp(); const { busy, run } = useAction(); const cfg = useAccCfg();
   const init = inv ? (inv.out_invoice_lines || []).map((l: any) => ({ item: l.out_items, item_id: l.item_id, sl: String(l.sl), gia: String(Math.round(l.don_gia)), vat: l.vat }))
     : (items || []).map(t => ({ item: t, item_id: t.id, sl: String(+Number(t.ton).toFixed(4)), gia: t.gia_khach ? String(Math.round(t.gia_khach)) : '', vat: t.vat }));
   const [ls, setLs] = useState<any[]>(init);
@@ -194,14 +214,23 @@ function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: a
         <Field className="col-span-2" label="Địa chỉ"><Input value={b.addr} onChange={e => setF('addr', e.target.value)} /></Field>
         <Field className="col-span-2" label="Email nhận HĐ"><Input value={b.email} onChange={e => setF('email', e.target.value)} /></Field>
       </div></div>
-    <div className="mt-3 max-h-[40vh] overflow-auto rounded-xl border border-ink-200"><Table head={['Mã hàng', 'Tên hàng (theo HĐ APT)', 'ĐVT', 'Còn tồn', 'SL xuất', 'Đơn giá xuất', 'VAT', 'Thành tiền', '']}>{ls.map((l, i) =>
+    <div className="mt-3 space-y-2 sm:hidden">{ls.map((l, i) => { const g = giaCheck(Number(l.gia || 0), l.item?.dg_nhap ?? null, l.item?.gia_khach ?? null, cfg.bien_nt_min);
+      return <div key={l.item_id} className="rounded-xl border border-ink-200 p-2.5">
+        <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="text-[11px] text-ink-500">{l.item?.ma_hang} · {l.item?.dvt} · VAT {vatTxt(l.vat)}{l.item?.ton !== undefined ? ' · tồn ' + num(l.item.ton, 2) : ''}</div>
+          <div className="line-clamp-2 text-sm">{l.item?.ten}</div></div>{ls.length > 1 && <button className="px-1 text-red-600" onClick={() => setLs(x => x.filter((_, j) => j !== i))}>✕</button>}</div>
+        <div className="mt-2 grid grid-cols-2 gap-2"><Field label="SL xuất"><Input className="text-right" inputMode="decimal" value={l.sl} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, sl: e.target.value.replace(/[^\d.]/g, '') } : y))} /></Field>
+          <Field label="Đơn giá xuất"><Input className="text-right" inputMode="numeric" value={l.gia} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, gia: e.target.value.replace(/[^\d.]/g, '') } : y))} /></Field></div>
+        <div className="mt-1 flex justify-between text-xs"><span className={g.tone}>{g.bad ? '⚠ dưới giá nhập · ' : ''}{g.txt}</span><b><Money v={Math.round(Number(l.sl || 0) * Number(l.gia || 0))} /></b></div></div>; })}</div>
+    <div className="mt-3 hidden max-h-[40vh] overflow-auto rounded-xl border border-ink-200 sm:block"><Table head={['Mã hàng', 'Tên hàng (theo HĐ APT)', 'ĐVT', 'Còn tồn', 'SL xuất', 'Đơn giá xuất', 'VAT', 'Thành tiền', '']}>{ls.map((l, i) =>
       <tr key={l.item_id}><Td className="whitespace-nowrap text-xs">{l.item?.ma_hang}</Td><Td className="min-w-[200px] text-xs">{l.item?.ten}</Td><Td className="text-xs">{l.item?.dvt}</Td>
         <Td className="text-right text-xs">{l.item?.ton !== undefined ? num(l.item.ton, 2) : ''}</Td>
         <Td><Input className="w-24 text-right" inputMode="decimal" value={l.sl} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, sl: e.target.value.replace(/[^\d.]/g, '') } : y))} /></Td>
-        <Td><Input className="w-28 text-right" inputMode="numeric" value={l.gia} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, gia: e.target.value.replace(/[^\d.]/g, '') } : y))} /></Td>
+        <Td><Input className="w-28 text-right" inputMode="numeric" value={l.gia} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, gia: e.target.value.replace(/[^\d.]/g, '') } : y))} />
+          {(() => { const g = giaCheck(Number(l.gia || 0), l.item?.dg_nhap ?? null, l.item?.gia_khach ?? null, cfg.bien_nt_min); return g.txt ? <div className={cx('mt-0.5 whitespace-nowrap text-[10px]', g.tone)}>{g.bad ? '⚠ dưới giá nhập · ' : ''}{g.txt}</div> : null; })()}</Td>
         <Td className="text-xs">{vatTxt(l.vat)}</Td><Td className="text-right"><Money v={Math.round(Number(l.sl || 0) * Number(l.gia || 0))} /></Td>
         <Td>{ls.length > 1 && <button className="text-red-600" onClick={() => setLs(x => x.filter((_, j) => j !== i))}>✕</button>}</Td></tr>)}</Table></div>
     <div className="mt-2 text-right text-sm">Tiền hàng <b>{money(sub)}</b> · Thuế GTGT <b>{money(tax)}</b> · Tổng <b className="text-brand-700">{money(sub + tax)}</b></div>
+    {ls.some(l => Number(l.gia) > 0 && l.item?.dg_nhap && Number(l.gia) < l.item.dg_nhap) && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">Có dòng xuất giá thấp hơn giá nhập — ghi lý do vào “Ghi chú cho kế toán” mới gửi được.</div>}
     <Field className="mt-2" label="Ghi chú cho kế toán"><Input value={b.note} onChange={e => setF('note', e.target.value)} placeholder="VD: gộp 1 HĐ, khách cần xuất trước ngày…" /></Field>
     <div className="mt-1 text-xs text-ink-500">Một dòng hàng chia cho nhiều đơn vị: giảm số lượng ở phiếu này, phần còn lại lập phiếu khác.</div>
   </Modal>;
@@ -238,11 +267,18 @@ function Invoices({ acc }: { acc: boolean }) {
       <Button onClick={reload}>↻ Tải lại</Button>
       {acc && <Button variant="primary" loading={busy} onClick={exportMisa}>⬇ Xuất file nháp{chosen.length ? ` (${chosen.length} phiếu)` : ' (tất cả chờ xuất nháp)'}</Button>}
     </div>
-    <Card bodyClass="p-0">{loading ? <Loading /> : !rows.length ? <Empty>Không có phiếu</Empty> :
+    {!loading && rows.length > 0 && <div className="mb-3 space-y-2 sm:hidden">{pg.slice(rows).map((v: any) => { const t = totalOf(v);
+      return <button key={v.id} className="block w-full rounded-2xl border border-ink-200 bg-white p-3 text-left shadow-soft" onClick={() => setSel(v.id)}>
+        <div className="flex items-center justify-between gap-2"><b>{v.code}</b><OBadge s={v.status} /></div>
+        <div className="mt-1 line-clamp-2 text-sm font-medium text-ink-900">{v.buyer_name || v.buyer_info}</div>
+        <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-ink-600">{v.tax_code && <span>MST {v.tax_code}</span>}<span>{(v.out_invoice_lines || []).length} dòng</span><span>Tổng <b><Money v={t.tt + t.thue} /></b></span>
+          {acc && <span>{a.personName(v.sale_id)}</span>}{v.so_hd && <span>HĐ {v.so_hd}</span>}{v.sua_sau_nhap && <span className="font-semibold text-red-600">sửa sau nháp</span>}</div></button>; })}
+      <Pager p={pg} total={rows.length} /></div>}
+    <Card className={rows.length ? 'hidden sm:block' : ''} bodyClass="p-0">{loading ? <Loading /> : !rows.length ? <Empty>Không có phiếu</Empty> :
       <div className="overflow-x-auto"><Table head={[...(acc ? [''] : []), 'Phiếu', 'Sale', 'Đơn vị mua', 'MST', 'Dòng', 'Tiền hàng', 'Thuế', 'Trạng thái', 'Số HĐ', 'Cập nhật']}>{pg.slice(rows).map((v: any) => { const t = totalOf(v);
         return <tr key={v.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setSel(v.id)}>
           {acc && <Td><input type="checkbox" checked={!!pick[v.id]} onClick={e => e.stopPropagation()} onChange={e => setPick(p => ({ ...p, [v.id]: e.target.checked }))} /></Td>}
-          <Td className="whitespace-nowrap font-semibold">{v.code}{v.legacy && <div className="text-[10px] font-normal text-ink-400">sổ cũ</div>}{v.sua_sau_nhap && <div className="text-[10px] font-semibold text-red-600">sửa sau nháp</div>}</Td>
+          <Td className="whitespace-nowrap font-semibold">{v.code}{v.legacy && <div className="text-[10px] font-normal text-ink-400">sổ cũ</div>}{v.sua_sau_nhap && <div className="text-[10px] font-semibold text-red-600">sửa sau nháp</div>}{(v.out_invoice_lines || []).some((l: any) => l.out_items?.dg_nhap && Number(l.don_gia) < Number(l.out_items.dg_nhap)) && <div className="text-[10px] font-semibold text-red-600">⚠ dưới giá nhập</div>}</Td>
           <Td className="whitespace-nowrap text-xs">{a.personName(v.sale_id)}</Td><Td className="max-w-[260px] text-xs"><div className="line-clamp-2">{v.buyer_name}</div></Td><Td className="text-xs">{v.tax_code}</Td>
           <Td className="text-right">{(v.out_invoice_lines || []).length}</Td><Td className="text-right"><Money v={t.tt} /></Td><Td className="text-right text-xs"><Money v={t.thue} /></Td>
           <Td><OBadge s={v.status} /></Td><Td className="whitespace-nowrap text-xs">{v.so_hd}<div className="text-ink-400">{v.ngay_hd ? fmtDate(v.ngay_hd) : ''}</div></Td>
@@ -287,9 +323,10 @@ function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc: boole
         {v.buyer_info && <pre className="mt-1 whitespace-pre-wrap rounded bg-ink-50 p-2 text-xs">{v.buyer_info}</pre>}</div>
       <div><div className="text-xs font-bold uppercase text-ink-400">Phiếu</div><div>Sale: {a.personName(v.sale_id)}</div><div>Lập lúc {fmtDateTime(v.created_at)}</div>{v.note && <div>Ghi chú: {v.note}</div>}
         <div className="mt-1">Tiền hàng <b><Money v={t.tt} /></b> · Thuế <b><Money v={t.thue} /></b> · Tổng <b><Money v={t.tt + t.thue} /></b></div></div></div>
-    <div className="mt-3 max-h-[35vh] overflow-auto"><Table head={['STT', 'Mã hàng', 'Tên hàng', 'ĐVT', 'SL', 'Đơn giá', 'VAT', 'Thành tiền']}>{lines.map((l: any) =>
+    <div className="mt-3 max-h-[35vh] overflow-auto"><Table head={['STT', 'Mã hàng', 'Tên hàng', 'ĐVT', 'SL', 'Đơn giá', 'Giá nhập', 'VAT', 'Thành tiền']}>{lines.map((l: any) =>
       <tr key={l.id}><Td>{l.stt}</Td><Td className="whitespace-nowrap text-xs">{l.out_items?.ma_hang}<div className="text-ink-400">{l.out_items?.md}</div></Td><Td className="min-w-[220px] text-xs">{l.out_items?.ten}</Td><Td className="text-xs">{l.out_items?.dvt}</Td>
-        <Td className="text-right">{num(l.sl, 2)}</Td><Td className="text-right"><Money v={l.don_gia} /></Td><Td className="text-xs">{vatTxt(l.vat ?? l.out_items?.vat)}</Td><Td className="text-right"><Money v={Math.round(l.sl * l.don_gia)} /></Td></tr>)}</Table></div>
+        <Td className="text-right">{num(l.sl, 2)}</Td><Td className={cx('text-right', l.out_items?.dg_nhap && Number(l.don_gia) < Number(l.out_items.dg_nhap) && 'font-semibold text-red-600')}><Money v={l.don_gia} /></Td>
+        <Td className="text-right text-xs text-ink-500"><Money v={l.out_items?.dg_nhap} /></Td><Td className="text-xs">{vatTxt(l.vat ?? l.out_items?.vat)}</Td><Td className="text-right"><Money v={Math.round(l.sl * l.don_gia)} /></Td></tr>)}</Table></div>
     <div className="mt-4"><div className="mb-1 text-xs font-bold uppercase text-ink-400">Trao đổi · nhật ký</div>
       <div className="max-h-48 space-y-1 overflow-auto">{(ev || []).map(e => <div key={e.id} className={cx('rounded-lg px-3 py-1.5 text-sm', e.action === 'comment' ? 'bg-brand-50' : 'bg-ink-50 text-xs text-ink-600')}>
         <b>{a.personName(e.actor)}</b> · <span className="text-xs text-ink-500">{fmtDateTime(e.at)}</span> · {e.action === 'comment' ? '' : e.action === 'status' ? `${OST[e.data?.from]?.[0] || e.data?.from} → ${OST[e.data?.to]?.[0] || e.data?.to}` : e.action === 'create' ? 'lập phiếu' : 'sửa phiếu'}{e.note ? <> — {e.note}</> : ''}</div>)}</div>

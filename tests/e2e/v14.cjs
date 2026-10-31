@@ -81,7 +81,10 @@ const sql = q => execSync(`psql -h /var/tmp/pg -p 5433 -U postgres -d nt_e2e -At
     await sb.click('button:has-text("Lập phiếu xuất HĐ")'); await sb.waitForTimeout(800);
     await sb.locator(M).locator('label:has-text("Mã số thuế") input').fill('0110250411'); await sb.locator(M).locator('label:has-text("Địa chỉ") input').click(); await sb.waitForTimeout(1200);
     ok((await sb.locator(`${M} input[placeholder^="HỘ KINH DOANH"]`).inputValue()).includes('CHÂN TRỜI MỚI'), 'gõ MST tự điền đơn vị');
-    const gias = sb.locator(`${M} input[inputmode=numeric]`); for (let i = 0; i < await gias.count(); i++) if (!(await gias.nth(i).inputValue())) await gias.nth(i).fill('10000');
+    const gias = sb.locator(`${M} input[inputmode=numeric]:visible`); await gias.first().fill('1'); await sb.waitForTimeout(300);
+    ok(await sb.locator(M).getByText("⚠ dưới giá nhập").count() > 0, 'cảnh báo giá dưới giá nhập');
+    const dgn = mh.map(m => Math.ceil(Number(sql(`select dg_nhap from out_items where ma_hang='${m}'`)) * 1.03));
+    for (let i = 0; i < await gias.count(); i++) await gias.nth(i).fill(String(dgn[i] || dgn[0]));
     await sb.screenshot({ path: SHOTS + '/v14-editor.png' });
     await sb.click('button:has-text("Xác nhận giá & thông tin")'); await sb.waitForTimeout(1500);
     const inv = sql(`select code || '|' || status from out_invoices where not legacy and sale_id='${B}'`); console.log('invoice', inv); ok(/\|cho_nhap$/.test(inv), 'sale gửi phiếu');

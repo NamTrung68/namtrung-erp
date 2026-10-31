@@ -239,6 +239,7 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
   const R = ({ k, v, tone }: { k: string; v: React.ReactNode; tone?: string }) => <div className="flex justify-between gap-3 border-b border-ink-100 py-1.5 text-sm"><span className="text-ink-500">{k}</span><span className={cx('text-right', tone)}>{v}</span></div>;
   const [chot, setChot] = useState(false); const [asg, setAsg] = useState(false);
   const { data: cus } = useLoad(() => l.customer_id ? db.from<any>('customers').select('code,sys_code,sys_username,company_name,contact_name').eq('id', l.customer_id).maybeSingle() : Promise.resolve(null), [l.customer_id]);
+  const { data: outs } = useLoad(() => db.from<any[]>('out_items_v').select('ma_hang,sl_nhap,ton,phieu').eq('acc_line_id', l.id), [l.id]);
   const back = () => run(async () => { const note = await ask({ title: 'Trả lại cho sale', input: { label: 'Ghi chú', required: true } }); if (note === null) return; await db.rpc('acc_line_set', { p_id: l.id, p_status: 'blocked', p_note: note }); onChanged(); }, 'Đã trả lại sale');
   const mine = l.sale_id === a.me.id || (a.isLead && !!l.sale_id); const dx = l.status === 'blocked' && l.gia_de_xuat && !l.gia_note ? Math.round(l.gia_de_xuat) : deXuat(l, cfg);
   return <Modal open onClose={onClose} size="lg" title={<span>{l.ma_dong || l.md || 'Dòng không có đơn'} · STT APT {l.apt_stt ?? '—'}</span>}
@@ -268,6 +269,9 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
       <div className="text-xs text-ink-500">{a.personName(l.replied_by)} · {fmtDateTime(l.replied_at)}</div></div>}
     {l.approved_at && <div className="mt-2 rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm"><b>{l.status === 'approved' ? 'Đã duyệt' : 'Từ chối'}:</b> {l.approve_note || ''}<div className="text-xs text-ink-500">{a.personName(l.approved_by)} · {fmtDateTime(l.approved_at)}</div></div>}
     {l.inv_no && <div className="mt-2 rounded-xl border border-ink-200 p-3 text-sm">HĐ vào <b>{l.inv_no}</b> dòng {l.inv_stt}: {num(l.inv_qty, 2)} × <Money v={l.inv_price} /> = <Money v={l.inv_amount} /> → <Badge color={INV_RESULT[l.inv_result as InvResult]?.[1]}>{INV_RESULT[l.inv_result as InvResult]?.[0]}</Badge></div>}
+    {(outs || []).length > 0 && <div className="mt-2 rounded-xl border border-ink-200 p-3 text-sm"><b>HĐ đầu ra:</b> {(outs || []).map((o: any) => <div key={o.ma_hang} className="text-xs">
+      {o.ma_hang} · còn tồn {num(o.ton, 2)}/{num(o.sl_nhap, 2)}{o.phieu ? ' · ' + o.phieu.split(',').map((p: string) => { const [c, st] = p.split(':'); return `${c} (${({ soan: 'đang soạn', cho_nhap: 'chờ xuất nháp', da_nhap: 'đã xuất nháp', xac_nhan_ky: 'sale xác nhận ký', da_ky: 'đã ký' } as any)[st] || st})`; }).join(', ') : ' · chưa lập phiếu'}</div>)}
+      <a className="text-xs font-semibold text-brand-700 underline" href="#/out">Mở Xuất HĐ đầu ra →</a></div>}
     {!acc && !l.sale_id && ['blocked', 'replied'].includes(l.status) && <ClaimForm line={l} onDone={onChanged} />}
     {!acc && mine && ['blocked', 'replied'].includes(l.status) && <ReplyForm line={l} onDone={onChanged} />}
     {chot && <ChotModal line={l} onClose={() => setChot(false)} onDone={onChanged} />}

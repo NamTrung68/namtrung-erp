@@ -3,7 +3,7 @@
 
 export interface AccCfg {
   bien_muc_tieu: number; bien_nt_min: number; bien_nt_max: number; dung_sai_bien: number; tien_bo_qua: number; nguong_ghep: number;
-  sale_lanchi: string[]; md_xuat_thang: string[]; hs_hop_quy_chuong: string[]; han_sale_gio: number; han_hd_ngay?: number;
+  sale_lanchi: string[]; md_xuat_thang: string[]; kh_xuat_thang?: string[]; hs_hop_quy_chuong: string[]; han_sale_gio: number; han_hd_ngay?: number;
 }
 export const DEFAULT_ACC_CFG: AccCfg = {
   bien_muc_tieu: 0.03, bien_nt_min: 0.025, bien_nt_max: 0.04, dung_sai_bien: 0.001, tien_bo_qua: 50000, nguong_ghep: 0.65,
@@ -171,7 +171,7 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
     assign(T, 0.8).forEach(([j], i) => tmap.set(sorted[i].apt_stt, tk[j]));
     warnings.push(`Tờ khai ${tk.length} dòng, file APT ${apt.length} dòng — ghép theo tên + số lượng (${tmap.size} dòng).`);
   }
-  const lanchi = new Set(cfg.sale_lanchi.map(norm)); const thang = new Set(cfg.md_xuat_thang.map(normMd));
+  const lanchi = new Set(cfg.sale_lanchi.map(norm)); const thang = new Set(cfg.md_xuat_thang.map(normMd)); const khThang = new Set((cfg.kh_xuat_thang || []).map(norm));
   const hq = cfg.hs_hop_quy_chuong; const { bien_nt_min: lo, bien_nt_max: hi, dung_sai_bien: tol, bien_muc_tieu: tgt } = cfg;
   const lines: AccLine[] = []; const usedSys = new Set<number>();
 
@@ -183,7 +183,7 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
     const hs2 = (t?.hs || s?.hs || '').slice(0, 2);
     let luong: Luong = 'A';
     if (!a) luong = 'E';
-    else if (noteAll.includes('XUAT THANG') || (s && thang.has(s.md)) || [...mdSet(a.md_apt)].some(x => thang.has(x))) luong = 'C';
+    else if (noteAll.includes('XUAT THANG') || (s && (thang.has(s.md) || (!!s.ma_kh && khThang.has(norm(s.ma_kh))))) || [...mdSet(a.md_apt)].some(x => thang.has(x))) luong = 'C';
     else if (lanchi.has(norm(a.sale_apt)) || (a.md_apt && !mdSet(a.md_apt).size)) luong = 'D';
     else if (hs2 && hq.some(h => hs2 === h)) luong = 'B';
     const gk = s?.gia_khach || null; const gn = a?.gia_nhap ?? null; const gnote = a?.gia_note || null;

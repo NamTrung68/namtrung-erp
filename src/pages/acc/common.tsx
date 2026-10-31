@@ -35,6 +35,6 @@ export function deXuat(l: any, cfg: { bien_muc_tieu: number; bien_nt_min: number
 /** Cột Giá APT: giá nháp APT (cột R “Đơn giá bán”), dòng phụ NOTE / đề xuất */
 export const GiaApt = ({ l }: { l: any }) => <><Money v={l.gia_nhap} />
   {l.gia_note && Math.abs(l.gia_note - (l.gia_nhap || 0)) > 0.5 && <div className="text-[11px] text-ink-500">NOTE <Money v={l.gia_note} /></div>}
-  {l.gia_de_xuat && <div className="text-[11px] font-semibold text-brand-700">đề xuất {Math.round(l.gia_de_xuat)}</div>}</>;
+  {l.gia_de_xuat && Math.abs(l.gia_de_xuat - (l.gia_nhap || 0)) > 0.5 && <div className="text-[11px] font-semibold text-brand-700">đề xuất {Math.round(l.gia_de_xuat)}</div>}{l.gia_nhap_goc && <div className="text-[11px] text-ink-400 line-through"><Money v={l.gia_nhap_goc} /></div>}</>;
 /** Dòng chưa có chủ: chưa xác định được sale */
 export const unowned = (l: any) => !l.sale_id;

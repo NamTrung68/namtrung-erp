@@ -8,7 +8,18 @@ export interface SoRow {
   so_hd_vao: string; ky_hieu: string; ngay_vao: string | null; ncc: string; stt_hd: number | null; md: string; nvkd: string; username: string;
   legacy: Record<string, any> | null; row: number;
 }
-export interface LegacyGroup { status: 'da_ky' | 'da_nhap' | 'xac_nhan_ky'; so_hd: string; ngay: string | null; info: string; lines: { ma_hang: string; sl: number; gia: number; vat: number | null }[] }
+/** Bóc tên đơn vị, MST, địa chỉ, email từ ô "THÔNG TIN BÁO XUẤT HÓA ĐƠN" gõ tự do */
+export function parseInfo(text: string): { buyer_name: string; tax_code: string; address: string; email: string } {
+  const ls = String(text || '').split(/\n+/).map(x => x.replace(/^["“”\s]+|["“”\s]+$/g, '').trim()).filter(Boolean);
+  const val = (x: string) => x.replace(/^[^:]*:\s*/, '').trim();
+  const email = (String(text).match(/[\w.+-]+@[\w-]+(\.[\w-]+)+/) || [''])[0];
+  const mstL = ls.find(x => /(MST|mã số thuế|tax code)/i.test(x)); const mst = ((mstL || '').match(/\d{12}|\d{10}(-\d{3})?/) || (String(text).match(/\b(\d{12}|\d{10}(-\d{3})?)\b/) || ['']))[0];
+  const addrL = ls.find(x => /^(đ\/c|địa chỉ|dia chi|đc|address)/i.test(stripAcc(x).toLowerCase()) || /^(Đ\/C|Địa chỉ)/i.test(x));
+  const nameL = ls.find(x => /(CÔNG TY|CTY|HỘ KINH DOANH|HKD|DOANH NGHIỆP|CHI NHÁNH|Tên đơn vị|Tên:)/i.test(x) && !/xuất giá/i.test(x))
+    || ls.find(x => !/(xuất giá|^stt|^sl\b|mst|mã số thuế|địa chỉ|đ\/c|mail|@)/i.test(x) && !/^\d+$/.test(x));
+  return { buyer_name: nameL ? val(nameL).replace(/\s*\(.*?\)\s*:?/g, ' ').trim() || nameL : '', tax_code: mst || '', address: addrL ? val(addrL) : '', email };
+}
+export interface LegacyGroup { status: 'da_ky' | 'da_nhap' | 'xac_nhan_ky'; so_hd: string; ngay: string | null; info: string; buyer_name?: string; tax_code?: string; address?: string; email?: string; lines: { ma_hang: string; sl: number; gia: number; vat: number | null }[] }
 
 const intStr = (v: any) => { if (v === null || v === undefined || v === '') return ''; if (typeof v === 'number') return Number.isInteger(v) ? String(v) : ''; return clean(v); };
 const isoD = (v: any) => (v instanceof Date ? v.toISOString().slice(0, 10) : toISODate(v));
@@ -46,7 +57,7 @@ export function parseSoXuat(rows: any[][]): { rows: SoRow[]; legacy: LegacyGroup
       so_hd_vao: intStr(g(r, c.sohd)) || (m ? m[2] : ''), ky_hieu: clean(g(r, c.kh)), ngay_vao: isoD(g(r, c.ngay)), ncc: clean(g(r, c.ncc)), stt_hd: m ? Number(m[1]) : null,
       md, nvkd: clean(g(r, c.nvkd)), username: clean(g(r, c.user)), legacy, row: hi + 2 + k });
     if (status) {
-      const key = [status, sohdx, ngx, info].join('|'); const gr = groups.get(key) || { status, so_hd: sohdx, ngay: ngx, info, lines: [] };
+      const key = [status, sohdx, ngx, info].join('|'); const gr = groups.get(key) || { status, so_hd: sohdx, ngay: ngx, info, ...parseInfo(info), lines: [] };
       gr.lines.push({ ma_hang: ma, sl: slx || sl_nhap, gia: dgx || 0, vat }); groups.set(key, gr);
     }
   });
