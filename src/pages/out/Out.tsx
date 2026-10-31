@@ -8,7 +8,7 @@ import { db, fetchAll } from '../../lib/sb';
 import { useApp } from '../../state';
 import { readTable, readXlsx, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
-import { MISA_HEADER_ROW, misaMap, misaRows, parseBuyers, parseOrders, parseSoXuat, soRows } from '../../lib/xuathd';
+import { MISA_HEADER_ROW, misaMap, misaRows, parseBuyers, parseInfo, parseOrders, parseSoXuat, soRows } from '../../lib/xuathd';
 import { Money, useAccCfg } from '../acc/common';
 import { printDraft } from './print';
 
@@ -27,7 +27,7 @@ function giaCheck(gia: number, dgNhap: number | null, gk: number | null, min: nu
 }
 const OBadge = ({ s }: { s: string }) => <Badge color={OST[s]?.[1] || 'gray'}>{OST[s]?.[0] || s}</Badge>;
 const vatTxt = (v: any) => (v === null || v === undefined ? '' : Math.round(Number(v) * 100) + '%');
-const INV_SEL = '*,out_invoice_lines(id,item_id,stt,sl,don_gia,vat,out_items(id,ma_hang,ten,dvt,vat,sl_nhap,dg_nhap,gia_khach,so_hd_vao,md))';
+const INV_SEL = '*,out_invoice_lines(id,item_id,stt,sl,don_gia,vat,out_items(id,ma_hang,part,ten,dvt,vat,sl_nhap,dg_nhap,gia_khach,so_hd_vao,md))';
 const totalOf = (v: any) => (v.out_invoice_lines || []).reduce((t: number, l: any) => { const tt = Math.round(l.sl * l.don_gia); return { tt: t.tt + tt, thue: t.thue + Math.round(tt * Number(l.vat ?? l.out_items?.vat ?? 0)) } as any; }, { tt: 0, thue: 0 } as any);
 
 export default function Out() {
@@ -44,82 +44,148 @@ export default function Out() {
 }
 
 // ============ Dòng hàng (sổ) ============
+const ITEM_COLS = 'id,ma_hang,part,stt_so,ten,dvt,vat,sl_nhap,dg_nhap,so_hd_vao,ky_hieu,ngay_vao,md,nvkd,username,sale_id,customer_id,gia_khach,match_src,legacy,sl_xuat,ton,phieu,khach,xe';
+const LEG: Record<string, string> = { da_ky: 'đã ký', da_nhap: 'đã xuất nháp', xac_nhan_ky: 'KD xác nhận ký' };
+const maHang = (t: any) => t.ma_hang + (t.part > 1 ? ` (${t.part})` : '');
 function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean }) {
   const a = useApp(); const { busy, run } = useAction();
   const { data, loading, reload } = useLoad(() => fetchAll<any>(() => {
-    let q = db.from('out_items_v').select('*').order('stt_so', { asc: false, nulls: 'last' });
-    if (free) q = q.is('sale_id', null); else if (!acc) q = q.gt('ton', 0);
+    let q = db.from('out_items_v').select(ITEM_COLS).order('stt_so', { asc: false, nulls: 'last' });
+    if (free) q = q.is('sale_id', null).gt('ton', 0); else if (!acc) q = q.gt('ton', 0);
     return q;
   }, 50000), [acc, free]);
-  const [q, setQ] = useState(''); const [f, setF] = useState(acc ? '' : 'ton'); const [hd, setHd] = useState(''); const [sale, setSale] = useState('');
+  const { data: invs } = useLoad(() => !acc && !free ? fetchAll<any>(() => db.from('out_invoices').select('status,status_at')) : Promise.resolve([]), [acc, free]);
+  const [q, setQ] = useState(''); const [f, setF] = useState(acc ? '' : 'ton'); const [hd, setHd] = useState(''); const [xe, setXe] = useState(''); const [sale, setSale] = useState('');
   const [pick, setPick] = useState<Record<string, boolean>>({}); const [edit, setEdit] = useState<any>(null); const [newInv, setNewInv] = useState<any[] | null>(null); const [up, setUp] = useState(false);
+  const [claimT, setClaimT] = useState<any>(null); const [xeOpen, setXeOpen] = useState(false);
   const all = (data || []).filter((t: any) => acc || free || t.sale_id);
-  const rows = all.filter((t: any) => (!f || (f === 'ton' ? t.ton > 0.0001 : f === 'nosale' ? !t.sale_id : f === 'nomd' ? !t.md : f === 'het' ? t.ton <= 0.0001 : true))
-    && (!hd || t.so_hd_vao === hd) && (!sale || (t.sale_id || '—') === sale)
-    && (!q || stripVN([t.ma_hang, t.ten, t.md, t.nvkd, t.username, t.so_hd_vao].join(' ')).toLowerCase().includes(stripVN(q).toLowerCase())));
-  const pg = usePager(acc ? 'out_items' : free ? 'out_free' : 'out_mine', [q, f, hd, sale]);
+  const rows = all.filter((t: any) => (!f || (f === 'ton' ? t.ton > 0.0001 : f === 'nosale' ? !t.sale_id : f === 'nomd' ? !t.md : f === 'nogia' ? !t.gia_khach : f === 'het' ? t.ton <= 0.0001 : true))
+    && (!hd || t.so_hd_vao === hd) && (!xe || (t.xe || '—') === xe) && (!sale || (t.sale_id || '—') === sale)
+    && (!q || stripVN([t.ma_hang, t.ten, t.md, t.nvkd, t.username, t.khach, t.so_hd_vao, t.xe].join(' ')).toLowerCase().includes(stripVN(q).toLowerCase())));
+  const pg = usePager(acc ? 'out_items' : free ? 'out_free' : 'out_mine', [q, f, hd, xe, sale]);
   const hds = Array.from(new Set(all.map((t: any) => t.so_hd_vao).filter(Boolean))) as string[];
+  const xes = Array.from(new Set(all.map((t: any) => t.xe || '—'))) as string[];
   const sales = Array.from(new Set(all.map((t: any) => t.sale_id || '—'))) as string[];
   const chosen = all.filter((t: any) => pick[t.id]);
-  const cnt = (k: string) => all.filter((t: any) => k === 'ton' ? t.ton > 0.0001 : k === 'nosale' ? !t.sale_id : k === 'nomd' ? !t.md : t.ton <= 0.0001).length;
-  const claim = (t: any) => run(async () => { const md = await ask({ title: 'Nhận dòng này', message: `${t.ma_hang} · ${t.ten.slice(0, 80)}`, input: { label: 'Mã đơn (MD) của bạn', required: true } }); if (md === null) return;
-    await db.rpc('out_item_set', { p_id: t.id, p_md: md, p_sale: null }); reload(); }, 'Đã nhận dòng');
+  const cnt = (k: string) => all.filter((t: any) => k === 'ton' ? t.ton > 0.0001 : k === 'nosale' ? !t.sale_id : k === 'nomd' ? !t.md : k === 'nogia' ? !t.gia_khach && t.ton > 0.0001 : t.ton <= 0.0001).length;
   const exportSo = () => run(async () => {
     const ls = await fetchAll<any>(() => db.from('out_invoice_lines').select('item_id,sl,don_gia,vat,out_invoices(code,status,buyer_name,tax_code,address,email,buyer_info,so_hd,ngay_hd)'));
     await writeXlsx('So_xuat_HD_' + today(), soRows(all, ls, id => a.personName(id)), 'NEW');
   });
+  const rematch = () => run(async () => { const n = await db.rpc<number>('out_rematch'); reload(); toast.ok(`Đã gắn lại ${n} dòng còn thiếu sale / khách / giá`); });
+  // thống kê cho sale
+  const tonRows = all.filter((t: any) => t.ton > 0.0001); const giaTri = tonRows.reduce((x: number, t: any) => x + Number(t.ton) * Number(t.gia_khach || t.dg_nhap || 0), 0);
+  const ic = (k: string) => (invs || []).filter((v: any) => v.status === k).length; const thang = today().slice(0, 7);
+  const kyThang = (invs || []).filter((v: any) => v.status === 'da_ky' && String(v.status_at || '').slice(0, 7) === thang).length;
+  const ActBtn = ({ t }: { t: any }) => free ? <Button size="sm" variant="primary" onClick={() => setClaimT(t)}>Nhận</Button> : acc ? <Button size="sm" onClick={() => setEdit(t)}>Sửa</Button> : null;
+  const khachTxt = (t: any) => t.khach || t.username || '';
   return <>
     {acc && <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant="primary" onClick={() => setUp(true)}>⇪ Nạp sổ Excel · đơn hàng · đơn vị nhận HĐ</Button>
-      <Button loading={busy} onClick={exportSo}>⬇ Xuất sổ (đúng mẫu)</Button>
-      <span className="text-xs text-ink-500">Nạp lại cả sổ bất cứ lúc nào: hệ thống cập nhật theo mã hàng, giữ nguyên phiếu đã lập.</span></div>}
-    {acc && <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-      <Stat label="Dòng trong sổ" value={all.length} sub={`${hds.length} HĐ đầu vào`} />
-      <Stat label="Còn tồn chưa lập phiếu" value={cnt('ton')} tone={cnt('ton') ? 'amber' : undefined} onClick={() => setF('ton')} />
+      <Button onClick={() => setXeOpen(true)}>🚚 HĐ vào ↔ xe</Button>
+      <Button loading={busy} onClick={rematch}>↻ Gắn lại sale/khách/giá</Button>
+      <Button loading={busy} onClick={exportSo}>⬇ Xuất sổ (đúng mẫu)</Button></div>}
+    {acc && <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <Stat label="Dòng trong sổ" value={all.length} sub={`${hds.length} HĐ đầu vào`} onClick={() => setF('')} />
+      <Stat label="Còn tồn chưa xuất" value={cnt('ton')} tone={cnt('ton') ? 'amber' : undefined} onClick={() => setF('ton')} />
       <Stat label="Chưa gắn sale" value={cnt('nosale')} tone={cnt('nosale') ? 'red' : undefined} onClick={() => setF('nosale')} />
-      <Stat label="Chưa có ID đơn" value={cnt('nomd')} onClick={() => setF('nomd')} /></div>}
-    {free && <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Dòng trên HĐ chính thức chưa xác định được sale. Hàng của bạn thì bấm <b>Nhận</b>, nhập mã đơn.</p>}
-    {!acc && !free && <p className="mb-3 text-sm text-ink-600">Hàng đã có HĐ đầu vào, còn tồn chưa xuất cho khách. Tick các dòng cùng 1 đơn vị nhận HĐ → <b>Lập phiếu xuất HĐ</b>: xác nhận giá + thông tin xuất HĐ.</p>}
+      <Stat label="Chưa có ID đơn" value={cnt('nomd')} onClick={() => setF('nomd')} />
+      <Stat label="Còn tồn, chưa có giá xuất" value={cnt('nogia')} onClick={() => setF('nogia')} /></div>}
+    {!acc && !free && <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <Stat label="Dòng chờ xuất HĐ" value={tonRows.length} tone={tonRows.length ? 'amber' : undefined} />
+      <Stat label="Giá trị còn tồn" value={money(giaTri)} sub="theo giá xuất khách" />
+      <Stat label="Phiếu chờ kế toán xuất nháp" value={ic('cho_nhap') + ic('soan')} sub={ic('soan') ? `${ic('soan')} phiếu đang soạn` : ''} />
+      <Stat label="Nháp chờ bạn xác nhận ký" value={ic('da_nhap')} tone={ic('da_nhap') ? 'red' : undefined} />
+      <Stat label="Đã ký tháng này" value={kyThang} tone="green" /></div>}
+    {free && <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Dòng trên HĐ chính thức còn tồn mà chưa xác định được sale (dòng đã ký không hiện ở đây). Hàng của bạn thì bấm <b>Nhận</b>, nhập mã đơn.</p>}
+    {!acc && !free && <p className="mb-3 text-sm text-ink-600">Tick các dòng cùng 1 đơn vị nhận HĐ → <b>Lập phiếu xuất HĐ</b>: xác nhận giá + thông tin xuất HĐ. Dòng đã ký nằm ở “Phiếu của tôi → Đã ký”.</p>}
     <div className="mb-3 flex flex-wrap items-center gap-2">
-      <Input className="max-w-xs" placeholder="🔎 Mã hàng, tên, ID đơn, NVKD, user, số HĐ…" value={q} onChange={e => setQ(e.target.value)} />
-      <Select className="w-44" placeholder="Mọi HĐ đầu vào" options={hds.map(h => [h, 'HĐ ' + h] as [string, string])} value={hd} onChange={setHd} />
+      <Input className="max-w-xs" placeholder="🔎 Mã hàng, tên, ID đơn, khách, sale, số HĐ, xe…" value={q} onChange={e => setQ(e.target.value)} />
+      <Select className="w-40" placeholder="Mọi xe" options={xes.map(x => [x, x === '—' ? '— Chưa gán xe' : x] as [string, string])} value={xe} onChange={setXe} />
+      <Select className="w-40" placeholder="Mọi HĐ vào" options={hds.map(h => [h, 'HĐ ' + h] as [string, string])} value={hd} onChange={setHd} />
       {acc && <Select className="w-44" placeholder="Mọi sale" options={sales.map(s => [s, s === '—' ? '— Chưa có sale' : a.personName(s)] as [string, string])} value={sale} onChange={setSale} />}
-      {!free && <Select className="w-44" placeholder="Tất cả dòng" options={[['ton', 'Còn tồn'], ['het', 'Đã lập phiếu hết'], ...(acc ? [['nosale', 'Chưa gắn sale'], ['nomd', 'Chưa có ID đơn']] : [])] as [string, string][]} value={f} onChange={setF} />}
+      {!free && acc && <Select className="w-48" placeholder="Tất cả dòng" options={[['ton', 'Còn tồn'], ['het', 'Đã xuất hết'], ['nosale', 'Chưa gắn sale'], ['nomd', 'Chưa có ID đơn'], ['nogia', 'Chưa có giá xuất']] as [string, string][]} value={f} onChange={setF} />}
       {!free && chosen.length > 0 && <Button className="hidden sm:inline-flex" variant="primary" onClick={() => setNewInv(chosen)}>Lập phiếu xuất HĐ ({chosen.length} dòng)</Button>}
     </div>
     {!loading && rows.length > 0 && <div className="mb-3 space-y-2 sm:hidden">{pg.slice(rows).map((t: any) =>
       <div key={t.id} className={cx('rounded-2xl border bg-white p-3 shadow-soft', pick[t.id] ? 'border-brand-500 bg-brand-50/60' : 'border-ink-200')}>
         <div className="flex items-start gap-2">{!free && <input type="checkbox" className="mt-1 h-5 w-5" disabled={t.ton <= 0.0001 || (!acc && !t.sale_id)} checked={!!pick[t.id]} onChange={e => setPick(p => ({ ...p, [t.id]: e.target.checked }))} />}
-          <div className="min-w-0 flex-1"><div className="text-[11px] text-ink-500">{t.ma_hang} · HĐ {t.so_hd_vao}{t.md ? ' · ' + t.md : ''}{acc ? ' · ' + (a.personName(t.sale_id) || t.nvkd || 'chưa có sale') : t.username ? ' · ' + t.username : ''}</div>
-            <div className="line-clamp-2 text-sm font-medium text-ink-900">{t.ten}</div>
-            <div className="mt-1 flex flex-wrap gap-x-3 text-xs"><span>SL {num(t.sl_nhap, 2)} {t.dvt}</span><span>Giá nhập <Money v={t.dg_nhap} /></span>{t.gia_khach && <span>Giá khách <b><Money v={t.gia_khach} /></b></span>}
+          <div className="min-w-0 flex-1"><div className="text-[11px] text-ink-500">{maHang(t)} · {t.xe ? t.xe + ' · ' : ''}HĐ {t.so_hd_vao}{t.md ? ' · ' + t.md : ''}{acc ? ' · ' + (a.personName(t.sale_id) || t.nvkd || 'chưa có sale') : ''}</div>
+            <div className="line-clamp-3 text-sm font-medium text-ink-900">{t.ten}</div>
+            {khachTxt(t) && <div className="text-xs text-ink-600">Khách: {khachTxt(t)}</div>}
+            <div className="mt-1 flex flex-wrap gap-x-3 text-xs"><span>SL {num(t.sl_nhap, 2)} {t.dvt}</span><span>Giá nhập <Money v={t.dg_nhap} /></span>{t.gia_khach && <span>Giá xuất <b><Money v={t.gia_khach} /></b></span>}
               <span className={t.ton > 0.0001 ? 'font-semibold text-amber-700' : 'text-ink-400'}>Tồn {num(t.ton, 2)}</span></div>
-            {t.phieu && <div className="mt-1 text-[11px] text-ink-500">{t.phieu.split(',').map((p: string) => { const [c, st] = p.split(':'); return `${c} · ${OST[st]?.[0] || st}`; }).join(' | ')}</div>}</div>
-          {free ? <Button size="sm" variant="primary" loading={busy} onClick={() => claim(t)}>Nhận</Button> : acc ? <Button size="sm" onClick={() => setEdit(t)}>Sửa</Button> : null}</div></div>)}
+            {(t.phieu || t.legacy?.status) && <div className="mt-1 text-[11px] text-ink-500">{t.phieu ? t.phieu.split(',').map((p: string) => { const [c, st] = p.split(':'); return `${c} · ${OST[st]?.[0] || st}`; }).join(' | ') : 'Sổ cũ: ' + (LEG[t.legacy.status] || t.legacy.status)}</div>}</div>
+          <ActBtn t={t} /></div></div>)}
       <Pager p={pg} total={rows.length} /></div>}
     {!free && chosen.length > 0 && <div className="fixed inset-x-3 bottom-3 z-30 sm:hidden"><Button className="w-full" variant="primary" onClick={() => setNewInv(chosen)}>Lập phiếu xuất HĐ ({chosen.length} dòng)</Button></div>}
     <Card className={rows.length ? 'hidden sm:block' : ''} bodyClass="p-0">{loading ? <Loading /> : !rows.length ? <Empty>{free ? 'Không có dòng chưa có sale' : 'Không có dòng'}</Empty> :
-      <div className="overflow-x-auto"><Table head={[...(free ? [] : ['']), 'Mã hàng', 'Tên hàng', 'SL nhập', 'Đơn giá nhập', 'VAT', 'HĐ vào', 'ID đơn', ...(acc ? ['NVKD · User'] : ['Khách']), 'Giá khách', 'Còn tồn', 'Phiếu', '']}>{pg.slice(rows).map((t: any) =>
-        <tr key={t.id} className={cx(pick[t.id] && 'bg-brand-50/60')}>
+      <Table scroll head={[...(free ? [] : ['']), 'Mã hàng', 'Tên hàng', 'SL nhập', 'Đơn giá nhập', 'VAT', 'Xe · HĐ vào', 'ID đơn', 'Khách', ...(acc ? ['Sale'] : []), 'Giá xuất', 'Còn tồn', 'Phiếu', '']}>{pg.slice(rows).map((t: any) =>
+        <tr key={t.id} className={cx('align-top', pick[t.id] && 'bg-brand-50/60')}>
           {!free && <Td><input type="checkbox" disabled={t.ton <= 0.0001 || (!acc && !t.sale_id)} checked={!!pick[t.id]} onChange={e => setPick(p => ({ ...p, [t.id]: e.target.checked }))} /></Td>}
-          <Td className="whitespace-nowrap text-xs font-semibold">{t.ma_hang}</Td><Td className="min-w-[220px] max-w-[360px] text-xs"><div className="line-clamp-2">{t.ten}</div></Td>
+          <Td className="whitespace-nowrap text-xs font-semibold">{maHang(t)}</Td><Td className="min-w-[300px] max-w-[440px] text-xs"><div className="line-clamp-3" title={t.ten}>{t.ten}</div></Td>
           <Td className="whitespace-nowrap text-right">{num(t.sl_nhap, 2)} <span className="text-[11px] text-ink-400">{t.dvt}</span></Td><Td className="text-right"><Money v={t.dg_nhap} /></Td><Td className="text-right text-xs">{vatTxt(t.vat)}</Td>
-          <Td className="whitespace-nowrap text-xs">{t.so_hd_vao}<div className="text-ink-400">{fmtDate(t.ngay_vao)}</div></Td>
+          <Td className="whitespace-nowrap text-xs">{t.xe ? <b className="text-ink-800">{t.xe}</b> : <span className="text-ink-400">—</span>}<div className="text-ink-500">HĐ {t.so_hd_vao} · {fmtDate(t.ngay_vao)}</div></Td>
           <Td className="whitespace-nowrap text-xs">{t.md || <span className="text-amber-700">—</span>}{t.match_src === 'hd_xml' && <div className="text-[10px] text-emerald-700">theo HĐ XML</div>}</Td>
-          {acc ? <Td className="whitespace-nowrap text-xs">{a.personName(t.sale_id) || <span className="text-red-600">{t.nvkd || 'chưa có sale'}</span>}<div className="text-ink-400">{t.username}</div></Td> : <Td className="text-xs">{t.username}</Td>}
+          <Td className="max-w-[200px] text-xs">{t.khach ? <><div className="line-clamp-2 font-medium text-ink-800">{t.khach}</div><div className="text-ink-400">{t.username}</div></> : t.username ? <span className="text-amber-700" title="Username chưa có trong danh sách khách ERP">{t.username}</span> : <span className="text-ink-300">—</span>}</Td>
+          {acc && <Td className="whitespace-nowrap text-xs">{a.personName(t.sale_id) || <span className="text-red-600">{t.nvkd || 'chưa có sale'}</span>}</Td>}
           <Td className="text-right"><Money v={t.gia_khach} /></Td>
           <Td className={cx('whitespace-nowrap text-right font-semibold', t.ton > 0.0001 ? 'text-amber-700' : 'text-ink-400')}>{num(t.ton, 2)}</Td>
-          <Td className="min-w-[150px] text-[11px] text-ink-500">{(t.phieu || '').split(',').filter(Boolean).map((p: string) => { const [c, s] = p.split(':'); return <div key={p}>{c} · {OST[s]?.[0]}</div>; })}{!t.phieu && t.legacy?.status ? <div>Sổ cũ: {t.legacy.status}</div> : ''}</Td>
-          <Td>{free ? <Button size="sm" variant="primary" loading={busy} onClick={() => claim(t)}>Nhận</Button> : acc ? <Button size="sm" onClick={() => setEdit(t)}>Sửa</Button> : null}</Td></tr>)}</Table></div>}
+          <Td className="min-w-[150px] text-[11px] text-ink-500">{(t.phieu || '').split(',').filter(Boolean).map((p: string) => { const [c, s] = p.split(':'); return <div key={p}>{c} · {OST[s]?.[0]}</div>; })}{!t.phieu && t.legacy?.status ? <div>Sổ cũ: {LEG[t.legacy.status] || t.legacy.status}</div> : ''}</Td>
+          <Td><ActBtn t={t} /></Td></tr>)}</Table>}
       <Pager p={pg} total={rows.length} /></Card>
     {up && <ImportSo onClose={() => setUp(false)} onDone={() => { setUp(false); reload(); }} />}
+    {xeOpen && <HdXe hds={hds} items={all} onClose={() => setXeOpen(false)} onDone={() => { setXeOpen(false); reload(); }} />}
     {edit && <ItemEdit t={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
+    {claimT && <ClaimItem t={claimT} onClose={() => setClaimT(null)} onDone={() => { setClaimT(null); reload(); }} />}
     {newInv && <InvoiceEditor items={newInv} onClose={() => setNewInv(null)} onDone={() => { setNewInv(null); setPick({}); reload(); }} />}
   </>;
 }
 
+/** Kế toán gán HĐ vào ↔ xe (tự gắn theo XML; sửa tay ở đây, nạp 1 lần dùng mãi) */
+function HdXe({ hds, items, onClose, onDone }: { hds: string[]; items: any[]; onClose: () => void; onDone: () => void }) {
+  const { busy, run } = useAction(); const { data } = useLoad(() => db.from<any[]>('out_hd_xe').select('*'), []);
+  const cur = useMemo(() => { const m: Record<string, any> = {}; (data || []).forEach(x => { m[x.so_hd] = x; }); return m; }, [data]);
+  const [v, setV] = useState<Record<string, string>>({}); const [bulk, setBulk] = useState(''); const [q, setQ] = useState('');
+  const list = hds.map(h => String(h).replace(/^0+/, '')).sort((x, y) => Number(y) - Number(x)).filter(h => !q || h.includes(q) || (v[h] ?? cur[h]?.xe ?? '').toLowerCase().includes(q.toLowerCase()));
+  const cnt = (h: string) => items.filter(t => String(t.so_hd_vao).replace(/^0+/, '') === h).length;
+  const save = () => run(async () => {
+    const rows = Object.entries(v).map(([so_hd, xe]) => ({ so_hd, xe }));
+    bulk.split('\n').forEach(l => { const m = l.trim().match(/^0*(\d+)[\s,;:\t]+(.+)$/); if (m) rows.push({ so_hd: m[1], xe: m[2].trim() }); });
+    if (!rows.length) throw new Error('Chưa có thay đổi'); await db.rpc('out_hd_xe_set', { p_rows: rows }); onDone();
+  }, 'Đã lưu HĐ vào ↔ xe');
+  return <Modal open onClose={onClose} size="lg" title="HĐ vào ↔ xe" footer={<Button variant="primary" loading={busy} onClick={save}>Lưu</Button>}>
+    <p className="mb-2 text-xs text-ink-500">HĐ đã nạp XML và ghép được với xe đối soát thì hệ thống tự điền (chữ xám). Gõ tên xe cho HĐ còn trống — lưu 1 lần, các lần nạp sổ sau tự hiện cột Xe.</p>
+    <div className="grid gap-3 sm:grid-cols-[1fr_260px]">
+      <div><Input placeholder="🔎 Số HĐ hoặc tên xe" value={q} onChange={e => setQ(e.target.value)} />
+        <div className="mt-2 max-h-[50vh] overflow-auto rounded-xl border border-ink-200">{list.map(h => <div key={h} className="flex items-center gap-2 border-b border-ink-100 px-3 py-1.5 text-sm">
+          <span className="w-20 font-semibold">HĐ {h}</span><span className="w-16 text-xs text-ink-400">{cnt(h)} dòng</span>
+          <Input className={cx('flex-1', cur[h]?.tu_dong && v[h] === undefined && 'text-ink-500')} placeholder="VD: Xe 25/10" value={v[h] ?? cur[h]?.xe ?? ''} onChange={e => setV(x => ({ ...x, [h]: e.target.value }))} /></div>)}</div></div>
+      <Field label="Dán nhanh nhiều dòng" hint="Mỗi dòng: số HĐ + tên xe. VD: 2078 Xe 25/10"><Textarea rows={12} value={bulk} onChange={e => setBulk(e.target.value)} placeholder={'2076 Xe 25/10\n2077 Xe 25/10\n2078 Xe 25/10'} /></Field></div>
+  </Modal>;
+}
+
+/** Sale nhận dòng chưa có sale: nhập mã đơn → hệ thống tra username, giá xuất khách; không có thì sale nhập */
+function ClaimItem({ t, onClose, onDone }: { t: any; onClose: () => void; onDone: () => void }) {
+  const { busy, run } = useAction(); const [md, setMd] = useState(t.md || ''); const [user, setUser] = useState(t.username || ''); const [gia, setGia] = useState(t.gia_khach ? String(Math.round(t.gia_khach)) : '');
+  const [info, setInfo] = useState<any>(null);
+  const look = async () => { if (!md.trim()) return; try { const r = await db.rpc<any>('out_md_lookup', { p_md: md }); setInfo(r || {});
+    if (r?.username && !user) setUser(r.username); if (r?.gia_khach && !gia) setGia(String(Math.round(r.gia_khach))); } catch { setInfo({}); } };
+  React.useEffect(() => { if (t.md) look(); }, []);
+  return <Modal open onClose={onClose} title="Nhận dòng hàng" footer={<Button variant="primary" loading={busy} disabled={!md.trim() || !user.trim() || !Number(gia)} onClick={() => run(async () => {
+    const n = await db.rpc<number>('out_item_claim', { p_id: t.id, p_md: md, p_username: user, p_gia: Number(gia) }); toast.ok(n > 1 ? `Đã nhận ${n} dòng cùng mã đơn` : 'Đã nhận dòng'); onDone(); })}>Nhận dòng</Button>}>
+    <div className="mb-3 text-sm"><b>{maHang(t)}</b> · HĐ {t.so_hd_vao}{t.xe ? ' · ' + t.xe : ''}<div className="text-xs text-ink-600">{t.ten}</div><div className="text-xs">SL {num(t.sl_nhap, 2)} {t.dvt} · giá nhập <Money v={t.dg_nhap} /></div></div>
+    <Field label="Mã đơn (MD) *" hint="Gõ 2943 hay MD2943 đều được"><div className="flex gap-2"><Input value={md} onChange={e => { setMd(e.target.value.toUpperCase()); setInfo(null); }} onBlur={look} /><Button onClick={look}>Tra</Button></div></Field>
+    {info && <div className={cx('mt-2 rounded-lg px-3 py-2 text-xs', info.username || info.gia_khach ? 'bg-emerald-50 text-emerald-900' : 'bg-amber-50 text-amber-900')}>
+      {info.username || info.gia_khach ? <>Hệ thống tìm thấy: {info.username ? <>khách <b>{info.khach || info.username}</b> ({info.username})</> : 'chưa có khách'}{info.gia_khach ? <> · giá xuất khách <b>{money(info.gia_khach)}</b></> : ' · chưa có giá xuất'}</> : 'Chưa có dữ liệu mã đơn này — nhập username khách và giá xuất khách.'}</div>}
+    <div className="mt-2 grid grid-cols-2 gap-2"><Field label="Username khách *"><Input value={user} onChange={e => setUser(e.target.value)} /></Field>
+      <Field label="Giá xuất khách (đ/đv) *" hint={gia ? money(Number(gia)) + ' đ' : ''}><Input inputMode="numeric" value={gia} onChange={e => setGia(e.target.value.replace(/[^\d]/g, ''))} /></Field></div>
+    <div className="mt-2 text-xs text-ink-500">Các dòng khác chưa có sale cùng mã đơn sẽ được nhận luôn.</div>
+  </Modal>;
+}
+
 function ImportSo({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const { busy, run } = useAction(); const [file, setFile] = useState<File | null>(null); const [ord, setOrd] = useState<File | null>(null); const [buy, setBuy] = useState<File | null>(null);
-  const [res, setRes] = useState<any>(null); const [err, setErr] = useState('');
+  const [res, setRes] = useState<any>(null); const [err, setErr] = useState(''); const [step, setStep] = useState('');
   const analyze = async () => { setErr(''); setRes(null);
     try { if (!file && !ord && !buy) throw new Error('Chọn ít nhất 1 file');
       const p = file ? parseSoXuat(await readTable(file, { fillMerged: true })) : { rows: [], legacy: [], warnings: [] };
@@ -127,12 +193,15 @@ function ImportSo({ onClose, onDone }: { onClose: () => void; onDone: () => void
       setRes({ ...p, orders, buyers }); } catch (e: any) { setErr(e.message || String(e)); } };
   const save = () => run(async () => {
     const rows = res.rows.map((r: any) => ({ ...r, row: undefined })); const msg: string[] = [];
-    if (rows.length) { let out: any = { new: 0, upd: 0, legacy: 0, no_sale: 0 };
-      for (let i = 0; i < rows.length; i += 300) { const x = await db.rpc<any>('out_items_import', { p_rows: rows.slice(i, i + 300), p_legacy: i + 300 >= rows.length ? res.legacy : [] });
-        out = { new: out.new + x.new, upd: out.upd + x.upd, legacy: out.legacy + x.legacy, no_sale: x.no_sale }; }
-      msg.push(`${out.new} dòng mới, ${out.upd} dòng cập nhật, ${out.legacy} phiếu từ sổ cũ`); }
-    if (res.orders.length) { let n = 0; for (let i = 0; i < res.orders.length; i += 1000) n += await db.rpc<number>('out_orders_import', { p_rows: res.orders.slice(i, i + 1000) }); msg.push(`${n} dòng gắn khách/sale theo file đơn hàng`); }
-    if (res.buyers.length) { const n = await db.rpc<number>('out_buyers_import', { p_rows: res.buyers }); msg.push(`${n} đơn vị nhận HĐ`); }
+    if (rows.length) { let nn = 0, nu = 0;
+      for (let i = 0; i < rows.length; i += 150) { setStep(`Đang nạp sổ ${Math.min(i + 150, rows.length)}/${rows.length}…`); const x = await db.rpc<any>('out_items_import', { p_rows: rows.slice(i, i + 150) }); nn += x.new; nu += x.upd; }
+      msg.push(`${nn} dòng mới, ${nu} dòng cập nhật`);
+      const leg = res.legacy.filter((g: any) => g.status === 'da_ky'); let nl = 0;
+      for (let i = 0; i < leg.length; i += 40) { setStep(`Đang chuyển dòng đã ký ${Math.min(i + 40, leg.length)}/${leg.length}…`); nl += await db.rpc<number>('out_legacy_import', { p_legacy: leg.slice(i, i + 40) }); }
+      if (nl) msg.push(`${nl} phiếu đã ký từ sổ cũ`); }
+    if (res.orders.length) { let n = 0; for (let i = 0; i < res.orders.length; i += 500) { setStep(`Đang nạp đơn hàng ${Math.min(i + 500, res.orders.length)}/${res.orders.length}…`); n += await db.rpc<number>('out_orders_import', { p_rows: res.orders.slice(i, i + 500) }); } msg.push(`${res.orders.length} mã đơn (${n} dòng được gắn)`); }
+    if (res.buyers.length) { setStep('Đang nạp đơn vị nhận HĐ…'); const n = await db.rpc<number>('out_buyers_import', { p_rows: res.buyers }); msg.push(`${n} đơn vị nhận HĐ`); }
+    setStep('Đang gắn lại sale / khách / giá…'); await db.rpc<number>('out_rematch'); setStep('');
     toast.ok('Đã nạp: ' + msg.join(' · ')); onDone();
   });
   const F = ({ f, set, l, hint }: { f: File | null; set: (f: File | null) => void; l: string; hint: string }) => <Field label={l} hint={hint}>
@@ -146,9 +215,10 @@ function ImportSo({ onClose, onDone }: { onClose: () => void; onDone: () => void
       <F f={buy} set={setBuy} l="3. Danh sách đơn vị nhận HĐ" hint="Sheet “Thong tin KH” (MST, Tên đơn vị, Địa chỉ, mail) → sale gõ MST là tự điền" /></div>
     <div className="mt-2 text-xs text-ink-500">Nạp file nào cũng được, không cần đủ cả 3. Nạp lại nhiều lần không bị trùng.</div>
     {err && <div className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{err}</div>}
+    {step && <div className="mt-3 rounded-lg bg-brand-50 p-3 text-sm font-semibold text-brand-800">{step}</div>}
     {res && <div className="mt-3 space-y-2 text-sm">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5"><Stat label="Dòng hàng" value={res.rows.length} /><Stat label="Có ID đơn" value={res.rows.filter((r: any) => r.md).length} />
-        <Stat label="Phiếu từ sổ cũ" value={res.legacy.length} sub="tạo sẵn, không làm lại" /><Stat label="Đơn hàng" value={res.orders.length} /><Stat label="Đơn vị nhận HĐ" value={res.buyers.length} /></div>
+        <Stat label="Dòng đã ký trên sổ cũ" value={res.legacy.filter((g: any) => g.status === 'da_ky').reduce((x: number, g: any) => x + g.lines.length, 0)} sub="hết tồn, vào phiếu Đã ký" /><Stat label="Đơn hàng" value={res.orders.length} /><Stat label="Đơn vị nhận HĐ" value={res.buyers.length} /></div>
       {res.warnings.slice(0, 8).map((w: string, i: number) => <div key={i} className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-900">• {w}</div>)}
       <div className="text-xs text-ink-500">Tự gắn ID đơn, sale, khách: theo HĐ XML đã đối chiếu → ID trên sổ → NVKD → mã đơn trong file đơn hàng → username (chủ khách trên ERP).</div>
     </div>}
@@ -178,7 +248,11 @@ function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: a
   const { data: cus0 } = useLoad(() => cid0 ? db.from<any>('customers').select('id,code,sys_code,sys_username,company_name,contact_name,tax_code,address,legal_address,email,phone').eq('id', cid0).maybeSingle() : Promise.resolve(null), [cid0]);
   const [cus, setCus] = useState<any>(null); const c = cus || cus0;
   const { data: buyers } = useLoad(() => c?.id ? db.from<any[]>('out_buyers').select('*').eq('customer_id', c.id).order('created_at', { asc: false }) : Promise.resolve([]), [c?.id]);
-  const [b, setB] = useState<any>(inv ? { name: inv.buyer_name || '', mst: inv.tax_code || '', addr: inv.address || '', email: inv.email || '', pay: inv.payment || 'TM/CK', note: inv.note || '' } : { name: '', mst: '', addr: '', email: '', pay: 'TM/CK', note: '' });
+  const [b, setB] = useState<any>(() => { if (inv) return { name: inv.buyer_name || '', mst: inv.tax_code || '', addr: inv.address || '', email: inv.email || '', pay: inv.payment || 'TM/CK', note: inv.note || '' };
+    // dòng đã xuất nháp trên sổ cũ: điền sẵn thông tin xuất HĐ sale đã báo
+    const lg = (items || []).find(t => t.legacy?.info)?.legacy; const p = lg ? parseInfo(lg.info) : null;
+    return { name: p?.buyer_name || '', mst: p?.tax_code || '', addr: p?.address || '', email: p?.email || '', pay: 'TM/CK', note: '' }; });
+  const legInfo = !inv ? (items || []).map(t => t.legacy?.info).filter(Boolean)[0] : null;
   const setF = (k: string, v: string) => setB((x: any) => ({ ...x, [k]: v }));
   const [look, setLook] = useState('');
   const lookup = async () => { const m = (b.mst || '').trim(); if (m.length < 10) { setLook(''); return; }
@@ -200,6 +274,7 @@ function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: a
     footer={<>{!inv || inv.status === 'soan' ? <Button loading={busy} onClick={() => save(false)}>Lưu nháp</Button> : null}
       <Button variant="primary" loading={busy} disabled={!b.name || !ls.length} onClick={() => save(true)}>{after ? 'Lưu — kế toán xuất nháp lại' : 'Xác nhận giá & thông tin → gửi kế toán'}</Button></>}>
     {after && <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">Phiếu đã xuất nháp — sửa xong phiếu quay về “Chờ xuất nháp”, kế toán làm nháp lại.</div>}
+    {legInfo && <details className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-ink-700"><summary className="cursor-pointer font-semibold">Thông tin xuất HĐ đã báo trên sổ cũ (đã điền sẵn — kiểm tra lại)</summary><pre className="mt-1 whitespace-pre-wrap font-sans">{legInfo}</pre></details>}
     {vats.length > 1 && <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">Phiếu có nhiều thuế suất ({vats.join(', ')}) — thường phải tách HĐ riêng.</div>}
     <div className="grid gap-3 lg:grid-cols-2">
       <div><Field label="Khách hàng (ERP)"><CustomerPicker value={c} onChange={x => setCus(x)} /></Field>
@@ -222,7 +297,7 @@ function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: a
           <Field label="Đơn giá xuất"><Input className="text-right" inputMode="numeric" value={l.gia} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, gia: e.target.value.replace(/[^\d.]/g, '') } : y))} /></Field></div>
         <div className="mt-1 flex justify-between text-xs"><span className={g.tone}>{g.bad ? '⚠ dưới giá nhập · ' : ''}{g.txt}</span><b><Money v={Math.round(Number(l.sl || 0) * Number(l.gia || 0))} /></b></div></div>; })}</div>
     <div className="mt-3 hidden max-h-[40vh] overflow-auto rounded-xl border border-ink-200 sm:block"><Table head={['Mã hàng', 'Tên hàng (theo HĐ APT)', 'ĐVT', 'Còn tồn', 'SL xuất', 'Đơn giá xuất', 'VAT', 'Thành tiền', '']}>{ls.map((l, i) =>
-      <tr key={l.item_id}><Td className="whitespace-nowrap text-xs">{l.item?.ma_hang}</Td><Td className="min-w-[200px] text-xs">{l.item?.ten}</Td><Td className="text-xs">{l.item?.dvt}</Td>
+      <tr key={l.item_id}><Td className="whitespace-nowrap text-xs">{l.item ? maHang(l.item) : ''}</Td><Td className="min-w-[200px] text-xs">{l.item?.ten}</Td><Td className="text-xs">{l.item?.dvt}</Td>
         <Td className="text-right text-xs">{l.item?.ton !== undefined ? num(l.item.ton, 2) : ''}</Td>
         <Td><Input className="w-24 text-right" inputMode="decimal" value={l.sl} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, sl: e.target.value.replace(/[^\d.]/g, '') } : y))} /></Td>
         <Td><Input className="w-28 text-right" inputMode="numeric" value={l.gia} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, gia: e.target.value.replace(/[^\d.]/g, '') } : y))} />
@@ -275,14 +350,14 @@ function Invoices({ acc }: { acc: boolean }) {
           {acc && <span>{a.personName(v.sale_id)}</span>}{v.so_hd && <span>HĐ {v.so_hd}</span>}{v.sua_sau_nhap && <span className="font-semibold text-red-600">sửa sau nháp</span>}</div></button>; })}
       <Pager p={pg} total={rows.length} /></div>}
     <Card className={rows.length ? 'hidden sm:block' : ''} bodyClass="p-0">{loading ? <Loading /> : !rows.length ? <Empty>Không có phiếu</Empty> :
-      <div className="overflow-x-auto"><Table head={[...(acc ? [''] : []), 'Phiếu', 'Sale', 'Đơn vị mua', 'MST', 'Dòng', 'Tiền hàng', 'Thuế', 'Trạng thái', 'Số HĐ', 'Cập nhật']}>{pg.slice(rows).map((v: any) => { const t = totalOf(v);
+      <Table scroll head={[...(acc ? [''] : []), 'Phiếu', 'Sale', 'Đơn vị mua', 'MST', 'Dòng', 'Tiền hàng', 'Thuế', 'Trạng thái', 'Số HĐ', 'Cập nhật']}>{pg.slice(rows).map((v: any) => { const t = totalOf(v);
         return <tr key={v.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setSel(v.id)}>
           {acc && <Td><input type="checkbox" checked={!!pick[v.id]} onClick={e => e.stopPropagation()} onChange={e => setPick(p => ({ ...p, [v.id]: e.target.checked }))} /></Td>}
           <Td className="whitespace-nowrap font-semibold">{v.code}{v.legacy && <div className="text-[10px] font-normal text-ink-400">sổ cũ</div>}{v.sua_sau_nhap && <div className="text-[10px] font-semibold text-red-600">sửa sau nháp</div>}{(v.out_invoice_lines || []).some((l: any) => l.out_items?.dg_nhap && Number(l.don_gia) < Number(l.out_items.dg_nhap)) && <div className="text-[10px] font-semibold text-red-600">⚠ dưới giá nhập</div>}</Td>
           <Td className="whitespace-nowrap text-xs">{a.personName(v.sale_id)}</Td><Td className="max-w-[260px] text-xs"><div className="line-clamp-2">{v.buyer_name}</div></Td><Td className="text-xs">{v.tax_code}</Td>
           <Td className="text-right">{(v.out_invoice_lines || []).length}</Td><Td className="text-right"><Money v={t.tt} /></Td><Td className="text-right text-xs"><Money v={t.thue} /></Td>
           <Td><OBadge s={v.status} /></Td><Td className="whitespace-nowrap text-xs">{v.so_hd}<div className="text-ink-400">{v.ngay_hd ? fmtDate(v.ngay_hd) : ''}</div></Td>
-          <Td className="whitespace-nowrap text-xs text-ink-500">{fmtDateTime(v.status_at)}</Td></tr>; })}</Table></div>}
+          <Td className="whitespace-nowrap text-xs text-ink-500">{fmtDateTime(v.status_at)}</Td></tr>; })}</Table>}
       <Pager p={pg} total={rows.length} /></Card>
     {sel && <InvoiceDetail id={sel} acc={acc} onClose={() => setSel(null)} onChanged={reload} />}
   </>;
@@ -302,7 +377,7 @@ function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc: boole
     if (so === null) return; await db.rpc('out_invoice_status', { p_ids: [id], p_status: 'da_ky', p_so_hd: so, p_ngay: today() }); done(); }, 'Đã xác nhận ký');
   if (!v) return <Modal open onClose={onClose} title="Phiếu xuất HĐ"><Loading /></Modal>;
   const mine = a.me.id === v.sale_id || a.isLead; const t = totalOf(v); const lines = (v.out_invoice_lines || []).slice().sort((x: any, y: any) => x.stt - y.stt);
-  const preview = () => { if (!printDraft({ co: a.settings.company, buyer: { name: v.buyer_name || v.buyer_info || '', mst: v.tax_code, addr: v.address, email: v.email }, sale: a.personName(v.sale_id), code: v.code,
+  const preview = () => { if (!printDraft({ co: a.settings.company, cfg: a.settings.accounting, buyer: { name: v.buyer_name || v.buyer_info || '', mst: v.tax_code, addr: v.address, email: v.email, pay: v.payment }, sale: a.personName(v.sale_id), code: v.code,
     lines: lines.map((l: any) => ({ ten: l.out_items?.ten, dvt: l.out_items?.dvt, sl: Number(l.sl), gia: Number(l.don_gia), vat: l.vat ?? l.out_items?.vat })) })) toast.err('Trình duyệt chặn cửa sổ mới — cho phép popup'); };
   const s = v.status; const canEdit = !['da_ky', 'huy'].includes(s) && (acc || (mine && s !== 'xac_nhan_ky'));
   return <Modal open onClose={onClose} size="xl" title={<span>{v.code} · <OBadge s={s} /></span>} footer={<>

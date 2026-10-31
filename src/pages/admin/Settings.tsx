@@ -367,6 +367,8 @@ function AccCfg() {
       <div className="mt-3 grid gap-3 sm:grid-cols-2"><L k="sale_lanchi" l="Tài khoản khách Lanchi" />
         <L k="hs_hop_quy_chuong" l="Chương HS hàng chờ hợp quy" hint="2 số đầu mã HS, VD 61, 62" />
         <L k="kh_xuat_thang" l="Khách luôn APT xuất thẳng" hint="Username / mã KH, VD minhcv" /></div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label="Ký hiệu HĐ đầu ra (in trên bản nháp)" hint="VD 1C26TYY"><Input value={v.ky_hieu_ra || ''} onChange={e => s.set('ky_hieu_ra')(e.target.value)} /></Field>
+        <Field label="Số tài khoản in trên HĐ" hint="VD 117634318888 - Vietinbank - Chi nhánh TP Hà Nội"><Input value={v.stk_hd || ''} onChange={e => s.set('stk_hd')(e.target.value)} /></Field></div>
       <Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>
     </Card>
     <Card title="Người được duyệt mở chặn">

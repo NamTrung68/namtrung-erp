@@ -154,11 +154,12 @@ export function Stat({ label, value, sub, tone, onClick }: { label: string; valu
     </button>
   );
 }
-export function Table({ head, children, className }: { head: React.ReactNode[]; children: React.ReactNode; className?: string }) {
+/** scroll: bảng dài cuộn trong khung, dòng tiêu đề luôn hiện khi cuộn xuống */
+export function Table({ head, children, className, scroll }: { head: React.ReactNode[]; children: React.ReactNode; className?: string; scroll?: boolean }) {
   return (
-    <div className={cx('overflow-x-auto', className)}>
+    <div className={cx(scroll ? 'max-h-[calc(100vh-230px)] min-h-[240px] overflow-auto' : 'overflow-x-auto', className)}>
       <table className="w-full text-sm">
-        <thead><tr className="border-b border-ink-200 bg-ink-50/60 text-left text-xs text-ink-500">{head.map((h, i) => <th key={i} className="whitespace-nowrap px-3 py-2 font-medium">{h}</th>)}</tr></thead>
+        <thead className={scroll ? 'sticky top-0 z-10' : undefined}><tr className={cx('border-b border-ink-200 text-left text-xs text-ink-500', scroll ? 'bg-ink-50 shadow-[0_1px_0_0_rgb(226_232_240)]' : 'bg-ink-50/60')}>{head.map((h, i) => <th key={i} className="whitespace-nowrap px-3 py-2 font-medium">{h}</th>)}</tr></thead>
         <tbody className="divide-y divide-ink-100">{children}</tbody>
       </table>
     </div>

@@ -4,7 +4,7 @@ import { toISODate } from './xlsx';
 
 const H = (s: any) => stripAcc(clean(s)).toUpperCase().replace(/\s+/g, ' ').trim();
 export interface SoRow {
-  ma_hang: string; stt_so: number | null; ten: string; dvt: string; vat: number | null; sl_nhap: number; dg_nhap: number | null;
+  ma_hang: string; part: number; gia_so: number | null; stt_so: number | null; ten: string; dvt: string; vat: number | null; sl_nhap: number; dg_nhap: number | null;
   so_hd_vao: string; ky_hieu: string; ngay_vao: string | null; ncc: string; stt_hd: number | null; md: string; nvkd: string; username: string;
   legacy: Record<string, any> | null; row: number;
 }
@@ -19,7 +19,7 @@ export function parseInfo(text: string): { buyer_name: string; tax_code: string;
     || ls.find(x => !/(xuất giá|^stt|^sl\b|mst|mã số thuế|địa chỉ|đ\/c|mail|@)/i.test(x) && !/^\d+$/.test(x));
   return { buyer_name: nameL ? val(nameL).replace(/\s*\(.*?\)\s*:?/g, ' ').trim() || nameL : '', tax_code: mst || '', address: addrL ? val(addrL) : '', email };
 }
-export interface LegacyGroup { status: 'da_ky' | 'da_nhap' | 'xac_nhan_ky'; so_hd: string; ngay: string | null; info: string; buyer_name?: string; tax_code?: string; address?: string; email?: string; lines: { ma_hang: string; sl: number; gia: number; vat: number | null }[] }
+export interface LegacyGroup { status: 'da_ky' | 'da_nhap' | 'xac_nhan_ky'; so_hd: string; ngay: string | null; info: string; buyer_name?: string; tax_code?: string; address?: string; email?: string; lines: { ma_hang: string; part: number; sl: number; gia: number; vat: number | null }[] }
 
 const intStr = (v: any) => { if (v === null || v === undefined || v === '') return ''; if (typeof v === 'number') return Number.isInteger(v) ? String(v) : ''; return clean(v); };
 const isoD = (v: any) => (v instanceof Date ? v.toISOString().slice(0, 10) : toISODate(v));
@@ -42,10 +42,11 @@ export function parseSoXuat(rows: any[][]): { rows: SoRow[]; legacy: LegacyGroup
   c.gc = c.tt >= 0 ? find(h => h.startsWith('DON GIA XUAT'), c.tt) : -1;
   for (const k of ['ma', 'ten', 'sln', 'sohd'] as const) if ((c as any)[k] < 0) throw new Error('Sổ thiếu cột: ' + ({ ma: 'Mã hàng', ten: 'Tên hàng hoá', sln: 'Số lượng nhập', sohd: 'Số hóa đơn' } as any)[k]);
   const g = (r: any[], i: number) => (i >= 0 ? r[i] : null);
-  const out: SoRow[] = []; const warnings: string[] = []; const groups = new Map<string, LegacyGroup>(); const seen = new Set<string>();
+  const out: SoRow[] = []; const warnings: string[] = []; const groups = new Map<string, LegacyGroup>(); const seen = new Map<string, number>();
   rows.slice(hi + 1).forEach((r, k) => {
     const ma = clean(g(r, c.ma)).toUpperCase(); if (!ma || !clean(g(r, c.ten))) return;
-    if (seen.has(ma)) { warnings.push(`Mã hàng ${ma} lặp lại (dòng ${hi + 2 + k}) — lấy dòng đầu`); return; } seen.add(ma);
+    // 1 mã hàng chia nhiều dòng (xuất cho nhiều khách) → mỗi dòng là 1 phần riêng
+    const part = (seen.get(ma) || 0) + 1; seen.set(ma, part);
     const m = ma.match(/^HH0*(\d+)-(\d+)/); const idv = g(r, c.id);
     const md = idv === null || idv === undefined || idv === '' ? '' : typeof idv === 'number' ? String(Math.round(idv)) : clean(idv).toUpperCase();
     const slx = vnNum(g(r, c.slx)), dgx = vnNum(g(r, c.dgx)), ngx = isoD(g(r, c.ngayx)), info = clean(String(g(r, c.info) ?? '').replace(/\r/g, '')) ? String(g(r, c.info)).trim() : '';
@@ -53,12 +54,13 @@ export function parseSoXuat(rows: any[][]): { rows: SoRow[]; legacy: LegacyGroup
     const status: LegacyGroup['status'] | null = st.includes('DA KY') ? 'da_ky' : st.includes('NHAP') ? (kd.startsWith('KY') ? 'xac_nhan_ky' : 'da_nhap') : ngx ? 'da_ky' : null;
     const sl_nhap = vnNum(g(r, c.sln)) || 0; const vat = vnNum(g(r, c.ts));
     const legacy = status || info || slx ? { status, info: info || null, so_hd_ra: sohdx || null, ngay_ra: ngx, sl_xuat: slx, dg_xuat: dgx, kd_ky: clean(g(r, c.kdky)) || null, ghi_chu: typeof g(r, c.gc) === 'string' ? clean(g(r, c.gc)) : null } : null;
-    out.push({ ma_hang: ma, stt_so: vnNum(g(r, c.stt)), ten: clean(g(r, c.ten)), dvt: clean(g(r, c.dvt)), vat, sl_nhap, dg_nhap: vnNum(g(r, c.dgn)),
+    const gcv = g(r, c.gc); const gia_so = dgx || (typeof gcv === 'number' ? gcv : null);
+    out.push({ ma_hang: ma, part, gia_so, stt_so: vnNum(g(r, c.stt)), ten: clean(g(r, c.ten)), dvt: clean(g(r, c.dvt)), vat, sl_nhap, dg_nhap: vnNum(g(r, c.dgn)),
       so_hd_vao: intStr(g(r, c.sohd)) || (m ? m[2] : ''), ky_hieu: clean(g(r, c.kh)), ngay_vao: isoD(g(r, c.ngay)), ncc: clean(g(r, c.ncc)), stt_hd: m ? Number(m[1]) : null,
       md, nvkd: clean(g(r, c.nvkd)), username: clean(g(r, c.user)), legacy, row: hi + 2 + k });
     if (status) {
       const key = [status, sohdx, ngx, info].join('|'); const gr = groups.get(key) || { status, so_hd: sohdx, ngay: ngx, info, ...parseInfo(info), lines: [] };
-      gr.lines.push({ ma_hang: ma, sl: slx || sl_nhap, gia: dgx || 0, vat }); groups.set(key, gr);
+      gr.lines.push({ ma_hang: ma, part, sl: slx || sl_nhap, gia: dgx || 0, vat }); groups.set(key, gr);
     }
   });
   return { rows: out, legacy: Array.from(groups.values()), warnings };
