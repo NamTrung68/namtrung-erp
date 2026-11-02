@@ -317,25 +317,22 @@ export function ImportSo({ onClose, onDone }: { onClose: () => void; onDone: () 
   const F = ({ f, set, l, hint }: { f: File | null; set: (f: File | null) => void; l: string; hint: string }) => <Field label={l} hint={hint}>
     <label className={cx('flex cursor-pointer items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-sm', f ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : 'border-ink-300 hover:border-brand-400')}>
       <input type="file" accept=".xlsx,.csv" className="hidden" onChange={e => { set(e.target.files?.[0] || null); setRes(null); }} />{f ? '✓ ' + f.name : '⇪ Chọn file .xlsx'}</label></Field>;
-  return <Modal open onClose={onClose} size="lg" title="Nạp sổ HĐ chính thức · đơn hàng · đơn vị nhận HĐ"
+  return <Modal open onClose={onClose} size="lg" title="Nạp danh sách đơn hàng · pháp nhân nhận HĐ"
     footer={res ? <Button variant="primary" loading={busy} onClick={save}>Lưu</Button> : <Button variant="dark" onClick={analyze}>Đọc file</Button>}>
-    <div className="grid gap-3 sm:grid-cols-3">
-      <F f={file} set={setFile} l="1. HĐ chính thức APT (sổ nhập)" hint="Mã hàng HH00044-2080-2026, Tên hàng, SL nhập, Đơn giá nhập, Số HĐ — ERP tự ghép về dòng nháp theo tên + SL" />
+    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">HĐ chính thức APT nạp ở nút <b>“Nạp HĐ chính thức APT”</b> (Bàn làm việc kế toán) — màn đó đối chiếu với nháp APT + file xe để lấy mã khai báo, đơn, khách, sale trước khi lưu.</div>
+    <div className="grid gap-3 sm:grid-cols-2">
       <F f={ord} set={setOrd} l="2. Danh sách đơn hàng (+ giá xuất)" hint="Mã đơn hàng, Username, Sale; thêm Tên hàng, Số lượng, Đơn giá xuất → ERP có giá theo đơn" />
       <F f={buy} set={setBuy} l="3. Danh sách đơn vị nhận HĐ" hint="Sheet “Thong tin KH” (MST, Tên đơn vị, Địa chỉ, mail, Username) → gắn đúng khách, lập phiếu tự điền" /></div>
-    <div className="mt-2 text-xs text-ink-500">Nạp file nào cũng được, không cần đủ cả 3. Nạp lại nhiều lần không bị trùng.</div>
+    <div className="mt-2 text-xs text-ink-500">Nạp 1 hoặc cả 2 file. Nạp lại nhiều lần không bị trùng.</div>
     <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-ink-50 px-3 py-2 text-xs">⬇ File mẫu (đúng cột):
-      <button className="font-semibold text-brand-700 underline" onClick={() => downloadMau('hd')}>1. HĐ chính thức APT</button>
       <button className="font-semibold text-brand-700 underline" onClick={() => downloadMau('orders')}>2. Đơn hàng + giá xuất</button>
       <button className="font-semibold text-brand-700 underline" onClick={() => downloadMau('buyers')}>3. Pháp nhân nhận HĐ (có Username)</button>
       <span className="text-ink-500">Giá xuất theo ID đơn + tên hàng + SL: ERP tự khớp đúng dòng; đơn nhiều giá mà không khớp được thì để sale chọn.</span></div>
     {err && <div className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{err}</div>}
     {step && <div className="mt-3 rounded-lg bg-brand-50 p-3 text-sm font-semibold text-brand-800">{step}</div>}
     {res && <div className="mt-3 space-y-2 text-sm">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5"><Stat label="Dòng hàng" value={res.rows.length} /><Stat label="Có ID đơn" value={res.rows.filter((r: any) => r.md).length} />
-        <Stat label="Dòng đã ký trên sổ cũ" value={res.legacy.filter((g: any) => g.status === 'da_ky').reduce((x: number, g: any) => x + g.lines.length, 0)} sub="hết tồn, vào phiếu Đã ký" /><Stat label="Đơn hàng" value={res.orders.length} sub={res.orders.some((o: any) => Number(o.gia) > 0) ? `${res.orders.filter((o: any) => Number(o.gia) > 0).length} dòng có giá xuất` : ''} /><Stat label="Đơn vị nhận HĐ" value={res.buyers.length} /></div>
+      <div className="grid grid-cols-2 gap-2"><Stat label="Dòng đơn hàng" value={res.orders.length} sub={res.orders.some((o: any) => Number(o.gia) > 0) ? `${res.orders.filter((o: any) => Number(o.gia) > 0).length} dòng có giá xuất` : ''} /><Stat label="Pháp nhân nhận HĐ" value={res.buyers.length} sub={`${res.buyers.filter((b: any) => b.username).length} dòng có Username → gắn khách`} /></div>
       {res.warnings.slice(0, 8).map((w: string, i: number) => <div key={i} className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-900">• {w}</div>)}
-      <div className="text-xs text-ink-500">Tự gắn ID đơn, sale, khách: theo HĐ XML đã đối chiếu → ID trên sổ → NVKD → mã đơn trong file đơn hàng → username (chủ khách trên ERP).</div>
     </div>}
   </Modal>;
 }

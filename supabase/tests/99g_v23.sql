@@ -114,4 +114,10 @@ insert into public.customers(id, code, company_name, contact_name, customer_type
   select '00000000-0000-0000-0023-0000000000c3', 'KHV23C', 'HKD C', 'Anh C', 'nha_buon', 'tu_tim_zalo', '+84 912 230 025', id, 'khachmoi23' from public.profiles where email='a@nt.vn';
 insert into public.out_items(ma_hang, ten, dvt, vat, sl_nhap, dg_nhap, customer_id) values ('HH00001-2099-2026', 'Hàng khách mới', 'Cái', 0.08, 1, 1000, '00000000-0000-0000-0023-0000000000c3');
 select pg_temp.check((select customer_id = '00000000-0000-0000-0023-0000000000c3' and is_default from public.out_buyers where tax_code='0101777666'), 'khách vào ERP + có hàng → pháp nhân tự gắn, mặc định');
+-- bản 25: nạp HĐ kèm dòng nháp đã đối chiếu trên màn hình (acc_line_id) → nhận đúng mã khai báo dù tên khác hẳn
+select pg_temp.as_user('kt@nt.vn'); set role authenticated;
+select public.out_items_import(jsonb_build_array(jsonb_build_object('ma_hang','HH00077-2080-2026','ten','Tên HĐ khác hẳn nháp','dvt','Chiếc','vat',0.08,'sl_nhap',90,'dg_nhap',114560,'so_hd_vao','2080',
+  'acc_line_id',(select id from public.acc_lines where line_key='A35' and truck_id='00000000-0000-0000-0023-000000000001'))));
+reset role;
+select pg_temp.check((select ma_kb || '|' || md || '|' || match_src || '|' || (not lech) from public.out_items where ma_hang='HH00077-2080-2026') = 'MD2525-2|MD2525|ten|true', 'acc_line_id từ màn xem trước → mã khai báo, đơn');
 select 'V23 TESTS PASSED' as result;

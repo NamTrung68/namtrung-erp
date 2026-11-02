@@ -14,6 +14,7 @@ import { ImportTruck } from '../acc/Acc';
 import { BIEN_CAM, BIEN_DUYET, ImportSo, InvoiceDetail, InvoiceEditor, LechModal, OST, TonReport, exportMisaFile, nextStep } from '../out/Out';
 import { BulkInvoices } from '../out/Bulk';
 import { UploadHdPdf } from '../out/HdFiles';
+import { ImportHd } from './ImportHd';
 
 // ---------------- dùng chung ----------------
 const bien = (t: any) => (Number(t.gia_khach) > 0 && Number(t.dg_nhap) > 0 ? Number(t.gia_khach) / Number(t.dg_nhap) - 1 : null);
@@ -188,7 +189,7 @@ function Ready({ sale, rev, onChanged }: { sale: string; rev: number; onChanged:
 export function HdKeToan() {
   const a = useApp(); const acc = a.isAdmin || a.has('ke_toan'); const { busy, run } = useAction();
   const [rev, setRev] = useState(0); const reload = () => setRev(x => x + 1);
-  const [imp, setImp] = useState<'' | 'xe' | 'hd'>(''); const [pdf, setPdf] = useState(false); const [open, setOpen] = useState<string | null>(null); const [lechT, setLechT] = useState<any>(null);
+  const [imp, setImp] = useState<'' | 'xe' | 'hd' | 'ds'>(''); const [pdf, setPdf] = useState(false); const [open, setOpen] = useState<string | null>(null); const [lechT, setLechT] = useState<any>(null);
   const { data: st } = useLoad(() => db.rpc<any>('out_items_stats', { p_mode: 'acc' }), [rev]);
   const { data: trucks } = useLoad(() => db.from<any[]>('acc_trucks').select('id,name,truck_date,stats,created_at,is_test').order('created_at', { asc: false }).limit(5), [rev]);
   const { data: blk } = useLoad(() => db.from<any[]>('acc_lines').select('truck_id,status,sale_id').in('status', ['blocked', 'replied', 'pending_approval']).eq('is_test', false).limit(5000), [rev]);
@@ -215,7 +216,7 @@ export function HdKeToan() {
       <Stat label="Chờ ký" value={(ky.data || []).length} tone={(ky.data || []).length ? 'amber' : undefined} /></div>
 
     <Block n="1" title="Xe & HĐ APT" sub="Chu kỳ 1: nạp nháp APT + file xe → hệ thống ghép, tính biên. Chu kỳ 2: nạp HĐ chính thức APT → ghép về nháp, đối chiếu từng dòng."
-      actions={<><Button variant="primary" onClick={() => setImp('xe')}>⇪ Nạp nháp APT + file xe</Button><Button variant="dark" onClick={() => setImp('hd')}>⇪ Nạp HĐ chính thức APT</Button></>}>
+      actions={<><Button variant="primary" onClick={() => setImp('xe')}>⇪ ① Nạp nháp APT + file xe</Button><Button variant="dark" onClick={() => setImp('hd')}>⇪ ② Nạp HĐ chính thức APT</Button><Button onClick={() => setImp('ds')}>⇪ Đơn hàng · pháp nhân</Button></>}>
       <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 bg-ink-50/60 px-4 py-2 text-xs text-ink-600">File mẫu: <MauBtn k="xe" /><MauBtn k="apt" /><MauBtn k="hd" /><MauBtn k="buyers" /><MauBtn k="orders" />
         <span className="text-ink-400">Đọc theo tiêu đề cột — thêm / đổi thứ tự cột vẫn được.</span></div>
       {(trucks || []).length > 0 && <div className="flex flex-wrap gap-2 border-b border-ink-100 px-4 py-2 text-xs">Xe gần đây: {(trucks || []).map(t => { const n = (blk || []).filter(l => l.truck_id === t.id && l.status === 'blocked').length;
@@ -250,7 +251,8 @@ export function HdKeToan() {
     </Block>
 
     {imp === 'xe' && <ImportTruck onClose={() => setImp('')} onDone={id => { setImp(''); go('/acc?truck=' + id); }} />}
-    {imp === 'hd' && <ImportSo onClose={() => setImp('')} onDone={() => { setImp(''); reload(); }} />}
+    {imp === 'hd' && <ImportHd onClose={() => setImp('')} onDone={() => { setImp(''); reload(); }} />}
+    {imp === 'ds' && <ImportSo onClose={() => setImp('')} onDone={() => { setImp(''); reload(); }} />}
     {pdf && <UploadHdPdf onClose={() => setPdf(false)} onDone={() => { setPdf(false); reload(); }} />}
     {lechT && <LechModal t={lechT} onClose={() => setLechT(null)} onDone={() => { setLechT(null); reload(); }} />}
     {open && <InvoiceDetail id={open} acc onClose={() => setOpen(null)} onChanged={reload} />}

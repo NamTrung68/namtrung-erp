@@ -104,3 +104,27 @@ test('bản 23: 3 file mẫu XH261026001 (ngoài repo)', { skip: !existsSync(FX2
   const fx = JSON.parse(readFileSync(FX23, 'utf8')); const r = reconcile(parseApt(fx.apt).rows, parseKhaiBao(fx.kb), []);
   assert.equal(r.stats.khop_ma, 3); assert.equal(r.stats.ghep_don, 4); assert.equal(r.stats.blocked, 0);
 });
+
+// ---------------- Bản 25: nạp HĐ chính thức — đối chiếu tên + SL về nháp ----------------
+import { matchHd, bestTruck } from '../src/lib/hdapt';
+test('bản 25: HĐ ký → dòng nháp (mã khai báo) → đơn/khách/sale; lệch giá → báo; không thấy → chờ ghép', () => {
+  const lines = [
+    { id: 'L1', truck_id: 'T', apt_stt: 52, ma_dong: 'MD2415-4', ten_apt: 'Giá đỡ cắm hoa bằng nhựa, 2 đầu vuông', sl_apt: 1500, gia_nhap: 1746, vat: 0.08, md: 'MD2415', gia_khach: 1800 },
+    { id: 'L2', truck_id: 'T', apt_stt: 54, ma_dong: 'MD2415-2', ten_apt: 'Dụng cụ cắm hoa, cao 35cm', sl_apt: 900, gia_nhap: 4365, vat: 0.08, md: 'MD2415', gia_khach: 4500 },
+    { id: 'L3', truck_id: 'T', apt_stt: 60, ma_dong: 'MD2420-1', ten_apt: 'Bình giữ nhiệt inox 500ml', sl_apt: 300, gia_nhap: 52000, gia_de_xuat: 51942, vat: 0.08, md: 'MD2420', gia_khach: 53500 },
+    { id: 'L4', truck_id: 'T', apt_stt: 61, ma_dong: 'MD2421-1', ten_apt: 'Khăn tắm cotton 70x140cm loại dày', sl_apt: 200, gia_nhap: 38000, vat: 0.08, md: 'MD2421', gia_khach: 39200 }];
+  const rows = [
+    { ma_hang: 'HH00044-2080-2026', ten: 'Giá đỡ cắm hoa bằng nhựa,  2 đầu vuông.', sl_nhap: 1500, dg_nhap: 1746, vat: 0.08 },
+    { ma_hang: 'HH00046-2080-2026', ten: 'Dụng cụ cắm hoa, cao 35cm', sl_nhap: 900, dg_nhap: 4400, vat: 0.08 },
+    { ma_hang: 'HH00060-2080-2026', ten: 'Bình giữ nhiệt inox 500ml', sl_nhap: 300, dg_nhap: 51900, vat: 0.08 },
+    { ma_hang: 'HH00061-2080-2026', ten: 'Khăn tắm cotton 70x140cm loai day', sl_nhap: 200, dg_nhap: 38000, vat: 0.08 },
+    { ma_hang: 'HH00099-2080-2026', ten: 'Ốp lưng điện thoại', sl_nhap: 450, dg_nhap: 12000, vat: 0.08 }];
+  const m = matchHd(rows, lines);
+  assert.equal(m[0].line.ma_dong, 'MD2415-4'); assert.equal(m[0].kind, 'khop'); assert.equal(m[0].lech, null);
+  assert.ok(m[1].lech?.includes('Đơn giá HĐ 4400'));
+  assert.equal(m[2].lech, null, 'APT làm tròn giá đề xuất 51942 → 51900: chấp nhận');
+  assert.equal(m[3].kind, 'gan'); assert.equal(m[3].line.id, 'L4');
+  assert.equal(m[4].line, null);
+  assert.equal(matchHd(rows, lines, new Set(['L1']))[0].line, null, 'dòng nháp đã thuộc mã hàng khác thì không ghép lại');
+  assert.equal(bestTruck(rows, new Map([['T', lines], ['X', []]])), 'T');
+});
