@@ -65,3 +65,12 @@ npm run build            # → dist/
 - Quyền: sale của phiếu, cấp trên theo cây nhân sự, Kế toán / Admin / BGĐ. Tải PDF lên: Kế toán / Admin / BGĐ. Mỗi lần xem ghi `audit_logs` (`VIEW_HD_FILE`).
 - Bản nháp mới (v2…) → phiếu quay về "Đã xuất nháp — chờ sale", xác nhận ký bản cũ tự hủy, sale được báo. Bản đã ký → phiếu "Đã ký", điền số HĐ.
 - Kiểm thử giao diện: `tests/e2e/v20.cjs` + `tests/e2e/apps-script-mock.mjs` (PDF mẫu để ngoài repo, biến `FX`).
+
+## Kế toán – Hóa đơn (bản 23)
+
+Đặc tả đầy đủ: tài liệu “Đặc tả Kế toán – Hóa đơn (Bản 23)” trên claude.ai. Nâng cấp: chạy `supabase/migrations/0030_v23.sql` trong SQL Editor (tự sao lưu trước khi đổi).
+
+- **Chu kỳ 1 – đối soát nháp APT ↔ file xe:** đọc 2 file theo tiêu đề cột. Ghép theo MÃ KHAI BÁO đầy đủ + SL → lệch thì theo mã đơn MD + SL (ghi “Ghép theo đơn – lệch mã”) → đúng mã mà lệch SL thì cảnh báo sai số. Không ghép theo tên. Biên ngoài 2,5–4% chỉ cảnh báo + giá đề xuất = giá khách ÷ 1,03 (số liền, nút “Copy STT + giá”). Tờ khai nháp không bắt buộc.
+- **Chu kỳ 2 – HĐ chính thức APT:** mỗi dòng (mã hàng MISA `HH…-<số HĐ>-<năm>`) ghép về dòng nháp theo tên (bỏ khoảng trắng / dấu chấm cuối) + SL → nhận mã khai báo, đơn, khách, sale, giá khách. Đối chiếu SL / đơn giá / thuế suất từng dòng; lệch → khóa (`out_items.lech`), kế toán ghép lại hoặc chấp nhận kèm lý do.
+- **Chu kỳ 3 – yêu cầu xuất HĐ:** biên so với giá APT: < 2% cấm, 2–4% tự do, > 4% “Chờ duyệt giá” (Kế toán / Trưởng phòng / Admin, 1 người). Sale không hủy sau khi kế toán export MISA; “Yêu cầu sửa” → sửa → phiên bản +1. Pháp nhân mặc định theo khách. Lập nhanh theo ID đơn có “Chỉ giữ đơn sạch” + màn xác nhận tổng. Tab “Báo cáo tồn” theo sale.
+- Kiểm thử: `tests/doisoat.test.ts` (bản 23), `supabase/tests/99g_v23.sql`.

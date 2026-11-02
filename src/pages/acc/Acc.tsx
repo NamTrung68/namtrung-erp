@@ -7,7 +7,7 @@ import { db, fetchAll } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { readTable, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
-import { aptPriceMsg, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, normMd, parseApt, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile } from '../../lib/doisoat';
+import { aptPriceList, aptPriceMsg, MATCH_KIND, type MatchKind, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, normMd, parseApt, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile } from '../../lib/doisoat';
 import { driveReady, saveToDrive } from '../../lib/drive';
 import { bienTone, deXuat, dueTxt, GiaApt, lineName, LuongBadge, Money, pctTxt, REPLY, REPLY_SUB, ST, StatusBadge, useAccCfg } from './common';
 import { AssignModal, ChotModal, ClaimForm, ReplyForm } from './forms';
@@ -120,7 +120,7 @@ function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: () => v
       <Field label="Ngày xe"><Input type="date" value={date} onChange={e => setDate(e.target.value)} /></Field></div>
     <div className="mt-3 grid gap-3 sm:grid-cols-3">
       <F k="kb" l="1. File khai báo hệ thống *" hint="Xuất từ NamtrungLog (KhaiBao_XH…)" /><F k="apt" l="2. File check APT *" hint="APT gửi (hoadonnhap…), dòng đầu STT" />
-      <F k="tkn" l="3. Tờ khai nháp TKN" hint="Listxe APT gửi — nên có" /></div>
+      <F k="tkn" l="3. Tờ khai nháp TKN" hint="Không bắt buộc — có thì thêm biên APT theo giá vốn" /></div>
     <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
       <Field label="MD APT xuất thẳng của xe này" hint="Gõ hoặc dán danh sách, cách nhau dấu phẩy/xuống dòng. 2411 hay MD2411 đều được. Dòng có NOTE “XUẤT THẲNG” trên file APT tự nhận.">
         <Textarea rows={2} value={xt} onChange={e => { setXt(e.target.value); setRes(null); }} placeholder="VD: MD2744, MD2784" /></Field>
@@ -133,8 +133,8 @@ function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: () => v
           onClick={() => { setTarget(target?.id === d.id ? null : d); setXt((d.md_xuat_thang || []).join(', ')); setRes(null); }}>{target?.id === d.id ? '✓ Sẽ nạp lại vào xe này — bấm Phân tích lại' : 'Nạp lại vào xe này'}</button></span>)}
         <div className="mt-1 text-xs">Nạp lại giữ nguyên trả lời của sale và kết quả HĐ đã ghép. Nếu đúng là xe mới thì cứ lưu bình thường.</div></div>}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Stat label="Dòng file APT" value={res.stats.apt} sub={`hệ thống ${res.sysCount} · tờ khai ${res.stats.tk}`} />
-        <Stat label="Tự chốt (TRUE)" value={res.stats.ok} tone="green" sub={`${Math.round(res.stats.ok / Math.max(1, res.stats.apt) * 100)}% dòng · ${res.lines.filter((l: any) => l.gia_de_xuat).length} dòng tự đề xuất giá`} />
+        <Stat label="Dòng file APT" value={res.stats.apt} sub={`xe ${res.sysCount} · khớp mã ${res.stats.khop_ma ?? 0} · ghép theo đơn ${res.stats.ghep_don ?? 0}${res.stats.lech_sl ? ` · lệch SL ${res.stats.lech_sl}` : ''}`} />
+        <Stat label="Ghép xong" value={res.stats.ok} tone="green" sub={`${Math.round(res.stats.ok / Math.max(1, res.stats.apt) * 100)}% dòng · ${res.lines.filter((l: any) => l.gia_de_xuat).length} dòng biên ngoài khung (cảnh báo + giá đề xuất)`} />
         <Stat label="Bị chặn → sale" value={res.stats.blocked} tone={res.stats.blocked ? 'red' : undefined} sub={`hạn ${cfg.han_sale_gio}h`} />
         <Stat label="Theo dõi riêng" value={res.stats.info} sub="hợp quy · xuất thẳng · Lanchi" />
       </div>
@@ -190,6 +190,7 @@ function TruckDetail({ id }: { id: string }) {
       <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant="dark" loading={busy} onClick={() => exp('fb')}>⬇ Phản hồi gửi APT</Button><Button loading={busy} onClick={() => exp('full')}>⬇ Đối soát đầy đủ</Button>
         {driveReady(a.settings.drive) && <Button loading={busy} onClick={() => exp('full', true)}>☁ Lưu Drive</Button>}<Button onClick={() => setRe(true)}>⇪ Nạp lại file</Button>
         <Button onClick={() => copyApt(view.length !== all.length ? view : all)}>📋 Copy đề xuất giá gửi APT{view.length !== all.length ? ' (đang lọc)' : ''}</Button>
+        <Button onClick={() => { const t2 = aptPriceList(view.length !== all.length ? view : all); if (!t2) { toast.info('Không có dòng nào có giá đề xuất'); return; } navigator.clipboard.writeText(t2).then(() => toast.ok('Đã copy cột STT + giá (số liền) — dán vào Google Sheet APT')); }}>📋 Copy STT + giá (số liền)</Button>
         <Button variant="danger" loading={busy} onClick={del}>🗑 Xóa xe</Button>
         <span className="text-xs text-ink-500">Nạp lúc {fmtDateTime(t.created_at)}{t.files?.by ? ' · ' + t.files.by : ''} · {[t.files?.kb, t.files?.apt, t.files?.tkn].filter(Boolean).join(' · ')}</span></div>
       <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -213,7 +214,8 @@ function TruckDetail({ id }: { id: string }) {
           <tbody className="divide-y divide-ink-100">{pg.slice(view).map(l => { const [dt, dc] = dueTxt(l.status === 'blocked' ? l.due_at : null);
             return <tr key={l.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setSel(l)}>
               <td className="text-ink-400">{l.apt_stt ?? '—'}<div className="text-[11px]">{l.hh}</div></td>
-              <td className="whitespace-nowrap"><div className="font-medium text-ink-900">{a.personName(l.sale_id) || <span className="text-amber-700">{l.sale_name || '—'}</span>}</div><div className="text-[11px] text-ink-500">{l.ma_dong || l.md || (l.claim_md ? <span className="text-amber-700">{l.claim_md} (sale nhập)</span> : <span className="text-red-600">không có đơn</span>)}{l.dh ? ' · ' + l.dh : ''}</div></td>
+              <td className="whitespace-nowrap"><div className="font-medium text-ink-900">{a.personName(l.sale_id) || <span className="text-amber-700">{l.sale_name || '—'}</span>}</div><div className="text-[11px] text-ink-500">{l.ma_dong || l.md || (l.claim_md ? <span className="text-amber-700">{l.claim_md} (sale nhập)</span> : <span className="text-red-600">không có đơn</span>)}{l.dh ? ' · ' + l.dh : ''}</div>
+                {l.match_kind && <div className={cx('text-[10px]', l.match_kind === 'ma' ? 'text-emerald-700' : 'font-semibold text-amber-700')} title={l.ma_kb_apt ? `Mã trên nháp APT: ${l.ma_kb_apt}` : ''}>{MATCH_KIND[l.match_kind as MatchKind]}{l.match_kind !== 'ma' && l.ma_kb_apt ? ` (APT ${l.ma_kb_apt})` : ''}</div>}</td>
               <td className="min-w-[220px] max-w-[340px]"><div className="line-clamp-2">{lineName(l)}</div><div className="mt-0.5"><LuongBadge l={l.luong} /></div></td>
               <td className="text-right tabular-nums">{num(l.sl_apt ?? l.sl_ht, 0)}<div className="text-[11px] text-ink-400">{l.dvt_apt || l.dvt_ht}</div></td>
               <td className="text-right text-ink-600"><Money v={l.gia_von} /></td>

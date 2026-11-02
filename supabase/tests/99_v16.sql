@@ -37,8 +37,9 @@ insert into public.customers(source, customer_type, contact_name, phone, owner_i
 create temp table tc16 as select id from public.customers where contact_name='Khách 16'; grant select on tc16 to authenticated;
 select pg_temp.as_user('b@nt.vn'); set role authenticated;
 do $$ begin perform public.out_invoice_save(null, '{"buyer_name":"HKD X"}', jsonb_build_array(jsonb_build_object('item_id',(select id from public.out_items where ma_hang='HH0001-7001-2026'),'sl',1,'don_gia',90))); raise exception 'phải chặn'; exception when others then if sqlerrm like '%phải chặn%' then raise; end if; end $$;
+-- bản 23: dưới biên 2% so với giá APT thì cấm hẳn (ghi lý do cũng không được) → lưu giá trong khung
 select public.out_invoice_save(null, jsonb_build_object('buyer_name','HKD X','note','Hàng lỗi giảm giá','customer_id',(select id from tc16)),
-  jsonb_build_array(jsonb_build_object('item_id',(select id from public.out_items where ma_hang='HH0001-7001-2026'),'sl',1,'don_gia',90)));
+  jsonb_build_array(jsonb_build_object('item_id',(select id from public.out_items where ma_hang='HH0001-7001-2026'),'sl',1,'don_gia',103)));
 reset role;
 select pg_temp.check((select customer_id = (select id from public.customers where contact_name='Khách 16') from public.out_items where ma_hang='HH0001-7001-2026'), 'nhớ khách cho dòng');
 -- Chuyển xe sau (dòng không lên xe) → kế toán chốt → đóng

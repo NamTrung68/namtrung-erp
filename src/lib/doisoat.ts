@@ -72,24 +72,64 @@ export function assign(score: number[][], thr: number): Map<number, [number, num
 }
 
 // ---------------- đọc file ----------------
-export interface AptRow { apt_stt: number; apt_mahang: string; don: string; sale_apt: string; md_apt: string; dau_khoi: boolean; hh: string; ten: string;
+export interface AptRow { apt_stt: number; apt_mahang: string; don: string; sale_apt: string; md_apt: string; dau_khoi: boolean; ma_kb: string; hh: string; ten: string;
   sl: number | null; dvt: string; nk: number; gia_nhap: number | null; vat: number; note: string; kt: string; note2: string; gia_note: number | null; gia_khach_sale_ghi: number | null }
 export interface SysRow { sys_row: number; ten: string; sale: string; md: string; ma_dong: string; sl: number | null; dvt: string; gia_khach: number | null; nk: number; hs: string; ma_kh: string; ma_dong_file: string }
 export interface TkRow { tk_row: number; dh: string; sale: string; md_header: string; ten: string; hs: string; sl: number; dvt: string; nh: number | null; nk: number; tnk: number; vat: number | null }
 
 const notePrice = (v: any) => { const t = stripAcc(clean(v)).toLowerCase(); if (!t) return null; const m = t.match(/^\s*(?:xuat\s*gia\s*:?)?\s*(\d[\d.,]*)/); return m ? vnNum(m[1]) : null; };
 
-/** File check APT (bản nháp HĐ dạng bảng, tiêu đề bắt đầu "STT") */
+/** Tiêu đề chuẩn hóa để dò cột: bỏ dấu, viết hoa, gộp khoảng trắng */
+const HD = (s: any) => stripAcc(clean(s)).toUpperCase().replace(/\s+/g, ' ').trim();
+/** Mã khai báo chuẩn: "md2415 - 2" → "MD2415-2"; không đúng dạng → '' */
+export function normKb(v: any): string { const s = clean(v).toUpperCase().replace(/\s+/g, ''); const m = s.match(/^MD0*(\d+)-0*(\d+)$/); return m ? `MD${Number(m[1])}-${Number(m[2])}` : ''; }
+/** Mã đơn của 1 mã khai báo: MD2415-2 → MD2415 */
+export const kbMd = (kb: string) => (kb ? kb.replace(/-\d+$/, '') : '');
+
+/** File check APT (bản nháp HĐ). Bản 23: đọc theo TIÊU ĐỀ cột (có cột MÃ KHAI BÁO); file cũ không có cột này thì đọc theo vị trí như trước */
 export function parseApt(rows: any[][]): { rows: AptRow[]; total: number | null; vat: number | null } {
   const hi = rows.slice(0, 15).findIndex(r => clean(r?.[0]).toUpperCase() === 'STT');
   if (hi < 0) throw new Error('File check APT: không thấy dòng tiêu đề bắt đầu bằng "STT"');
+  const H = (rows[hi] || []).map(HD);
+  const ikb = H.findIndex(h => h === 'MA KHAI BAO');
+  if (ikb >= 0) return parseAptByHeader(rows, hi, H, ikb);
+  return parseAptLegacy(rows, hi);
+}
+function parseAptByHeader(rows: any[][], hi: number, H: string[], ikb: number): { rows: AptRow[]; total: number | null; vat: number | null } {
+  const f = (p: (h: string) => boolean, from = 0, to = H.length) => { for (let i = from; i < to; i++) if (H[i] && p(H[i])) return i; return -1; };
+  const c = {
+    mahang: f(h => h === 'MA HANG', 0, ikb), don: f(h => h === 'DON HANG' || h.startsWith('DON HANG')), sale: f(h => h === 'SALE'),
+    hh: f(h => h === 'MA HANG', ikb + 1), ten: f(h => h.startsWith('TEN HANG')), sl: f(h => h === 'LUONG' || h.startsWith('SO LUONG')), dvt: f(h => h === 'DVT' || h.startsWith('DON VI TINH')),
+    nk: f(h => h.startsWith('TS NK')), gia: f(h => h.startsWith('DON GIA BAN')), vat: f(h => h.startsWith('THUE SUAT VAT')),
+    note: f(h => h === 'NOTE'), kt: f(h => h.startsWith('KT PHAN HOI')), note2: f(h => h.startsWith('NOTE XUAT')),
+  };
+  for (const [k, n] of [['ten', 'Tên hàng'], ['sl', 'Lượng'], ['gia', 'Đơn giá bán']] as const) if ((c as any)[k] < 0) throw new Error(`File check APT: thiếu cột "${n}"`);
+  const g = (r: any[], i: number) => (i >= 0 ? r[i] : null);
+  // Cột mã đơn (MDxxxx) không có tiêu đề: nằm giữa cột Sale và MÃ KHAI BÁO
+  const mdCell = (r: any[]) => { for (let i = Math.max(0, c.sale + 1); i < ikb; i++) { const s = clean(r[i]).toUpperCase(); if (/^MD\s*\d+$/.test(s)) return normMd(s); } return ''; };
+  const out: AptRow[] = []; let cur = { mahang: '', don: '', sale: '', md: '' };
+  for (const r of rows.slice(hi + 1)) {
+    if (!r || !/^\d+$/.test(clean(r[0]).replace(/\.0+$/, '')) || !clean(g(r, c.ten))) continue;
+    const kb = normKb(r[ikb]); const md = mdCell(r);
+    const head = !!(md || clean(g(r, c.don)) || clean(g(r, c.mahang)));
+    if (head) cur = { mahang: clean(g(r, c.mahang)), don: clean(g(r, c.don)), sale: clean(g(r, c.sale)) || cur.sale, md: md || kbMd(kb) };
+    const mdRow = kbMd(kb) || cur.md;
+    out.push({ apt_stt: Number(clean(r[0])), apt_mahang: cur.mahang, don: cur.don, sale_apt: clean(g(r, c.sale)) || cur.sale, md_apt: mdRow, dau_khoi: head, ma_kb: kb,
+      hh: clean(g(r, c.hh)), ten: clean(g(r, c.ten)), sl: vnNum(g(r, c.sl)), dvt: clean(g(r, c.dvt)), nk: pct(g(r, c.nk)), gia_nhap: vnNum(g(r, c.gia)), vat: pct(g(r, c.vat)),
+      note: clean(g(r, c.note)), kt: clean(g(r, c.kt)), note2: clean(g(r, c.note2)), gia_note: ((x, gn) => (x && gn && Math.abs(x - gn) <= 0.5 ? null : x))(notePrice(g(r, c.note)), vnNum(g(r, c.gia))), gia_khach_sale_ghi: null });
+  }
+  if (!out.length) throw new Error('File check APT: không có dòng hàng nào');
+  const tot = (k: string) => { const i = f(h => h.startsWith(k)); return i >= 0 && hi > 0 ? vnNum(rows[hi - 1]?.[i]) : null; };
+  return { rows: out, total: tot('THANH TIEN THANH TOAN') ?? tot('THANH TIEN'), vat: tot('TIEN VAT') };
+}
+function parseAptLegacy(rows: any[][], hi: number): { rows: AptRow[]; total: number | null; vat: number | null } {
   const out: AptRow[] = []; let cur = { mahang: '', don: '', sale: '', md: '' };
   for (const r of rows.slice(hi + 1)) {
     if (!r || !/^\d+$/.test(clean(r[0]).replace(/\.0+$/, ''))) continue;
     const head = !!clean(r[6]);
     if (head) cur = { mahang: clean(r[1]), don: clean(r[6]), sale: clean(r[7]), md: clean(r[8]) };
     const gks = vnNum(r[25]);
-    out.push({ apt_stt: Number(clean(r[0])), apt_mahang: cur.mahang, don: cur.don, sale_apt: clean(r[7]) || cur.sale, md_apt: cur.md, dau_khoi: head,
+    out.push({ apt_stt: Number(clean(r[0])), apt_mahang: cur.mahang, don: cur.don, sale_apt: clean(r[7]) || cur.sale, md_apt: cur.md, dau_khoi: head, ma_kb: '',
       hh: clean(r[10]), ten: clean(r[11]), sl: vnNum(r[12]), dvt: clean(r[13]), nk: pct(r[15]), gia_nhap: vnNum(r[17]), vat: pct(r[18]),
       note: clean(r[22]), kt: clean(r[23]), note2: (clean(r[24]) + ' ' + clean(r[25])).trim(), gia_note: notePrice(r[22]), gia_khach_sale_ghi: gks && gks > 100 ? gks : null });
   }
@@ -98,22 +138,29 @@ export function parseApt(rows: any[][]): { rows: AptRow[]; total: number | null;
 }
 
 /** File khai báo xuất từ hệ thống NamtrungLog (cột SALES NTG, ĐƠN HÀNG NTG, GIÁ TRÊN TỜ KHAI = giá khách) */
+/** File xe hệ thống (KhaiBao_XH…). Bản 23: lấy theo tiêu đề — ID ĐƠN, USERNAME KHÁCH, SALE, MÃ KHAI BÁO… (file cũ: SALES NTG, ĐƠN HÀNG NTG) */
 export function parseKhaiBao(rows: any[][]): SysRow[] {
-  const hi = rows.slice(0, 15).findIndex(r => (r || []).some(x => clean(x).toUpperCase().includes('SALES')));
-  if (hi < 0) throw new Error('File khai báo: không thấy dòng tiêu đề có cột "SALES NTG"');
-  const H = (rows[hi] || []).map(x => clean(x).toUpperCase());
-  const ci = (k: string, req = true) => { const i = H.findIndex(c => c.includes(k)); if (i < 0 && req) throw new Error(`File khai báo: thiếu cột "${k}"`); return i; };
-  const m = { ten: ci('TÊN KHAI BÁO'), sale: ci('SALES'), don: ci('ĐƠN HÀNG'), sl: ci('SỐ LƯỢNG'), dvt: ci('DVT'), gia: ci('GIÁ TRÊN TỜ KHAI'),
-    nk: ci('THUẾ NK', false), hs: ci('HS CODE', false), mahang: ci('MÃ HÀNG', false), makh: H.findIndex(c => c.startsWith('MÃ KH') || c.includes('MÃ KHÁCH') || c.includes('USERNAME') || c === 'USER' || c.includes('TÀI KHOẢN KH') || c.includes('MÃ HỆ THỐNG')) };
-  const out: SysRow[] = []; let sale = '', md = '', kh = ''; const cnt: Record<string, number> = {};
+  const hi = rows.slice(0, 15).findIndex(r => (r || []).some(x => { const h = HD(x); return h === 'MA KHAI BAO' || h.includes('SALES'); }) && (r || []).some(x => HD(x).startsWith('TEN KHAI BAO')));
+  if (hi < 0) throw new Error('File khai báo: không thấy dòng tiêu đề có cột "MÃ KHAI BÁO" / "SALE" và "Tên KHAI BÁO"');
+  const H = (rows[hi] || []).map(HD);
+  const f = (p: (h: string) => boolean) => H.findIndex(h => !!h && p(h));
+  const ci = (p: (h: string) => boolean, name: string, req = true) => { const i = f(p); if (i < 0 && req) throw new Error(`File khai báo: thiếu cột "${name}"`); return i; };
+  const sale = f(h => h === 'SALE');
+  const m = { ten: ci(h => h.startsWith('TEN KHAI BAO'), 'Tên KHAI BÁO'), sale: sale >= 0 ? sale : ci(h => h.includes('SALES'), 'SALE'),
+    don: f(h => h === 'ID DON') >= 0 ? f(h => h === 'ID DON') : ci(h => h.includes('DON HANG'), 'ID ĐƠN'), kb: f(h => h === 'MA KHAI BAO'),
+    sl: ci(h => h.startsWith('SO LUONG'), 'SỐ LƯỢNG'), dvt: ci(h => h === 'DVT' || h.startsWith('DON VI TINH'), 'DVT'), gia: ci(h => h.startsWith('GIA TREN TO KHAI'), 'GIÁ TRÊN TỜ KHAI'),
+    nk: f(h => h.startsWith('THUE NK')), hs: f(h => h.startsWith('HS CODE')), mahang: f(h => h === 'MA HANG'),
+    makh: f(h => h.startsWith('USERNAME') || h.startsWith('MA KH') || h.includes('MA KHACH') || h === 'USER' || h.includes('TAI KHOAN KH') || h.includes('MA HE THONG')) };
+  const out: SysRow[] = []; let saleCur = '', md = '', kh = ''; const cnt: Record<string, number> = {};
   rows.slice(hi + 1).forEach((r, k) => {
     const ten = clean(r?.[m.ten]); if (!ten) return;
-    if (clean(r[m.don])) md = normMd(r[m.don]);
-    if (clean(r[m.sale])) sale = clean(r[m.sale]);
+    const kb = m.kb >= 0 ? normKb(r[m.kb]) : '';
+    if (clean(r[m.don])) md = normMd(r[m.don]); else if (kb) md = kbMd(kb);
+    if (clean(r[m.sale])) saleCur = clean(r[m.sale]);
     if (m.makh >= 0 && clean(r[m.makh])) kh = clean(r[m.makh]); else if (clean(r[m.don])) kh = '';
     cnt[md] = (cnt[md] || 0) + 1;
     const mdf = m.mahang >= 0 ? clean(r[m.mahang]) : '';
-    out.push({ sys_row: hi + 2 + k, ten, sale, md, ma_dong: /^MD\d+-\d+$/i.test(mdf) ? mdf.toUpperCase() : `${md}-${cnt[md]}`, ma_dong_file: mdf,
+    out.push({ sys_row: hi + 2 + k, ten, sale: saleCur, md, ma_dong: kb || (/^MD\d+-\d+$/i.test(mdf) ? normKb(mdf) : `${md}-${cnt[md]}`), ma_dong_file: kb || mdf,
       sl: vnNum(r[m.sl]), dvt: clean(r[m.dvt]), gia_khach: vnNum(r[m.gia]), nk: m.nk >= 0 ? pct(r[m.nk]) : 0, hs: m.hs >= 0 ? clean(r[m.hs]).replace(/\.0+$/, '') : '',
       ma_kh: kh });
   });
@@ -153,6 +200,36 @@ export interface AccLine {
   tk_row: number | null; ten_tk: string | null; hs: string | null; sl_tk: number | null; dvt_tk: string | null; gia_tk_nh: number | null; nk_tk: number | null; tnk_dv: number | null; md_header: string | null;
   luong: Luong; gia_ap_dung: number | null; gia_de_xuat: number | null; bien_nt: number | null; gia_von: number | null; bien_apt: number | null; tt_apt: number; tt_khach: number | null;
   status: LineStatus; level: 1 | 2 | 3; issues: string[]; notes: string[]; phan_hoi: string; match_score: number | null;
+  ma_kb_apt: string | null; match_kind: MatchKind | null;
+}
+/** Cách ghép dòng APT ↔ file xe: ma = đúng mã khai báo + SL · don = theo mã đơn + SL (lệch mã) · ma_lech_sl = đúng mã nhưng SL lệch */
+export type MatchKind = 'ma' | 'don' | 'ma_lech_sl';
+export const MATCH_KIND: Record<MatchKind, string> = { ma: 'Khớp mã', don: 'Ghép theo đơn – lệch mã', ma_lech_sl: 'Khớp mã – lệch số lượng' };
+const eqSl = (a: number | null | undefined, b: number | null | undefined) => a != null && b != null && Math.abs(a - b) < 0.0001;
+
+/** Bản 23 — ghép nháp APT ↔ file xe:
+ *  1) đúng MÃ KHAI BÁO đầy đủ + cùng SL
+ *  2) còn lại: cùng mã đơn MD + cùng SL, trong các dòng xe chưa ghép (1 ứng viên → ghép; nhiều → giữ ứng viên biên 0–10%)
+ *  3) còn lại: đúng mã nhưng SL lệch → ghép, cảnh báo sai số SL
+ *  Không đoán theo tên (APT viết lại tên hàng). Trả map chỉ số dòng APT → [chỉ số dòng xe, cách ghép] */
+export function matchAptSys(apt: AptRow[], sys: SysRow[]): Map<number, [number, MatchKind]> {
+  const out = new Map<number, [number, MatchKind]>(); const used = new Set<number>();
+  const free = (j: number) => !used.has(j);
+  const put = (i: number, j: number, k: MatchKind) => { out.set(i, [j, k]); used.add(j); };
+  apt.forEach((a, i) => { if (!a.ma_kb) return; const j = sys.findIndex((s, j) => free(j) && s.ma_dong === a.ma_kb && eqSl(s.sl, a.sl)); if (j >= 0) put(i, j, 'ma'); });
+  // lượt 2: ưu tiên dòng APT ít ứng viên trước để không "giành" nhầm
+  const mdOf = (a: AptRow) => kbMd(a.ma_kb) || [...mdSet(a.md_apt)][0] || '';
+  const cands = (a: AptRow) => { let c = sys.map((s, j) => j).filter(j => free(j) && sys[j].md === mdOf(a) && eqSl(sys[j].sl, a.sl));
+    if (c.length > 1 && a.gia_nhap) { const b = c.filter(j => { const g = sys[j].gia_khach; const x = g ? g / a.gia_nhap! - 1 : NaN; return x >= 0 && x <= 0.1; }); if (b.length) c = b; }
+    return c; };
+  const rest = apt.map((a, i) => i).filter(i => !out.has(i) && mdOf(apt[i]));
+  for (let round = 0; round < 3; round++) {
+    let moved = false;
+    rest.filter(i => !out.has(i)).sort((x, y) => cands(apt[x]).length - cands(apt[y]).length).forEach(i => { const c = cands(apt[i]); if (c.length === 1) { put(i, c[0], 'don'); moved = true; } });
+    if (!moved) break;
+  }
+  apt.forEach((a, i) => { if (out.has(i) || !a.ma_kb) return; const j = sys.findIndex((s, j) => free(j) && s.ma_dong === a.ma_kb); if (j >= 0) put(i, j, 'ma_lech_sl'); });
+  return out;
 }
 export interface ReconcileResult { lines: AccLine[]; stats: Record<string, any>; warnings: string[] }
 
@@ -160,9 +237,8 @@ export interface ReconcileResult { lines: AccLine[]; stats: Record<string, any>;
 export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg = DEFAULT_ACC_CFG, saleAcc: (s: string) => string | null = s => s || null): ReconcileResult {
   const warnings: string[] = [];
   const acc = (s: string | null | undefined) => (s ? saleAcc(s) ?? null : null);
-  // 1) file APT ↔ hệ thống (tên 60% + SL 30% + MD 10%)
-  const S = apt.map(r => { const mds = mdSet(r.md_apt); return sys.map(s => 0.6 * sim(r.ten, s.ten) + 0.3 * (r.sl != null && s.sl != null && Math.abs(r.sl - s.sl) < 0.5 ? 1 : 0) + 0.1 * (mds.has(s.md) ? 1 : 0)); });
-  const mSys = assign(S, cfg.nguong_ghep);
+  // 1) file APT ↔ hệ thống: mã khai báo → mã đơn + SL (bản 23, không ghép theo tên)
+  const mSys = matchAptSys(apt, sys);
   // 2) file APT ↔ tờ khai: thường 1:1 cùng thứ tự; lệch thì ghép theo tên + SL
   const tmap = new Map<number, TkRow>(); const sorted = [...apt].sort((a, b) => a.apt_stt - b.apt_stt);
   if (tk.length && sorted.length === tk.length && sorted.every((a, i) => sim(a.ten, tk[i].ten) >= 0.9)) sorted.forEach((a, i) => tmap.set(a.apt_stt, tk[i]));
@@ -175,7 +251,7 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
   const hq = cfg.hs_hop_quy_chuong; const { bien_nt_min: lo, bien_nt_max: hi, dung_sai_bien: tol, bien_muc_tieu: tgt } = cfg;
   const lines: AccLine[] = []; const usedSys = new Set<number>();
 
-  const build = (s: SysRow | null, a: AptRow | null, t: TkRow | null, score: number | null): AccLine => {
+  const build = (s: SysRow | null, a: AptRow | null, t: TkRow | null, kind: MatchKind | null): AccLine => {
     const issues: string[] = [], notes: string[] = []; let level: 1 | 2 | 3 = 3;
     const add = (l: 1 | 2, x: string) => { issues.push(x); if (l < level) level = l; };
     // luồng
@@ -197,21 +273,21 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
       else { notes.push('Hàng dệt may chờ hợp quy (~12–15 ngày từ ngày về kho) — theo dõi xe sau.'); if (!gk) add(1, 'Giá khách trên hệ thống = 0 → sale nhập giá khách trước khi APT xuất HĐ.'); }
     }
     else {
-      if (!s) add(1, 'Có trên tờ khai/file APT nhưng KHÔNG có đơn trên hệ thống → không có giá khách; nếu APT xuất HĐ, Nam Trung nhận hàng vào sổ mà không xuất được đầu ra. Sale nhập đơn lên hệ thống.');
+      if (!s && a && sys.some(x => x.md === (kbMd(a.ma_kb) || [...mdSet(a.md_apt)][0]))) add(1, `Đơn ${kbMd(a.ma_kb) || a.md_apt} có trên xe nhưng không ghép được dòng nào cùng mã/SL → kế toán ghép tay.`);
+      else if (!s) add(1, 'Có trên file APT nhưng KHÔNG có đơn trên file xe → không có giá khách; nếu APT xuất HĐ, Nam Trung nhận hàng vào sổ mà không xuất được đầu ra. Sale nhập đơn lên hệ thống.');
       else if (!gk) add(1, 'Giá khách trên hệ thống = 0 → không xuất được HĐ đầu ra. Sale nhập giá khách đã chốt.');
       else if (ga && bien !== null) {
-        // Biên NT ngoài khung → chặn; sale copy giá đề xuất gửi APT rồi bấm "Đã gửi APT giá đề xuất" để chốt
+        // Bản 23: nháp đã chốt với APT qua Google Sheet → biên ngoài khung chỉ CẢNH BÁO + giá đề xuất (= giá khách ÷ 1,03, số liền) để sale copy, không chặn
         const de = Math.round(gk / (1 + tgt)); const gvon0 = t && t.nh ? t.nh + (t.sl ? t.tnk / t.sl : 0) : null;
-        if (bien > hi + tol) {
-          if (gnote) add(2, `Biên NT ${(bien * 100).toFixed(2)}% > ${pc(hi)}% ngay cả theo giá sale ghi NOTE.`);
-          else { gde = de; add(1, `Biên NT ${(bien * 100).toFixed(2)}% > ${pc(hi)}% → đề nghị APT xuất giá ${de} (biên NT ${pc(tgt)}%). Sale gửi APT rồi bấm “Đã gửi APT giá đề xuất”.`); }
-        } else if (bien < lo - tol && (lo - bien) * ttApt > cfg.tien_bo_qua) {
-          if (!gvon0 || de >= gvon0) { gde = de; add(1, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}% → đề nghị APT hạ giá xuống ${de} (biên NT ${pc(tgt)}%). Sale gửi APT rồi bấm “Đã gửi APT giá đề xuất”, hoặc giải trình / xin duyệt.`); }
-          else add(1, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}%; giá cần để biên ${pc(tgt)}% là ${de} — thấp hơn giá vốn tờ khai ${Math.round(gvon0)} nên APT không hạ được → sale sửa giá khách hoặc xin duyệt.`);
+        if (bien > hi + tol) { gde = de; add(2, `Biên NT ${(bien * 100).toFixed(2)}% > ${pc(hi)}% → đề xuất APT xuất giá ${de}.`); }
+        else if (bien < lo - tol) {
+          gde = de;
+          if (gvon0 && de < gvon0) add(2, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}%; giá ${de} thấp hơn giá vốn tờ khai ${Math.round(gvon0)} → APT khó hạ, sale cân nhắc giá khách.`);
+          else add(2, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}% → đề xuất APT xuất giá ${de}.`);
         }
-        else if (bien < lo - tol) notes.push(`Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}% nhưng tiền chênh dưới ${cfg.tien_bo_qua.toLocaleString('vi-VN')}đ — bỏ qua.`);
+        void ttApt;
       }
-      if (s && t && Math.abs((s.nk || 0) - t.nk) > 0.001) add(1, `Thuế NK hệ thống ${Math.round((s.nk || 0) * 100)}% ≠ tờ khai ${Math.round(t.nk * 100)}% → sửa hệ thống theo tờ khai.`);
+      if (s && t && Math.abs((s.nk || 0) - t.nk) > 0.001) add(2, `Thuế NK hệ thống ${Math.round((s.nk || 0) * 100)}% ≠ tờ khai ${Math.round(t.nk * 100)}% → sửa hệ thống theo tờ khai.`);
       if (s && a && a.gia_khach_sale_ghi && gk && Math.abs(a.gia_khach_sale_ghi - gk) > 1) add(2, `Sale ghi giá khách ${a.gia_khach_sale_ghi.toLocaleString('vi-VN')} trên file APT nhưng hệ thống là ${gk.toLocaleString('vi-VN')}.`);
       if (s) {
         const sAcc = acc(s.sale), aAcc = acc(a?.sale_apt || t?.sale || '');
@@ -219,14 +295,15 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
         else if (norm(sAcc) !== norm(aAcc || '')) notes.push(`Gộp đơn: file APT ghi sale "${a?.sale_apt || t?.sale || 'trống'}", hệ thống là ${s.sale} (${s.md}) → đã gán lại theo hệ thống.`);
         if (t && !mdSet(t.md_header).has(s.md)) notes.push(`${s.md} không có trong cột MÃ DH NTG của ${t.dh} (đầu khối ghi ${t.md_header || 'trống'}).`);
       }
-      if (s && score !== null && score < 0.8) notes.push(`Độ khớp tên với hệ thống thấp (${Math.round(score * 100)}%) — kế toán liếc lại.`);
+      if (s && a && Math.abs((s.nk || 0) - a.nk) > 0.001 && !t) add(2, `Thuế NK file xe ${Math.round((s.nk || 0) * 100)}% ≠ APT ${Math.round(a.nk * 100)}%.`);
+      if (kind === 'don') notes.push(`Ghép theo đơn ${s?.md} + SL: mã APT ${a?.ma_kb || 'trống'} ↔ mã xe ${s?.ma_dong} (lệch mã).`);
+      if (kind === 'ma_lech_sl') add(2, `Lệch số lượng: xe ${s?.sl}, APT ${a?.sl} — 1 đơn = 1 xe, kiểm sai số.`);
     }
-    if (s && t && sim(s.ten, t.ten) < 0.9) notes.push('Tên tờ khai khác hệ thống → HĐ đầu ra theo tên HĐ APT.');
     if (s && a && s.dvt && a.dvt && norm(s.dvt) !== norm(a.dvt)) notes.push(`ĐVT hệ thống "${s.dvt}" → HĐ dùng "${a.dvt}".`);
     const vat = t?.vat ?? (a ? a.vat : null);
     if (vat !== null && vat !== undefined && vat > 0 && Math.abs(vat - 0.08) > 0.001) notes.push(`VAT ${Math.round(vat * 100)}% — thường tách HĐ riêng.`);
-    const status: LineStatus = level < 3 ? 'blocked' : luong === 'A' || luong === 'E' ? 'ok' : 'info';
-    // nếu chỉ có lỗi mức 2 (cần xác nhận) mà không chặn: vẫn để sale xác nhận
+    // Bản 23: chỉ mức 1 mới chặn (thiếu đơn / giá khách / sale / cần ghép tay); mức 2 = cảnh báo
+    const status: LineStatus = (level as number) === 1 ? 'blocked' : luong === 'A' || luong === 'E' ? 'ok' : 'info';
     let phan_hoi = '';
     if (a) {
       if (luong === 'C') phan_hoi = 'XUẤT THẲNG'; else if (luong === 'D') phan_hoi = 'CHỜ QUYẾT ĐỊNH (Lanchi)'; else if (status === 'blocked') phan_hoi = 'CHỜ SALE — chưa xuất';
@@ -244,12 +321,13 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
       tk_row: t?.tk_row ?? null, ten_tk: t?.ten ?? null, hs: t?.hs || s?.hs || null, sl_tk: t?.sl ?? null, dvt_tk: t?.dvt || null, gia_tk_nh: t?.nh ?? null, nk_tk: t ? t.nk : null,
       tnk_dv: t && t.sl ? t.tnk / t.sl : null, md_header: t?.md_header || a?.md_apt || null,
       luong, gia_ap_dung: gad, gia_de_xuat: gde, bien_nt: gk && gad ? gk / gad - 1 : bien, gia_von: gvon, bien_apt: gvon && gad ? gad / gvon - 1 : null, tt_apt: Math.round((gad || 0) * (sl || 0)), tt_khach: gk ? Math.round(gk * (sl || 0)) : null,
-      status, level, issues, notes, phan_hoi, match_score: score === null ? null : Math.round(score * 100) / 100,
+      status, level, issues, notes, phan_hoi, match_score: null, ma_kb_apt: a?.ma_kb || null, match_kind: kind,
     };
   };
   apt.forEach((a, i) => { const m = mSys.get(i); const s = m ? sys[m[0]] : null; if (m) usedSys.add(m[0]); lines.push(build(s, a, tmap.get(a.apt_stt) || null, m ? m[1] : null)); });
+  const kinds = [...mSys.values()].reduce((o, [, k]) => ((o[k] = (o[k] || 0) + 1), o), {} as Record<string, number>);
   sys.forEach((s, j) => { if (!usedSys.has(j)) lines.push(build(s, null, null, null)); });
-  const st = { apt: apt.length, sys: sys.length, tk: tk.length, matched_sys: mSys.size, matched_tk: tmap.size,
+  const st = { apt: apt.length, sys: sys.length, tk: tk.length, matched_sys: mSys.size, matched_tk: tmap.size, khop_ma: kinds.ma || 0, ghep_don: kinds.don || 0, lech_sl: kinds.ma_lech_sl || 0,
     ok: lines.filter(l => l.status === 'ok').length, blocked: lines.filter(l => l.status === 'blocked').length, info: lines.filter(l => l.status === 'info').length,
     tt_apt: lines.reduce((x, l) => x + (l.apt_stt ? l.tt_apt : 0), 0), apt_header_total: null as number | null };
   return { lines, stats: st, warnings };
@@ -289,6 +367,11 @@ export function judgeInvoiceLine(l: InvLine, line: Pick<AccLine, 'md' | 'gia_kha
   return 'khop';
 }
 
+/** Copy giá đề xuất dán vào Google Sheet APT: mỗi dòng "STT<Tab>giá" (số liền, không dấu chấm/phẩy), theo thứ tự STT */
+export function aptPriceList(lines: any[]): string {
+  return lines.filter(l => l.apt_stt && l.gia_de_xuat && !['C', 'D'].includes(l.luong)).sort((a, b) => a.apt_stt - b.apt_stt)
+    .map(l => `${l.apt_stt}\t${Math.round(Number(l.gia_de_xuat))}`).join('\n');
+}
 /** % gọn: 0.035 → 3.5 (tránh 3.5000000000000004) */
 export const pc = (x: number) => String(+(x * 100).toFixed(2));
 /** Nội dung gửi APT đề nghị xuất lại giá (biên NT ngoài khung → đưa về mục tiêu). Trả '' nếu không có dòng nào */

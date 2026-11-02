@@ -40,7 +40,8 @@ export function AccMine() {
   const mine = all.filter(l => l.sale_id && (l.sale_id === a.me.id || a.isLead));
   const free = all.filter(l => !l.sale_id && ['A', 'B'].includes(l.luong) && ['blocked', 'replied'].includes(l.status));
   const todo = mine.filter(l => ['blocked', 'replied', 'pending_approval'].includes(l.status));
-  const price = mine.filter(l => l.status === 'blocked' && l.apt_stt && l.gia_de_xuat && !l.gia_note && ['A', 'B'].includes(l.luong));
+  // Bản 23: biên ngoài khung chỉ cảnh báo (không chặn) — vẫn liệt kê để sale copy giá đề xuất gửi APT
+  const price = mine.filter(l => l.apt_stt && l.gia_de_xuat && !l.gia_note && ['A', 'B'].includes(l.luong) && !['approved'].includes(l.status));
   const { busy, run } = useAction();
   const sentAll = () => run(async () => { if (!(await ask({ title: `Xác nhận đã gửi APT ${price.length} dòng?`, message: 'Giá nháp APT các dòng đổi theo giá đề xuất, dòng chốt ngay. HĐ chính thức lệch giá sẽ báo đỏ.', ok: 'Đã gửi APT' }))) return;
     for (const l of price) await db.rpc('acc_line_reply', { p_id: l.id, p_reply: 'da_gui_gia', p_note: 'Gửi APT hàng loạt' }); reload(); }, 'Đã chốt các dòng theo giá đề xuất');

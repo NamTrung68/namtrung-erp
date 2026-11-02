@@ -1,6 +1,6 @@
 // Lập phiếu xuất HĐ hàng loạt: mỗi ID đơn (MD) = 1 phiếu; dòng chưa có ID đơn = 1 phiếu riêng
 import React, { useEffect, useMemo, useState } from 'react';
-import { Badge, Button, cx, Modal, toast } from '../../components/ui';
+import { Badge, Button, ask, cx, Modal, toast } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { useApp } from '../../state';
 import { money, num } from '../../lib/format';
@@ -48,8 +48,14 @@ export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose
     if (!g.b.name.trim()) err.push('Chưa có tên đơn vị mua');
     const noGia = g.lines.filter(l => l.gia === '').length; if (noGia) err.push(`Thiếu giá xuất ${noGia} dòng`);
     if (g.lines.some(l => !Number(l.sl) || Number(l.sl) > Number(l.item.ton) + 0.0001)) err.push('SL xuất phải > 0 và ≤ tồn');
-    const low = g.lines.some(l => Number(l.gia) > 0 && l.item.dg_nhap && Number(l.gia) < Number(l.item.dg_nhap));
-    if (low && !g.b.note.trim()) err.push('Có dòng dưới giá nhập — ghi lý do');
+    // Bản 23: biên so với giá APT trên HĐ ký — dưới 2% cấm, trên 4% vào "Chờ duyệt giá"
+    const bien = (l: G['lines'][number]) => (Number(l.gia) > 0 && Number(l.item.dg_nhap) > 0 ? Number(l.gia) / Number(l.item.dg_nhap) - 1 : null);
+    const low = g.lines.some(l => { const b = bien(l); return b !== null && b < 0.02 - 0.000001; });
+    const high = g.lines.some(l => { const b = bien(l); return b !== null && b > 0.04 + 0.000001; });
+    if (low) err.push('Có dòng dưới biên 2% so với giá APT — không được xuất');
+    if (g.lines.some(l => l.item.lech && !l.item.lech_ok_at)) err.push('Có dòng lệch nháp — chờ kế toán mở khóa');
+    if (new Set(g.items.map(t => t.customer_id).filter(Boolean)).size > 1) err.push('Đơn có hàng của 2 khách');
+    if (high) warn.push('Biên trên 4% — sẽ vào Chờ duyệt giá');
     if (!g.b.mst.trim()) warn.push('Chưa có MST');
     if (!g.customer_id) warn.push(g.username ? `Username ${g.username} chưa có trong khách ERP` : 'Chưa gắn khách');
     if (new Set(g.lines.map(l => vatTxt(l.item.vat))).size > 1) warn.push('Nhiều thuế suất trong 1 HĐ');
@@ -60,6 +66,11 @@ export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose
       if (x) set(i, g => ({ ...g, src: g.src || 'danh sách đơn vị', b: { ...g.b, name: g.b.name || x.name, addr: g.b.addr || x.address || '', email: g.b.email || x.email || '' } })); } catch { /* bỏ qua */ } };
   const save = async (submit: boolean) => {
     const list = gs!.map((g, i) => ({ g, i })).filter(({ g }) => g.on && !g.ok && !check(g).err.length); if (!list.length) return;
+    if (submit) { // màn xác nhận tổng trước khi tạo hàng loạt
+      const tong = list.reduce((x, { g }) => x + g.lines.reduce((y, l) => { const tt = Math.round(Number(l.sl || 0) * Number(l.gia || 0)); return y + tt + Math.round(tt * Number(l.item.vat ?? 0)); }, 0), 0);
+      const kh = new Set(list.map(({ g }) => g.customer_id || g.username || g.key)).size; const duyet = list.filter(({ g }) => check(g).warn.some(w => w.startsWith('Biên trên'))).length;
+      if (!(await ask({ title: `Tạo ${list.length} yêu cầu · ${kh} khách · tổng ${money(tong)}`, message: duyet ? `${duyet} yêu cầu có biên trên 4% sẽ vào Chờ duyệt giá.` : 'Gửi kế toán export MISA.', ok: 'Tạo & gửi' }))) return;
+    }
     setRun(true); let ok = 0;
     for (let k = 0; k < list.length; k++) { const { g, i } = list[k]; setStep(`Đang lập phiếu ${k + 1}/${list.length}…`);
       try {
@@ -70,10 +81,13 @@ export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose
     }
     setStep(''); setRun(false); toast.ok(`${submit ? 'Đã gửi kế toán' : 'Đã lưu'} ${ok}/${list.length} phiếu`); if (ok) onDone();
   };
+  /** Chỉ giữ đơn sạch: bỏ tick đơn còn lỗi hoặc cảnh báo */
+  const onlyClean = () => setGs(x => x!.map(g => g.ok ? g : { ...g, on: (() => { const c = check(g); return !c.err.length && !c.warn.length; })() }));
   const stats = useMemo(() => { if (!gs) return null; let ready = 0, bad = 0, done = 0; gs.forEach(g => { if (g.ok) done++; else if (check(g).err.length) bad++; else if (g.on) ready++; }); return { ready, bad, done }; }, [gs]);
   const inp = 'h-9 w-full rounded-xl border border-ink-200 bg-white px-3 text-sm focus:border-brand-500 focus:outline-none';
   return <Modal open onClose={() => !run && onClose()} size="xl" title={<span>Lập nhanh theo ID đơn · {gs?.length ?? '…'} phiếu từ {items.length} dòng</span>}
     footer={<><span className="mr-auto text-xs text-ink-500">{stats ? `${stats.ready} sẵn sàng · ${stats.bad} cần bổ sung · ${stats.done} đã lập` : ''}{step && <b className="ml-2 text-brand-700">{step}</b>}</span>
+      <Button disabled={run || !gs} onClick={onlyClean}>Chỉ giữ đơn sạch</Button>
       <Button loading={run} disabled={!stats?.ready} onClick={() => save(false)}>Lưu nháp ({stats?.ready || 0})</Button>
       <Button variant="primary" loading={run} disabled={!stats?.ready} onClick={() => save(true)}>Gửi kế toán ({stats?.ready || 0} phiếu)</Button></>}>
     {!gs ? <div className="py-10 text-center text-sm text-ink-500">Đang lấy thông tin khách…</div> :
@@ -94,7 +108,7 @@ export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose
             <input className={inp} placeholder="Email nhận HĐ" value={g.b.email} onChange={e => set(i, x => ({ ...x, b: { ...x.b, email: e.target.value } }))} />
             {g.src && <div className="text-[11px] text-ink-500 sm:col-span-2">Thông tin lấy theo: {g.src}</div>}
           </div>}
-          <div className="mt-2 divide-y divide-ink-100 rounded-xl border border-ink-100">{g.lines.map((l, j) => { const t = l.item; const low = Number(l.gia) > 0 && t.dg_nhap && Number(l.gia) < Number(t.dg_nhap);
+          <div className="mt-2 divide-y divide-ink-100 rounded-xl border border-ink-100">{g.lines.map((l, j) => { const t = l.item; const low = Number(l.gia) > 0 && t.dg_nhap && Number(l.gia) / Number(t.dg_nhap) - 1 < 0.02 - 0.000001;
             return <div key={t.id} className="flex flex-wrap items-center gap-2 px-2 py-1.5 text-xs">
               <div className="min-w-0 flex-1 basis-56"><div className="font-semibold">{t.ma_hang}{t.part > 1 ? ` (${t.part})` : ''} <VatBadge v={t.vat} /></div><div className="line-clamp-1 text-ink-600" title={t.ten}>{t.ten}</div></div>
               <label className="flex items-center gap-1">SL<input className="h-8 w-20 rounded-lg border border-ink-200 px-2 text-right" inputMode="decimal" disabled={g.ok} value={l.sl}
@@ -104,7 +118,6 @@ export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose
               {t.gia_n > 1 && !g.ok && <button className={cx('text-[11px] underline', l.gia ? 'text-ink-400' : 'font-semibold text-amber-700')} onClick={() => setPp({ g: i, l: j })}>{l.gia ? `đổi (${t.gia_n} giá)` : `${t.gia_n} giá — chọn`}</button>}
               <span className="w-24 text-right font-semibold">{money(Math.round(Number(l.sl || 0) * Number(l.gia || 0)))}</span>
             </div>; })}</div>
-          {c.low && !g.ok && <input className={cx(inp, 'mt-2', !g.b.note.trim() && 'border-red-300')} placeholder="Lý do xuất dưới giá nhập (bắt buộc)" value={g.b.note} onChange={e => set(i, x => ({ ...x, b: { ...x.b, note: e.target.value } }))} />}
           <div className="mt-1.5 flex flex-wrap gap-1">{g.res ? <Badge color={g.ok ? 'green' : 'red'}>{g.res}</Badge> : <>
             {c.err.map(e => <Badge key={e} color="red">{e}</Badge>)}{c.warn.map(w => <Badge key={w} color="amber">{w}</Badge>)}{!c.err.length && <Badge color="green">Sẵn sàng</Badge>}</>}</div>
         </div>; })}
