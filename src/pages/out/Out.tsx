@@ -8,10 +8,11 @@ import { db, fetchAll } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { readTable, readXlsx, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
-import { MISA_HEADER_ROW, misaMap, misaRows, parseBuyers, parseInfo, parseOrders, parseSoXuat, soRows } from '../../lib/xuathd';
+import { MISA_HEADER_ROW, misaMap, misaRows, parseBuyers, parseInfo, parseOrders, parseSoXuat, soRows, TPL_BUYERS, TPL_ORDERS, TPL_SO } from '../../lib/xuathd';
 import { Money, useAccCfg } from '../acc/common';
 import { printDraft } from './print';
 import { FileBadge, HdFilesSection, UploadHdPdf, type HdF } from './HdFiles';
+import { BulkInvoices, PricePick, VatBadge, srcTxt } from './Bulk';
 
 export const OST: Record<string, [string, string]> = {
   soan: ['Sale đang soạn', 'slate'], cho_nhap: ['Chờ xuất nháp', 'amber'], da_nhap: ['Có nháp — Sale gửi khách', 'blue'],
@@ -56,15 +57,18 @@ export default function Out() {
 }
 
 // ============ Dòng hàng (sổ) ============
-const ITEM_COLS = 'id,ma_hang,part,stt_so,ten,dvt,vat,sl_nhap,dg_nhap,so_hd_vao,ky_hieu,ngay_vao,md,nvkd,username,sale_id,customer_id,gia_khach,match_src,legacy,sl_xuat,ton,phieu,khach,xe';
+const ITEM_COLS = 'id,ma_hang,part,stt_so,ten,dvt,vat,sl_nhap,dg_nhap,so_hd_vao,ky_hieu,ngay_vao,md,nvkd,username,sale_id,customer_id,gia_khach,gia_src,gia_n,match_src,legacy,sl_xuat,ton,phieu,khach,xe';
 const LEG: Record<string, string> = { da_ky: 'đã ký', da_nhap: 'đã xuất nháp', xac_nhan_ky: 'KD xác nhận ký' };
 const maHang = (t: any) => t.ma_hang + (t.part > 1 ? ` (${t.part})` : '');
 function useDebounced<T>(v: T, ms = 350): T { const [d, setD] = useState(v); React.useEffect(() => { const t = setTimeout(() => setD(v), ms); return () => clearTimeout(t); }, [v]); return d; }
 function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean }) {
   const a = useApp(); const { busy, run } = useAction(); const mode = acc ? 'acc' : free ? 'free' : 'mine';
   const [q, setQ] = useState(''); const qd = useDebounced(q); const [f, setF] = useState(acc ? 'ton' : ''); const [hd, setHd] = useState(''); const [xe, setXe] = useState(''); const [sale, setSale] = useState(''); const [kh, setKh] = useState('');
-  const pg = usePager(acc ? 'out_items' : free ? 'out_free' : 'out_mine', [qd, f, hd, xe, sale, kh]);
-  const { data, loading, reload: reloadRows } = useLoad(() => db.rpc<any>('out_items_page', { p: { mode, f, q: qd, hd, xe, sale, kh, offset: pg.from, limit: pg.size } }), [mode, f, qd, hd, xe, sale, kh, pg.from, pg.size]);
+  const [sort, setSortRaw] = useState<string>(() => sessionStorage.getItem('nt_out_sort_' + mode) || (acc ? 'moi' : 'md'));
+  const setSort = (v: string) => { setSortRaw(v); sessionStorage.setItem('nt_out_sort_' + mode, v); };
+  const pg = usePager(acc ? 'out_items' : free ? 'out_free' : 'out_mine', [qd, f, hd, xe, sale, kh, sort]);
+  const filt = { mode, f, q: qd, hd, xe, sale, kh, sort };
+  const { data, loading, reload: reloadRows } = useLoad(() => db.rpc<any>('out_items_page', { p: { ...filt, offset: pg.from, limit: pg.size } }), [mode, f, qd, hd, xe, sale, kh, sort, pg.from, pg.size]);
   const { data: saleOpts } = useLoad(() => acc || (a.isLead && !free) ? db.rpc<any[]>('out_sale_opts') : Promise.resolve([]), [acc, free]);
   const { data: st, reload: reloadSt } = useLoad(() => db.rpc<any>('out_items_stats', { p_mode: mode }), [mode]);
   const { data: ic } = useLoad(async () => {
@@ -76,7 +80,17 @@ function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean })
   const reload = () => { reloadRows(); reloadSt(); };
   const rows: any[] = data?.rows || []; const total: number = data?.total || 0; const S = st || {};
   const [pick, setPick] = useState<Record<string, any>>({}); const [edit, setEdit] = useState<any>(null); const [newInv, setNewInv] = useState<any[] | null>(null); const [up, setUp] = useState(false);
-  const [claimT, setClaimT] = useState<any>(null); const [xeOpen, setXeOpen] = useState(false);
+  const [claimT, setClaimT] = useState<any>(null); const [xeOpen, setXeOpen] = useState(false); const [bulk, setBulk] = useState<any[] | null>(null); const [pp, setPp] = useState<any>(null);
+  /** Chọn tất cả dòng đang lọc (mọi trang) hoặc cả 1 ID đơn */
+  const pickAll = (md?: string) => run(async () => {
+    const r = await db.rpc<any>('out_items_page', { p: { ...filt, ...(md ? { md, f: '', q: '', hd: '', xe: '', kh: '' } : {}), offset: 0, limit: 500 } });
+    const list = (r?.rows || []).filter((t: any) => canPick(t)); setPick(p => { const x = { ...p }; list.forEach((t: any) => { x[t.id] = t; }); return x; });
+    if (!md && (r?.total || 0) > 500) toast.err('Chỉ chọn được 500 dòng đầu — lọc hẹp lại rồi chọn tiếp');
+  });
+  const mdsChosen = new Set(Object.values(pick).map((t: any) => t.md || 'row:' + t.id)).size;
+  const PriceCell = ({ t }: { t: any }) => t.gia_khach ? <><Money v={t.gia_khach} />{t.gia_src && <div className="text-[10px] text-ink-400">{srcTxt(t.gia_src)}</div>}</>
+    : t.gia_n > 1 && !free ? <button className="text-[11px] font-semibold text-amber-700 underline" onClick={e => { e.stopPropagation(); setPp(t); }}>⚠ đơn có {t.gia_n} giá — chọn</button> : <span className="text-[11px] text-red-600">chưa có</span>;
+  const MdCell = ({ t }: { t: any }) => t.md ? <span className="whitespace-nowrap"><b className="text-ink-800">{t.md}</b>{!acc && !free && <button className="ml-1 text-[10px] font-semibold text-brand-700 underline" onClick={e => { e.stopPropagation(); pickAll(t.md); }}>chọn cả đơn</button>}</span> : <span className="text-amber-700">—</span>;
   const hds = ((S.hd || []) as string[]).sort((x, y) => Number(y) - Number(x)); const xes = (S.xe || []) as string[]; const sales = (S.sale || []) as string[];
   const chosen = Object.values(pick);
   const togglePick = (t: any, on: boolean) => setPick(p => { const x = { ...p }; if (on) x[t.id] = t; else delete x[t.id]; return x; });
@@ -109,7 +123,9 @@ function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean })
       <Stat label="Có nháp — chờ bạn gửi khách" value={icN('da_nhap')} tone={icN('da_nhap') ? 'red' : undefined} sub={icN('chua_gui') ? `${icN('chua_gui')} bản chưa gửi khách` : ''} />
       <Stat label="Đã ký tháng này" value={icN('ky_thang')} tone="green" /></div>}
     {free && <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Dòng trên HĐ chính thức còn tồn mà chưa xác định được sale (dòng đã ký không hiện ở đây). Hàng của bạn thì bấm <b>Nhận</b>, nhập mã đơn.</p>}
-    {!acc && !free && <p className="mb-3 text-sm text-ink-600">Tick các dòng cùng 1 đơn vị nhận HĐ → <b>Lập phiếu xuất HĐ</b>: xác nhận giá + thông tin xuất HĐ. Dòng đã ký nằm ở “Phiếu của tôi → Đã ký”.</p>}
+    {!acc && !free && <p className="mb-3 text-sm text-ink-600">Tick từng dòng → <b>Lập 1 phiếu</b>; hoặc tick nhiều dòng / <b>Chọn tất cả</b> → <b>⚡ Lập nhanh theo ID đơn</b>: mỗi ID đơn thành 1 phiếu, thông tin khách tự điền.</p>}
+    {!acc && !free && <div className="mb-3 flex flex-wrap gap-1.5 text-xs">{([['', `Còn tồn (${S.ton ?? 0})`], ['nogia', `Chưa có giá xuất (${S.nogia ?? 0})`], ['nhieu_gia', `Đơn nhiều giá — cần chọn (${S.nhieu_gia ?? 0})`], ['nokhach', `Chưa gắn khách (${S.nokhach ?? 0})`], ['nomd', `Chưa có ID đơn (${S.nomd ?? 0})`]] as [string, string][]).map(([k, l]) =>
+      <button key={k || 'all'} onClick={() => setF(k)} className={cx('rounded-full border px-2.5 py-1 font-semibold', f === k ? 'border-ink-900 bg-ink-900 text-white' : 'border-ink-200 bg-white text-ink-700', k && k !== 'nomd' && Number(S[k] || 0) > 0 && f !== k && 'border-amber-300 text-amber-800')}>{l}</button>)}</div>}
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <Input className="max-w-xs" placeholder="🔎 Mã hàng, tên, ID đơn, khách, sale, số HĐ, xe…" value={q} onChange={e => setQ(e.target.value)} />
       <Select className="w-40" placeholder="Tất cả xe" options={xes.map(x => [x, x === '—' ? '— Chưa gán xe' : x] as [string, string])} value={xe} onChange={setXe} />
@@ -117,34 +133,41 @@ function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean })
       {acc && <Select className="w-44" placeholder="Tất cả sale" options={sales.map(x => [x, x === '—' ? '— Chưa có sale' : a.personName(x)] as [string, string])} value={sale} onChange={setSale} />}
       {!acc && !free && a.isLead && (saleOpts || []).length > 1 && <Select className="w-44" placeholder="Tất cả sale" options={(saleOpts || []).map((x: any) => [x.id, x.full_name] as [string, string])} value={sale} onChange={setSale} />}
       {!acc && <Select className="w-52" placeholder="Tất cả khách" options={((S.kh || []) as [string, string][]).map(([k, t]) => [k, t] as [string, string])} value={kh} onChange={setKh} />}
-      {!acc && !free && <Select className="w-48" placeholder="Tất cả dòng còn tồn" options={[['nokhach', `Chưa gắn khách (${S.nokhach ?? 0})`], ['nomd', `Chưa gắn đơn (${S.nomd ?? 0})`], ['nogia', `Chưa có giá xuất (${S.nogia ?? 0})`]] as [string, string][]} value={f} onChange={setF} />}
-      {acc && <Select className="w-48" placeholder="Tất cả dòng" options={[['ton', 'Còn tồn'], ['het', 'Đã xuất hết'], ['nosale', 'Chưa gắn sale'], ['nomd', 'Chưa có ID đơn'], ['nogia', 'Chưa có giá xuất'], ['daky_nosale', 'Đã ký không sale']] as [string, string][]} value={f} onChange={setF} />}
-      {!free && chosen.length > 0 && <Button className="hidden sm:inline-flex" variant="primary" onClick={() => setNewInv(chosen)}>Lập phiếu xuất HĐ ({chosen.length} dòng)</Button>}
-      {!free && chosen.length > 0 && <button className="hidden text-xs text-ink-500 underline sm:inline" onClick={() => setPick({})}>Bỏ chọn</button>}
+      {!free && <Select className="w-40" options={[['md', 'Sắp theo ID đơn'], ['kh', 'Sắp theo khách'], ['moi', 'Mới nhất']] as [string, string][]} value={sort} onChange={v => setSort(v || 'moi')} />}
+      {!free && <Button size="sm" loading={busy} onClick={() => pickAll()}>☑ Chọn tất cả ({total})</Button>}
+      {acc && <Select className="w-48" placeholder="Tất cả dòng" options={[['ton', 'Còn tồn'], ['het', 'Đã xuất hết'], ['nosale', 'Chưa gắn sale'], ['nomd', 'Chưa có ID đơn'], ['nogia', 'Chưa có giá xuất'], ['nhieu_gia', 'Đơn nhiều giá — chưa chọn'], ['daky_nosale', 'Đã ký không sale']] as [string, string][]} value={f} onChange={setF} />}
     </div>
+    {!free && chosen.length > 0 && <div className="sticky top-2 z-20 mb-3 hidden flex-wrap items-center gap-2 rounded-2xl border border-brand-200 bg-brand-50/95 px-3 py-2 shadow-soft sm:flex">
+      <span className="text-sm">Đã chọn <b>{chosen.length}</b> dòng · <b>{mdsChosen}</b> ID đơn</span>
+      <Button size="sm" onClick={() => setNewInv(chosen)}>Lập 1 phiếu ({chosen.length} dòng)</Button>
+      <Button size="sm" variant="primary" onClick={() => setBulk(chosen)}>⚡ Lập nhanh theo ID đơn ({mdsChosen} phiếu)</Button>
+      <button className="text-xs text-ink-500 underline" onClick={() => setPick({})}>Bỏ chọn</button>
+    </div>}
     {rows.length > 0 && <div className="mb-3 space-y-2 sm:hidden">{rows.map((t: any) =>
       <div key={t.id} className={cx('rounded-2xl border bg-white p-3 shadow-soft', pick[t.id] ? 'border-brand-500 bg-brand-50/60' : 'border-ink-200')}>
         <div className="flex items-start gap-2">{!free && <input type="checkbox" className="mt-1 h-5 w-5" disabled={!canPick(t)} checked={!!pick[t.id]} onChange={e => togglePick(t, e.target.checked)} />}
-          <div className="min-w-0 flex-1"><div className="text-[11px] text-ink-500">{maHang(t)} · {t.xe ? t.xe + ' · ' : ''}HĐ {t.so_hd_vao}{t.md ? ' · ' + t.md : ''}{acc ? ' · ' + (a.personName(t.sale_id) || t.nvkd || 'chưa có sale') : ''}</div>
+          <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-x-2 text-xs"><MdCell t={t} /><VatBadge v={t.vat} /></div>
+            <div className="text-[11px] text-ink-500">{maHang(t)} · {t.xe ? t.xe + ' · ' : ''}HĐ {t.so_hd_vao}{acc ? ' · ' + (a.personName(t.sale_id) || t.nvkd || 'chưa có sale') : ''}</div>
             <div className="line-clamp-3 text-sm font-medium text-ink-900">{t.ten}</div>
             {khachTxt(t) && <div className="text-xs text-ink-600">Khách: {khachTxt(t)}</div>}
-            <div className="mt-1 flex flex-wrap gap-x-3 text-xs"><span>SL {num(t.sl_nhap, 2)} {t.dvt}</span><span>Giá nhập <Money v={t.dg_nhap} /></span>{t.gia_khach && <span>Giá xuất <b><Money v={t.gia_khach} /></b></span>}
+            <div className="mt-1 flex flex-wrap gap-x-3 text-xs"><span>SL {num(t.sl_nhap, 2)} {t.dvt}</span><span>Giá nhập <Money v={t.dg_nhap} /></span><span className="inline-flex items-center gap-1">Giá xuất <b><PriceCell t={t} /></b></span>
               <span className={t.ton > 0.0001 ? 'font-semibold text-amber-700' : 'text-ink-400'}>Tồn {num(t.ton, 2)}</span></div>
             {(t.phieu || t.legacy?.status) && <div className="mt-1 text-[11px] text-ink-500">{t.phieu ? t.phieu.split(',').map((p: string) => { const [c, sx] = p.split(':'); return `${c} · ${OST[sx]?.[0] || sx}`; }).join(' | ') : 'Sổ cũ: ' + (LEG[t.legacy.status] || t.legacy.status)}</div>}</div>
           <ActBtn t={t} /></div></div>)}
       <Pager p={pg} total={total} /></div>}
-    {!free && chosen.length > 0 && <div className="fixed inset-x-3 bottom-3 z-30 sm:hidden"><Button className="w-full" variant="primary" onClick={() => setNewInv(chosen)}>Lập phiếu xuất HĐ ({chosen.length} dòng)</Button></div>}
+    {!free && chosen.length > 0 && <div className="fixed inset-x-3 bottom-3 z-30 grid grid-cols-2 gap-2 sm:hidden"><Button onClick={() => setNewInv(chosen)}>1 phiếu ({chosen.length} dòng)</Button>
+      <Button variant="primary" onClick={() => setBulk(chosen)}>⚡ {mdsChosen} phiếu theo đơn</Button></div>}
     <Card className={rows.length ? 'hidden sm:block' : ''} bodyClass="p-0">{loading && !rows.length ? <Loading /> : !rows.length ? <Empty>{free ? 'Không có dòng chưa có sale' : 'Không có dòng'}</Empty> :
       <Table scroll className={loading ? 'opacity-60' : ''} head={[...(free ? [] : ['']), 'Mã hàng', 'Tên hàng', 'SL nhập', 'Đơn giá nhập', 'VAT', 'Xe · HĐ vào', 'ID đơn', 'Khách', ...(acc ? ['Sale'] : []), 'Giá xuất', 'Còn tồn', 'Phiếu', '']}>{rows.map((t: any) =>
         <tr key={t.id} className={cx('align-top', pick[t.id] && 'bg-brand-50/60')}>
           {!free && <Td><input type="checkbox" disabled={!canPick(t)} checked={!!pick[t.id]} onChange={e => togglePick(t, e.target.checked)} /></Td>}
           <Td className="whitespace-nowrap text-xs font-semibold">{maHang(t)}</Td><Td className="min-w-[300px] max-w-[440px] text-xs"><div className="line-clamp-3" title={t.ten}>{t.ten}</div></Td>
-          <Td className="whitespace-nowrap text-right">{num(t.sl_nhap, 2)} <span className="text-[11px] text-ink-400">{t.dvt}</span></Td><Td className="text-right"><Money v={t.dg_nhap} /></Td><Td className="text-right text-xs">{vatTxt(t.vat)}</Td>
+          <Td className="whitespace-nowrap text-right">{num(t.sl_nhap, 2)} <span className="text-[11px] text-ink-400">{t.dvt}</span></Td><Td className="text-right"><Money v={t.dg_nhap} /></Td><Td className="text-right text-xs"><VatBadge v={t.vat} /></Td>
           <Td className="whitespace-nowrap text-xs">{t.xe ? <b className="text-ink-800">{t.xe}</b> : <span className="text-ink-400">—</span>}<div className="text-ink-500">HĐ {t.so_hd_vao} · {fmtDate(t.ngay_vao)}</div></Td>
-          <Td className="whitespace-nowrap text-xs">{t.md || <span className="text-amber-700">—</span>}{t.match_src === 'hd_xml' && <div className="text-[10px] text-emerald-700">theo HĐ XML</div>}</Td>
+          <Td className="text-xs"><MdCell t={t} />{t.match_src === 'hd_xml' && <div className="text-[10px] text-emerald-700">theo HĐ XML</div>}</Td>
           <Td className="max-w-[200px] text-xs">{t.khach ? <><div className="line-clamp-2 font-medium text-ink-800">{t.khach}</div><div className="text-ink-400">{t.username}</div></> : t.username ? <span className="text-amber-700" title="Username chưa có trong danh sách khách ERP">{t.username}</span> : <span className="text-ink-300">—</span>}</Td>
           {acc && <Td className="whitespace-nowrap text-xs">{a.personName(t.sale_id) || <span className="text-red-600">{t.nvkd || 'chưa có sale'}</span>}</Td>}
-          <Td className="text-right"><Money v={t.gia_khach} /></Td>
+          <Td className="text-right"><PriceCell t={t} /></Td>
           <Td className={cx('whitespace-nowrap text-right font-semibold', t.ton > 0.0001 ? 'text-amber-700' : 'text-ink-400')}>{num(t.ton, 2)}</Td>
           <Td className="min-w-[150px] text-[11px] text-ink-500">{(t.phieu || '').split(',').filter(Boolean).map((p: string) => { const [c, sx] = p.split(':'); return <div key={p}>{c} · {OST[sx]?.[0]}</div>; })}{!t.phieu && t.legacy?.status ? <div>Sổ cũ: {LEG[t.legacy.status] || t.legacy.status}</div> : ''}</Td>
           <Td><ActBtn t={t} /></Td></tr>)}</Table>}
@@ -154,6 +177,8 @@ function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean })
     {edit && <ItemEdit t={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
     {claimT && <ClaimItem t={claimT} onClose={() => setClaimT(null)} onDone={() => { setClaimT(null); reload(); }} />}
     {newInv && <InvoiceEditor items={newInv} onClose={() => setNewInv(null)} onDone={() => { setNewInv(null); setPick({}); reload(); }} />}
+    {bulk && <BulkInvoices items={bulk} onClose={() => { setBulk(null); setPick({}); reload(); }} onDone={() => reload()} />}
+    {pp && <PricePick item={pp} onClose={() => setPp(null)} onPick={gia => run(async () => { await db.rpc('out_item_set_price', { p_id: pp.id, p_gia: gia }); setPp(null); reload(); }, 'Đã đặt giá xuất')} />}
   </>;
 }
 
@@ -223,7 +248,13 @@ function ImportSo({ onClose, onDone }: { onClose: () => void; onDone: () => void
       const leg = res.legacy; let nl = 0;
       for (let i = 0; i < leg.length; i += 40) { setStep(`Đang chuyển dòng đã ký / đã xuất nháp ${Math.min(i + 40, leg.length)}/${leg.length}…`); nl += await db.rpc<number>('out_legacy_import', { p_legacy: leg.slice(i, i + 40) }); }
       if (nl) msg.push(`${nl} phiếu từ sổ cũ (đã ký / đã xuất nháp)`); }
-    if (res.orders.length) { let n = 0; for (let i = 0; i < res.orders.length; i += 500) { setStep(`Đang nạp đơn hàng ${Math.min(i + 500, res.orders.length)}/${res.orders.length}…`); n += await db.rpc<number>('out_orders_import', { p_rows: res.orders.slice(i, i + 500) }); } msg.push(`${res.orders.length} mã đơn (${n} dòng được gắn)`); }
+    if (res.orders.length) {
+      // gửi theo từng nhóm trọn ID đơn (giá của 1 đơn không bị tách ra 2 lần gửi)
+      const by = new Map<string, any[]>(); res.orders.forEach((o: any) => by.set(o.md, [...(by.get(o.md) || []), o]));
+      const chunks: any[][] = []; let cur: any[] = []; by.forEach(g => { if (cur.length && cur.length + g.length > 500) { chunks.push(cur); cur = []; } cur.push(...g); }); if (cur.length) chunks.push(cur);
+      let n = 0, done = 0; for (const c of chunks) { done += c.length; setStep(`Đang nạp đơn hàng ${done}/${res.orders.length}…`); n += await db.rpc<number>('out_orders_import', { p_rows: c }); }
+      const ng = res.orders.filter((o: any) => Number(o.gia) > 0).length;
+      msg.push(`${by.size} mã đơn${ng ? `, ${ng} giá xuất` : ''} (${n} dòng được gắn)`); }
     if (res.buyers.length) { setStep('Đang nạp đơn vị nhận HĐ…'); const n = await db.rpc<number>('out_buyers_import', { p_rows: res.buyers }); msg.push(`${n} đơn vị nhận HĐ`); }
     setStep('Đang gắn lại sale / khách / giá…'); await db.rpc<number>('out_rematch'); setStep('');
     toast.ok('Đã nạp: ' + msg.join(' · ')); onDone();
@@ -235,14 +266,19 @@ function ImportSo({ onClose, onDone }: { onClose: () => void; onDone: () => void
     footer={res ? <Button variant="primary" loading={busy} onClick={save}>Lưu</Button> : <Button variant="dark" onClick={analyze}>Đọc file</Button>}>
     <div className="grid gap-3 sm:grid-cols-3">
       <F f={file} set={setFile} l="1. Sổ Excel HĐ (mẫu Xuathd)" hint="Mã hàng HH0001-1726-2026, Tên hàng, SL nhập, Số HĐ… ID/NVKD/USER trống cũng được" />
-      <F f={ord} set={setOrd} l="2. Danh sách đơn hàng" hint="Order_Export: Mã đơn hàng + Khách hàng (+ Sale) → gắn khách, sale theo chủ khách" />
-      <F f={buy} set={setBuy} l="3. Danh sách đơn vị nhận HĐ" hint="Sheet “Thong tin KH” (MST, Tên đơn vị, Địa chỉ, mail) → sale gõ MST là tự điền" /></div>
+      <F f={ord} set={setOrd} l="2. Danh sách đơn hàng (+ giá xuất)" hint="Mã đơn hàng, Username, Sale; thêm Tên hàng, Số lượng, Đơn giá xuất → ERP có giá theo đơn" />
+      <F f={buy} set={setBuy} l="3. Danh sách đơn vị nhận HĐ" hint="Sheet “Thong tin KH” (MST, Tên đơn vị, Địa chỉ, mail, Username) → gắn đúng khách, lập phiếu tự điền" /></div>
     <div className="mt-2 text-xs text-ink-500">Nạp file nào cũng được, không cần đủ cả 3. Nạp lại nhiều lần không bị trùng.</div>
+    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-ink-50 px-3 py-2 text-xs">⬇ File mẫu (đúng cột):
+      <button className="font-semibold text-brand-700 underline" onClick={() => writeXlsx('Mau_so_HD_dau_vao', TPL_SO, 'So HD')}>1. Sổ HĐ (có Đơn giá xuất)</button>
+      <button className="font-semibold text-brand-700 underline" onClick={() => writeXlsx('Mau_don_hang_gia_xuat', TPL_ORDERS, 'Don hang')}>2. Đơn hàng + giá xuất</button>
+      <button className="font-semibold text-brand-700 underline" onClick={() => writeXlsx('Mau_don_vi_nhan_HD', TPL_BUYERS, 'Thong tin KH')}>3. Đơn vị nhận HĐ</button>
+      <span className="text-ink-500">Giá xuất theo ID đơn + tên hàng + SL: ERP tự khớp đúng dòng; đơn nhiều giá mà không khớp được thì để sale chọn.</span></div>
     {err && <div className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{err}</div>}
     {step && <div className="mt-3 rounded-lg bg-brand-50 p-3 text-sm font-semibold text-brand-800">{step}</div>}
     {res && <div className="mt-3 space-y-2 text-sm">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5"><Stat label="Dòng hàng" value={res.rows.length} /><Stat label="Có ID đơn" value={res.rows.filter((r: any) => r.md).length} />
-        <Stat label="Dòng đã ký trên sổ cũ" value={res.legacy.filter((g: any) => g.status === 'da_ky').reduce((x: number, g: any) => x + g.lines.length, 0)} sub="hết tồn, vào phiếu Đã ký" /><Stat label="Đơn hàng" value={res.orders.length} /><Stat label="Đơn vị nhận HĐ" value={res.buyers.length} /></div>
+        <Stat label="Dòng đã ký trên sổ cũ" value={res.legacy.filter((g: any) => g.status === 'da_ky').reduce((x: number, g: any) => x + g.lines.length, 0)} sub="hết tồn, vào phiếu Đã ký" /><Stat label="Đơn hàng" value={res.orders.length} sub={res.orders.some((o: any) => Number(o.gia) > 0) ? `${res.orders.filter((o: any) => Number(o.gia) > 0).length} dòng có giá xuất` : ''} /><Stat label="Đơn vị nhận HĐ" value={res.buyers.length} /></div>
       {res.warnings.slice(0, 8).map((w: string, i: number) => <div key={i} className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-900">• {w}</div>)}
       <div className="text-xs text-ink-500">Tự gắn ID đơn, sale, khách: theo HĐ XML đã đối chiếu → ID trên sổ → NVKD → mã đơn trong file đơn hàng → username (chủ khách trên ERP).</div>
     </div>}
@@ -267,7 +303,7 @@ function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: a
   const a = useApp(); const { busy, run } = useAction(); const cfg = useAccCfg();
   const init = inv ? (inv.out_invoice_lines || []).map((l: any) => ({ item: l.out_items, item_id: l.item_id, sl: String(l.sl), gia: String(Math.round(l.don_gia)), vat: l.vat }))
     : (items || []).map(t => ({ item: t, item_id: t.id, sl: String(+Number(t.ton).toFixed(4)), gia: t.gia_khach ? String(Math.round(t.gia_khach)) : '', vat: t.vat }));
-  const [ls, setLs] = useState<any[]>(init);
+  const [ls, setLs] = useState<any[]>(init); const [pp, setPp] = useState<number | null>(null);
   const cid0 = inv?.customer_id || (items || []).find(t => t.customer_id)?.customer_id || null;
   const { data: cus0 } = useLoad(() => cid0 ? db.from<any>('customers').select('id,code,sys_code,sys_username,company_name,contact_name,tax_code,address,legal_address,email,phone').eq('id', cid0).maybeSingle() : Promise.resolve(null), [cid0]);
   const [cus, setCus] = useState<any>(null); const c = cus || cus0;
@@ -315,23 +351,26 @@ function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: a
       </div></div>
     <div className="mt-3 space-y-2 sm:hidden">{ls.map((l, i) => { const g = giaCheck(Number(l.gia || 0), l.item?.dg_nhap ?? null, l.item?.gia_khach ?? null, cfg.bien_nt_min);
       return <div key={l.item_id} className="rounded-xl border border-ink-200 p-2.5">
-        <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="text-[11px] text-ink-500">{l.item?.ma_hang} · {l.item?.dvt} · VAT {vatTxt(l.vat)}{l.item?.ton !== undefined ? ' · tồn ' + num(l.item.ton, 2) : ''}</div>
+        <div className="flex items-start justify-between gap-2"><div className="min-w-0"><div className="text-[11px] text-ink-500"><b className="text-ink-800">{l.item?.md || 'chưa có ID đơn'}</b> · {l.item?.ma_hang} · {l.item?.dvt} · VAT <VatBadge v={l.vat} />{l.item?.ton !== undefined ? ' · tồn ' + num(l.item.ton, 2) : ''}</div>
           <div className="line-clamp-2 text-sm">{l.item?.ten}</div></div>{ls.length > 1 && <button className="px-1 text-red-600" onClick={() => setLs(x => x.filter((_, j) => j !== i))}>✕</button>}</div>
         <div className="mt-2 grid grid-cols-2 gap-2"><Field label="SL xuất"><Input className="text-right" inputMode="decimal" value={l.sl} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, sl: e.target.value.replace(/[^\d.]/g, '') } : y))} /></Field>
           <Field label="Đơn giá xuất"><Input className="text-right" inputMode="numeric" value={l.gia} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, gia: e.target.value.replace(/[^\d.]/g, '') } : y))} /></Field></div>
+        {l.item?.gia_n > 1 && <button className="mt-1 text-[11px] font-semibold text-amber-700 underline" onClick={() => setPp(i)}>đơn có {l.item.gia_n} giá — chọn</button>}
         <div className="mt-1 flex justify-between text-xs"><span className={g.tone}>{g.bad ? '⚠ dưới giá nhập · ' : ''}{g.txt}</span><b><Money v={Math.round(Number(l.sl || 0) * Number(l.gia || 0))} /></b></div></div>; })}</div>
-    <div className="mt-3 hidden max-h-[40vh] overflow-auto rounded-xl border border-ink-200 sm:block"><Table head={['Mã hàng', 'Tên hàng (theo HĐ APT)', 'ĐVT', 'Còn tồn', 'SL xuất', 'Đơn giá xuất', 'VAT', 'Thành tiền', '']}>{ls.map((l, i) =>
-      <tr key={l.item_id}><Td className="whitespace-nowrap text-xs">{l.item ? maHang(l.item) : ''}</Td><Td className="min-w-[200px] text-xs">{l.item?.ten}</Td><Td className="text-xs">{l.item?.dvt}</Td>
+    <div className="mt-3 hidden max-h-[40vh] overflow-auto rounded-xl border border-ink-200 sm:block"><Table head={['ID đơn', 'Mã hàng', 'Tên hàng (theo HĐ APT)', 'ĐVT', 'Còn tồn', 'SL xuất', 'Đơn giá xuất', 'VAT', 'Thành tiền', '']}>{ls.map((l, i) =>
+      <tr key={l.item_id}><Td className="whitespace-nowrap text-xs font-semibold">{l.item?.md || <span className="text-amber-700">—</span>}</Td><Td className="whitespace-nowrap text-xs">{l.item ? maHang(l.item) : ''}</Td><Td className="min-w-[200px] text-xs">{l.item?.ten}</Td><Td className="text-xs">{l.item?.dvt}</Td>
         <Td className="text-right text-xs">{l.item?.ton !== undefined ? num(l.item.ton, 2) : ''}</Td>
         <Td><Input className="w-24 text-right" inputMode="decimal" value={l.sl} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, sl: e.target.value.replace(/[^\d.]/g, '') } : y))} /></Td>
         <Td><Input className="w-28 text-right" inputMode="numeric" value={l.gia} onChange={e => setLs(x => x.map((y, j) => j === i ? { ...y, gia: e.target.value.replace(/[^\d.]/g, '') } : y))} />
-          {(() => { const g = giaCheck(Number(l.gia || 0), l.item?.dg_nhap ?? null, l.item?.gia_khach ?? null, cfg.bien_nt_min); return g.txt ? <div className={cx('mt-0.5 whitespace-nowrap text-[10px]', g.tone)}>{g.bad ? '⚠ dưới giá nhập · ' : ''}{g.txt}</div> : null; })()}</Td>
-        <Td className="text-xs">{vatTxt(l.vat)}</Td><Td className="text-right"><Money v={Math.round(Number(l.sl || 0) * Number(l.gia || 0))} /></Td>
+          {(() => { const g = giaCheck(Number(l.gia || 0), l.item?.dg_nhap ?? null, l.item?.gia_khach ?? null, cfg.bien_nt_min); return g.txt ? <div className={cx('mt-0.5 whitespace-nowrap text-[10px]', g.tone)}>{g.bad ? '⚠ dưới giá nhập · ' : ''}{g.txt}</div> : null; })()}
+          {l.item?.gia_n > 1 && <button className="text-[10px] font-semibold text-amber-700 underline" onClick={() => setPp(i)}>đơn có {l.item.gia_n} giá — chọn</button>}</Td>
+        <Td className="text-xs"><VatBadge v={l.vat} /></Td><Td className="text-right"><Money v={Math.round(Number(l.sl || 0) * Number(l.gia || 0))} /></Td>
         <Td>{ls.length > 1 && <button className="text-red-600" onClick={() => setLs(x => x.filter((_, j) => j !== i))}>✕</button>}</Td></tr>)}</Table></div>
     <div className="mt-2 text-right text-sm">Tiền hàng <b>{money(sub)}</b> · Thuế GTGT <b>{money(tax)}</b> · Tổng <b className="text-brand-700">{money(sub + tax)}</b></div>
     {ls.some(l => Number(l.gia) > 0 && l.item?.dg_nhap && Number(l.gia) < l.item.dg_nhap) && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">Có dòng xuất giá thấp hơn giá nhập — ghi lý do vào “Ghi chú cho kế toán” mới gửi được.</div>}
     <Field className="mt-2" label="Ghi chú cho kế toán"><Input value={b.note} onChange={e => setF('note', e.target.value)} placeholder="VD: gộp 1 HĐ, khách cần xuất trước ngày…" /></Field>
     <div className="mt-1 text-xs text-ink-500">Một dòng hàng chia cho nhiều đơn vị: giảm số lượng ở phiếu này, phần còn lại lập phiếu khác.</div>
+    {pp !== null && ls[pp]?.item && <PricePick item={{ ...ls[pp].item, id: ls[pp].item_id }} onClose={() => setPp(null)} onPick={gia => { setLs(x => x.map((y, j) => j === pp ? { ...y, gia: String(gia) } : y)); setPp(null); }} />}
   </Modal>;
 }
 
@@ -341,10 +380,12 @@ function Invoices({ acc, openId }: { acc: boolean; openId?: string | null }) {
   const [st, setSt] = useState(acc ? 'cho_nhap' : 'da_nhap'); const [q, setQ] = useState(''); const qd = useDebounced(q); const [sale, setSale] = useState(''); const [sel, setSelRaw] = useState<string | null>(openId || null);
   React.useEffect(() => { if (openId) setSelRaw(openId); }, [openId]);
   const setSel = (id: string | null) => { setSelRaw(id); if (!id && location.hash.includes('inv=')) go('/out'); };
-  const [pick, setPick] = useState<Record<string, any>>({}); const [flag, setFlag] = useState('');
-  const pg = usePager('out_inv', [st, qd, sale, flag]);
-  const fl = st === 'cho_nhap' ? flag : '';
-  const { data, loading, reload } = useLoad(() => db.rpc<any>('out_invoices_page', { p: { status: st, q: qd, sale, flag: fl, offset: pg.from, limit: pg.size } }), [st, qd, sale, fl, pg.from, pg.size]);
+  const [pick, setPick] = useState<Record<string, any>>({}); const [flag, setFlag] = useState(''); const [next, setNext] = useState(''); const [srt, setSrt] = useState<[string, string]>(['at', 'desc']);
+  const pg = usePager('out_inv', [st, qd, sale, flag, next, srt.join()]);
+  const fl = st === 'cho_nhap' ? flag : ''; const nx = !st || st === 'da_nhap' ? next : '';
+  const { data, loading, reload } = useLoad(() => db.rpc<any>('out_invoices_page', { p: { status: st, q: qd, sale, flag: fl, next: nx, sort: srt[0], dir: srt[1], offset: pg.from, limit: pg.size } }), [st, qd, sale, fl, nx, srt.join(), pg.from, pg.size]);
+  const SortH = ({ k, l }: { k: string; l: string }) => <button className={cx('inline-flex items-center gap-1 hover:text-ink-900', srt[0] === k && 'font-semibold text-ink-900')}
+    onClick={() => setSrt(x => [k, x[0] === k && x[1] === 'asc' ? 'desc' : x[0] === k ? 'asc' : (k === 'tien' || k === 'at' ? 'desc' : 'asc')])}>{l}<span className="text-[10px]">{srt[0] === k ? (srt[1] === 'asc' ? '▲' : '▼') : '↕'}</span></button>;
   const rows: any[] = data?.rows || []; const total = data?.total || 0; const cnt = data?.counts || {};
   const c = (k: string) => Number(cnt[k] || 0); const allN = Object.entries(cnt).filter(([k]) => k !== 'huy').reduce((x, [, v]) => x + Number(v), 0);
   const chosen = Object.values(pick);
@@ -375,6 +416,8 @@ function Invoices({ acc, openId }: { acc: boolean; openId?: string | null }) {
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <Input className="max-w-xs" placeholder="🔎 Mã phiếu, đơn vị mua, MST, mã hàng, MD, số HĐ…" value={q} onChange={e => setQ(e.target.value)} />
       {(acc || a.isLead) && saleOpts.length > 1 && <Select className="w-48" placeholder="Tất cả sale" options={(sales || []).map((x: any) => [x.id, x.full_name] as [string, string])} value={sale} onChange={setSale} />}
+      {(!st || st === 'da_nhap') && <Select className="w-48" placeholder="Mọi việc tiếp theo" options={[['chua_gui', 'Nháp chưa gửi khách'], ['cho_khach', 'Đã gửi — chờ khách']] as [string, string][]} value={next} onChange={setNext} />}
+      <Select className="w-44 sm:hidden" options={[['at|desc', 'Mới cập nhật'], ['md|asc', 'Theo ID đơn'], ['buyer|asc', 'Theo đơn vị mua'], ['tien|desc', 'Tiền lớn trước']] as [string, string][]} value={srt.join('|')} onChange={v => setSrt((v || 'at|desc').split('|') as [string, string])} />
       <Button onClick={reload}>↻ Tải lại</Button>
       {acc && <Button variant="primary" loading={busy} onClick={exportMisa}>⬇ ① Xuất file nhập MISA ({chosen.length ? `${chosen.length} phiếu chọn` : `${misaN} chưa xuất`})</Button>}
       {acc && <Button variant="dark" onClick={() => setUpPdf(true)}>⇪ ② Tải PDF nháp / đã ký</Button>}
@@ -385,15 +428,17 @@ function Invoices({ acc, openId }: { acc: boolean; openId?: string | null }) {
         <div className="flex items-center justify-between gap-2"><b>{v.code}</b><OBadge s={v.status} /></div>
         {(v.nhap_v || v.ky_v) && <div className="mt-1"><FileBadge v={v} /></div>}
         <div className="mt-1 line-clamp-2 text-sm font-medium text-ink-900">{v.buyer_name || v.buyer_info}</div>
+        {v.mds && <div className="text-xs font-semibold text-ink-700">ID đơn: {v.mds}{v.vat10 && <span className="ml-2 rounded bg-amber-100 px-1 text-[11px] text-amber-800">có VAT 10%</span>}</div>}
         <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-ink-600">{v.tax_code && <span>MST {v.tax_code}</span>}<span>{v.so_dong} dòng</span><span>Tổng <b><Money v={Number(v.tien_hang) + Number(v.tien_thue)} /></b></span>
           {acc && <span>{a.personName(v.sale_id)}</span>}{v.so_hd && <span>HĐ {v.so_hd}</span>}{v.sua_sau_nhap && <span className="font-semibold text-red-600">sửa sau nháp</span>}</div>
         <div className="mt-1.5 border-t border-ink-100 pt-1.5"><NextStep v={v} /></div></button>)}
       <Pager p={pg} total={total} /></div>}
     <Card className={rows.length ? 'hidden sm:block' : ''} bodyClass="p-0">{loading && !rows.length ? <Loading /> : !rows.length ? <Empty>Không có phiếu</Empty> :
-      <Table scroll className={loading ? 'opacity-60' : ''} head={[...(acc ? [''] : []), 'Phiếu', 'Sale', 'Đơn vị mua', 'MST', 'Dòng', 'Tiền hàng', 'Thuế', 'Trạng thái', 'Việc tiếp theo', 'Số HĐ']}>{rows.map((v: any) =>
+      <Table scroll className={loading ? 'opacity-60' : ''} head={[...(acc ? [''] : []), <SortH k="code" l="Phiếu" />, <SortH k="md" l="ID đơn" />, <SortH k="sale" l="Sale" />, <SortH k="buyer" l="Đơn vị mua" />, 'MST', 'Dòng', <SortH k="tien" l="Tiền hàng" />, 'Thuế', <SortH k="status" l="Trạng thái" />, <SortH k="at" l="Việc tiếp theo" />, 'Số HĐ']}>{rows.map((v: any) =>
         <tr key={v.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setSel(v.id)}>
           {acc && <Td><input type="checkbox" checked={!!pick[v.id]} onClick={e => e.stopPropagation()} onChange={e => setPick(p => { const x = { ...p }; if (e.target.checked) x[v.id] = v; else delete x[v.id]; return x; })} /></Td>}
           <Td className="whitespace-nowrap font-semibold">{v.code}{flags(v)}</Td>
+          <Td className="max-w-[130px] text-xs font-semibold">{v.mds || <span className="font-normal text-ink-300">—</span>}{v.vat10 && <div className="text-[10px] font-semibold text-amber-700">có VAT 10%</div>}</Td>
           <Td className="whitespace-nowrap text-xs">{a.personName(v.sale_id)}</Td><Td className="max-w-[260px] text-xs"><div className="line-clamp-2">{v.buyer_name || v.buyer_info}</div></Td><Td className="text-xs">{v.tax_code}</Td>
           <Td className="text-right">{v.so_dong}</Td><Td className="text-right"><Money v={v.tien_hang} /></Td><Td className="text-right text-xs"><Money v={v.tien_thue} /></Td>
           <Td><OBadge s={v.status} />{(v.nhap_v || v.ky_v) && <div className="mt-1"><FileBadge v={v} /></div>}</Td>

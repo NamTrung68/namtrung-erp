@@ -38,6 +38,7 @@ export function parseSoXuat(rows: any[][]): { rows: SoRow[]; legacy: LegacyGroup
     slx: -1, dgx: -1, sohdx: -1, ngayx: -1, info: find(h => h.startsWith('THONG TIN BAO XUAT')), tt: find(h => h.startsWith('TRANG THAI')), kdky: find(h => h.startsWith('KD XAC NHAN')), gc: -1,
   };
   c.slx = find(h => h.startsWith('SO LUONG XUAT')); c.dgx = find(h => h.startsWith('DON GIA XUAT'), Math.max(0, c.slx));
+  if (c.dgx < 0) c.dgx = find(h => /^(GIA XUAT|GIA KHACH|DON GIA BAN|GIA BAN)/.test(h));
   c.sohdx = find(h => h.startsWith('SO HOA DON'), Math.max(0, c.slx)); c.ngayx = find(h => h.startsWith('NGAY XUAT'));
   c.gc = c.tt >= 0 ? find(h => h.startsWith('DON GIA XUAT'), c.tt) : -1;
   for (const k of ['ma', 'ten', 'sln', 'sohd'] as const) if ((c as any)[k] < 0) throw new Error('Sổ thiếu cột: ' + ({ ma: 'Mã hàng', ten: 'Tên hàng hoá', sln: 'Số lượng nhập', sohd: 'Số hóa đơn' } as any)[k]);
@@ -66,14 +67,18 @@ export function parseSoXuat(rows: any[][]): { rows: SoRow[]; legacy: LegacyGroup
   return { rows: out, legacy: Array.from(groups.values()), warnings };
 }
 
-/** File danh sách đơn hàng (tùy chọn): cột mã đơn/ID, NVKD/Sale, Username */
-export function parseOrders(rows: any[][]): { md: string; nvkd: string; username: string }[] {
+/** File đơn hàng (tùy chọn): cột mã đơn/ID, NVKD/Sale, Username; thêm Tên hàng, SL, Đơn giá xuất để có giá theo đơn */
+export interface OrderRow { md: string; nvkd: string; username: string; ten?: string; sl?: number | null; gia?: number | null }
+export function parseOrders(rows: any[][]): OrderRow[] {
   const hi = rows.slice(0, 15).findIndex(r => (r || []).some(x => /^(ID|MD|MA DON|MA DON HANG|DON HANG)\b/.test(H(x))));
   if (hi < 0) throw new Error('File đơn hàng: không thấy cột mã đơn (ID / Mã đơn / MD)');
   const hd = (rows[hi] || []).map(H); const f = (re: RegExp) => hd.findIndex(h => re.test(h));
   const im = f(/^(ID|MD|MA DON|MA DON HANG|DON HANG)\b/), is = f(/^(NVKD|SALE|NHAN VIEN|NV KINH DOANH)/), iu = f(/^(USERNAME|USER|TAI KHOAN|MA KH|KHACH)/);
-  if (is < 0 && iu < 0) throw new Error('File đơn hàng cần thêm cột NVKD/Sale hoặc Username');
-  return rows.slice(hi + 1).map(r => ({ md: clean(r?.[im]), nvkd: is >= 0 ? clean(r?.[is]) : '', username: iu >= 0 ? clean(r?.[iu]) : '' })).filter(x => x.md);
+  const it = f(/^(TEN HANG|TEN SAN PHAM|SAN PHAM|TEN SP|HANG HOA)/), isl = f(/^(SO LUONG|SL)\b/), ig = f(/^(DON GIA XUAT|GIA XUAT|GIA KHACH|DON GIA BAN|GIA BAN)/);
+  if (is < 0 && iu < 0 && ig < 0) throw new Error('File đơn hàng cần thêm cột NVKD/Sale, Username hoặc Đơn giá xuất');
+  const idStr = (v: any) => (typeof v === 'number' ? String(Math.round(v)) : clean(v));
+  return rows.slice(hi + 1).map(r => ({ md: idStr(r?.[im]), nvkd: is >= 0 ? clean(r?.[is]) : '', username: iu >= 0 ? clean(r?.[iu]) : '',
+    ten: it >= 0 ? clean(r?.[it]) : '', sl: isl >= 0 ? vnNum(r?.[isl]) : null, gia: ig >= 0 ? vnNum(r?.[ig]) : null })).filter(x => x.md);
 }
 
 /** File nhập HĐ nháp theo đúng mẫu MISA "Hóa đơn GTGT": 6 dòng hướng dẫn, tiêu đề ở dòng 9, mỗi phiếu = 1 số thứ tự HĐ */
@@ -96,13 +101,14 @@ export function misaMap(invs: any[], personName: (id: string) => string): any[][
   return [['Số thứ tự hóa đơn', 'Mã phiếu ERP', 'Sale', 'Đơn vị mua hàng', 'Mã số thuế', 'Số dòng'], ...invs.map((v, i) => [i + 1, v.code, personName(v.sale_id), v.buyer_name, v.tax_code || '', (v.out_invoice_lines || []).length])];
 }
 /** Danh sách đơn vị nhận HĐ (sheet "Thong tin KH": MST, Tên đơn vị, Địa chỉ, mail nhận HĐ) */
-export function parseBuyers(sheets: { sheet: string; rows: any[][] }[]): { tax_code: string; name: string; address: string; email: string }[] {
+export function parseBuyers(sheets: { sheet: string; rows: any[][] }[]): { tax_code: string; name: string; address: string; email: string; username: string }[] {
   for (const sh of sheets) {
     const hi = sh.rows.slice(0, 10).findIndex(r => (r || []).some(x => H(x) === 'MST' || H(x).startsWith('MA SO THUE')) && (r || []).some(x => H(x).startsWith('TEN DON VI')));
     if (hi < 0) continue;
     const hd = (sh.rows[hi] || []).map(H); const f = (p: (h: string) => boolean) => hd.findIndex(h => !!h && p(h));
     const im = f(h => h === 'MST' || h.startsWith('MA SO THUE')), it = f(h => h.startsWith('TEN DON VI')), ia = f(h => h.startsWith('DIA CHI')), ie = f(h => h.includes('MAIL'));
-    return sh.rows.slice(hi + 1).map(r => ({ tax_code: intStr(r?.[im]).replace(/\s/g, ''), name: clean(r?.[it]), address: ia >= 0 ? clean(r?.[ia]) : '', email: ie >= 0 ? clean(r?.[ie]) : '' }))
+    const iu = f(h => /^(USERNAME|USER|TAI KHOAN|MA KH)/.test(h));
+    return sh.rows.slice(hi + 1).map(r => ({ tax_code: intStr(r?.[im]).replace(/\s/g, ''), name: clean(r?.[it]), address: ia >= 0 ? clean(r?.[ia]) : '', email: ie >= 0 ? clean(r?.[ie]) : '', username: iu >= 0 ? clean(r?.[iu]) : '' }))
       .filter(x => x.name && x.tax_code);
   }
   throw new Error('Không thấy sheet có cột "MST" và "Tên đơn vị"');
@@ -128,3 +134,15 @@ export function soRows(items: any[], lines: any[], personName: (id: string) => s
   });
   return out;
 }
+
+// ---------- File mẫu để nạp đúng cột ----------
+export const TPL_SO: any[][] = [['STT', 'Mã hàng', 'Tên hàng hoá', 'Đơn vị tính', 'Thuế suất', 'Số lượng nhập', 'Đơn giá nhập', 'Số hóa đơn', 'Ký hiệu HĐ', 'Ngày nhập', 'Tên nhà cung cấp', 'ID', 'NVKD', 'USER', 'Đơn giá xuất'],
+  [1, 'HH00001-2080-2026', 'Hộp đựng giấy vải polyester, KT 18*12*9.5cm, mới 100%', 'Chiếc', 0.08, 400, 50000, 2080, '1C26TAP', '30/10/2026', 'CÔNG TY TNHH APT', 'MD2638', 'Lê Thị Minh Khơi', 'manhhuynh', 54000],
+  [2, 'HH00002-2080-2026', 'Cốc sứ trắng men 350ml, mới 100%', 'Cái', 0.1, 120, 70000, 2080, '1C26TAP', '30/10/2026', 'CÔNG TY TNHH APT', 'MD2638', 'Lê Thị Minh Khơi', 'manhhuynh', 80000]];
+export const TPL_ORDERS: any[][] = [['Mã đơn hàng', 'Username', 'Sale', 'Tên hàng', 'Số lượng', 'Đơn giá xuất'],
+  ['MD2638', 'manhhuynh', 'Lê Thị Minh Khơi', 'Hộp đựng giấy vải polyester', 400, 54000],
+  ['MD2638', 'manhhuynh', 'Lê Thị Minh Khơi', 'Cốc sứ trắng men 350ml', 120, 80000],
+  ['MD2474', 'lethucphuong11', 'Vũ Thị Thúy', '', '', '']];
+export const TPL_BUYERS: any[][] = [['MST', 'Tên đơn vị', 'Địa chỉ', 'Mail nhận HĐ', 'Username'],
+  ['0700871570', 'CÔNG TY TNHH ABC', 'Số 1 Đê La Thành, Hà Nội', 'ketoan@abc.vn', 'abc_shop'],
+  ['001190005010', 'Nguyễn Văn A (cá nhân, MST = số CCCD)', 'Hà Nội', 'a@gmail.com', 'nguyenvana']];
