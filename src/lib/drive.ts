@@ -87,7 +87,7 @@ function setup() {
 
 function rpc_(fn, body) {
   const r = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, { method: 'post', contentType: 'application/json',
-    headers: { apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY }, payload: JSON.stringify(Object.assign({ p_token: P().getProperty('BACKUP_TOKEN') }, body)), muteHttpExceptions: true });
+    headers: ANON_KEY.indexOf('eyJ') === 0 ? { apikey: ANON_KEY, Authorization: 'Bearer ' + ANON_KEY } : { apikey: ANON_KEY }, payload: JSON.stringify(Object.assign({ p_token: P().getProperty('BACKUP_TOKEN') }, body)), muteHttpExceptions: true });
   if (r.getResponseCode() !== 200) { let m = r.getContentText(); try { m = JSON.parse(m).message || m; } catch (e) {} throw new Error(fn + ': ' + String(m).slice(0, 300)); }
   return r.getContentText();
 }
