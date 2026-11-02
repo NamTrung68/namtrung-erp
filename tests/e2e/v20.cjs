@@ -26,13 +26,25 @@ const fx = name => { const p = path.join(UP, name); fs.copyFileSync(path.join(FX
   const uploadAs = async (k, files) => {
     if (await k.locator('div.fixed.inset-0.z-50 button:text-is("Đóng")').count()) await k.locator('div.fixed.inset-0.z-50 button:text-is("Đóng")').first().click();
     await k.goto(BASE + '#/out'); await k.waitForTimeout(1200);
-    await k.click('button:has-text("Tải PDF hóa đơn")');
+    await k.click('button:has-text("Tải PDF nháp / đã ký")');
     await k.setInputFiles('input[type=file][accept*=pdf]', files);
     await k.waitForSelector('button:has-text("Lưu Drive & gắn phiếu")', { timeout: 15000 }); await k.waitForTimeout(2500);
   };
   // ===== 1. Kế toán tải nháp: tên chuẩn, tên cũ (phiếu B không cùng MST), tên lạ (đọc chữ trong PDF) =====
   console.log('1. Kế toán tải nháp');
   const k = await login('kt@nt.vn');
+  // bản 21: ① xuất file nhập MISA → ghi mốc, không hỏi "Đã xuất nháp"
+  await k.goto(BASE + '#/out'); await k.waitForTimeout(1500);
+  ok(await k.locator('text=Chưa xuất file MISA (3)').count() === 1, 'lọc phụ: 3 phiếu chưa xuất file MISA');
+  const [dl] = await Promise.all([k.waitForEvent('download', { timeout: 15000 }), k.click('button:has-text("① Xuất file nhập MISA")')]); await k.waitForTimeout(2500);
+  ok(!!dl, 'tải file nhập MISA');
+  ok(sql(`select count(*) from out_invoices where misa_at is not null and id in ('${I1}','${I2}','${I3}')`) === '3', 'ghi mốc đã xuất MISA cho 3 phiếu');
+  ok(sql(`select string_agg(distinct status, ',') from out_invoices where id in ('${I1}','${I2}','${I3}')`) === 'cho_nhap', 'xuất file không đổi trạng thái phiếu');
+  ok(await k.locator('text=tải PDF nháp (đã xuất MISA').count() >= 1, 'cột Việc tiếp theo: kế toán tải PDF nháp');
+  await k.locator('tr', { hasText: sql(`select code from out_invoices where id='${I2}'`) }).click(); await k.waitForTimeout(1200);
+  ok(await k.locator('div.fixed.inset-0.z-50 button:text-is("Đã xuất nháp")').count() === 0, 'không còn nút Đã xuất nháp bấm tay');
+  ok(await k.locator('div.fixed.inset-0.z-50 button:has-text("Xem trước")').count() === 0, 'phiếu chờ xuất nháp không còn bản xem trước ERP');
+  await k.locator('div.fixed.inset-0.z-50 button:text-is("Đóng")').first().click();
   await uploadAs(k, [fx('NHAP_040091011932_23328000_20261031_1.pdf'), fx('NHAP_0700871570_11664000_20261102_2.pdf'), fx('scan hoa don.pdf')]);
   await k.screenshot({ path: SHOTS + '/1-upload-preview.png', fullPage: true });
   const txt = await k.locator('div.fixed.inset-0.z-50').innerText();
@@ -49,6 +61,8 @@ const fx = name => { const p = path.join(UP, name); fs.copyFileSync(path.join(FX
   ok(sql(`select count(*) from notifications where recipient_id='${A}' and link='#/out?inv=${I1}'`) === '1', 'sale A nhận thông báo kèm link mở phiếu');
   const s = await login('a@nt.vn', { width: 390, height: 844 });
   await s.goto(BASE + '#/out?inv=' + I1); await s.waitForSelector('text=Xem HĐ nháp v1', { timeout: 10000 });
+  ok(await s.locator('text=Có nháp — Sale gửi khách').count() >= 1, 'tên trạng thái mới');
+  ok(await s.locator('button:text-is("Yêu cầu sửa")').count() === 0 && await s.locator('button:has-text("Khách yêu cầu sửa")').count() === 1, 'chỉ còn 1 nút Khách yêu cầu sửa');
   await s.waitForTimeout(1500);   // tải sẵn file khi mở phiếu
   const t0 = Date.now(); await s.click('button:has-text("Xem HĐ nháp v1")');
   await s.waitForSelector('[data-hd-viewer] canvas', { timeout: 15000 }); const ms = Date.now() - t0;
@@ -74,7 +88,7 @@ const fx = name => { const p = path.join(UP, name); fs.copyFileSync(path.join(FX
   ok(cross[2] && cross[0] >= 400, `sale A xin vé xem file của sale B → bị chặn (${cross[0]})`);
   ok(cross[1] >= 400, `sale A đọc thẳng bảng file → bị chặn (${cross[1]})`);
   await s.goto(BASE + '#/out?inv=' + I3); await s.waitForTimeout(2000);
-  ok(await s.locator('text=Xem HĐ nháp').count() === 0, 'mở link phiếu của sale B → không thấy file');
+  ok(await s.locator('button:has-text("Xem HĐ nháp")').count() === 0 && await s.locator('text=Không tìm thấy phiếu').count() === 1, 'mở link phiếu của sale B → không thấy phiếu, không thấy file');
   const asLog = execSync('cat /var/tmp/as.log').toString();
   // ===== 4. Kế toán tải bản v2 → xác nhận cũ hủy, sale được báo =====
   console.log('4. Bản nháp mới v2');
@@ -111,7 +125,7 @@ const fx = name => { const p = path.join(UP, name); fs.copyFileSync(path.join(FX
   await k.locator('div.fixed.inset-0.z-50 button:text-is("Đóng")').first().click();
   await k.goto(BASE + '#/out'); await k.waitForTimeout(1500); await k.click('button:has-text("Tất cả")'); await k.waitForTimeout(1200);
   await k.screenshot({ path: SHOTS + '/7-acc-list.png', fullPage: true });
-  ok(await k.locator('text=📄 Đã ký').count() >= 1, 'danh sách: nhãn file đã ký');
+  ok(await k.locator('text=📄 Có PDF đã ký').count() >= 1, 'danh sách: nhãn file đã ký');
   ok(sql(`select count(*) from audit_logs where action='VIEW_HD_FILE'`) >= '4', 'ghi nhật ký mỗi lần xem file');
   await browser.close();
   console.log(errors.length ? errors.join('\n') : 'V20 E2E PASSED');

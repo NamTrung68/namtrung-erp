@@ -16,7 +16,7 @@ const saveBlob = (b: Blob, name: string) => { const u = URL.createObjectURL(b); 
 
 /** Nhãn file trên danh sách phiếu */
 export function FileBadge({ v }: { v: any }) {
-  if (v.ky_v) return <Badge color="green">📄 Đã ký</Badge>;
+  if (v.ky_v) return <Badge color="green">📄 Có PDF đã ký</Badge>;
   if (!v.nhap_v) return null;
   if (v.status === 'da_nhap' && !v.nhap_sent) return <Badge color="red">{v.nhap_v > 1 ? `Nháp mới v${v.nhap_v} — chưa gửi khách` : 'Nháp chưa gửi khách'}</Badge>;
   return <Badge color="blue">📄 Nháp v{v.nhap_v}</Badge>;
