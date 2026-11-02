@@ -395,7 +395,7 @@ function DriveCfg() {
       <div className="text-sm">Sao lưu gần nhất lên Drive: <b>{d.last_backup_at ? fmtDateTime(d.last_backup_at) : 'chưa có'}</b>{d.last_backup_at && (Date.now() - new Date(d.last_backup_at).getTime() > 36 * 36e5) && <Badge color="red" className="ml-2">quá 36 giờ — kiểm tra Apps Script</Badge>}</div>
       <div className="mt-1 text-sm">Lưu / xem file trên Drive: {!d.url ? <Badge>Chưa bật</Badge> : ver === undefined ? <Badge>đang kiểm tra…</Badge> : (ver || 0) >= 20 ? <Badge color="green">Đã bật · Apps Script bản {ver}</Badge>
         : <Badge color="red">Apps Script bản cũ — cập nhật theo khung bên dưới</Badge>} <button className="ml-1 text-xs text-brand-700 underline" onClick={checkVer}>kiểm tra lại</button></div>
-      <p className="mt-2 text-xs text-ink-500">Mỗi đêm 1h, Google Drive của anh tự kéo toàn bộ dữ liệu ERP về thư mục <b>NT-ERP/Sao luu</b> (file .json.gz, giữ 60 ngày). File Excel đối soát, XML hóa đơn lưu vào <b>NT-ERP/Ke toan</b>; PDF hóa đơn nháp / đã ký lưu vào <b>NT-ERP/HD nhap</b>, <b>NT-ERP/HD da ky</b> (file để kín, không chia sẻ — sale chỉ xem qua ERP). Khôi phục: Dữ liệu · Nhật ký → Khôi phục từ file sao lưu.</p>
+      <p className="mt-2 text-xs text-ink-500">Mỗi đêm 1h, Google Drive của anh tự kéo toàn bộ dữ liệu ERP về thư mục <b>ERP_NAMTRUNG/Sao luu</b> (file .json.gz, giữ 60 ngày). File Excel đối soát, XML hóa đơn lưu vào <b>ERP_NAMTRUNG/Ke toan</b>; PDF hóa đơn nháp / đã ký lưu vào <b>ERP_NAMTRUNG/HD nhap</b>, <b>ERP_NAMTRUNG/HD da ky</b> (file để kín, không chia sẻ — sale chỉ xem qua ERP). Khôi phục: Dữ liệu · Nhật ký → Khôi phục từ file sao lưu.</p>
     </Card>
     {d.url && ver !== undefined && (ver || 0) < 20 && <Card title="Cập nhật Apps Script lên bản 20 (đã cài trước đây — khoảng 2 phút)">
       <ol className="space-y-3">
@@ -412,7 +412,7 @@ function DriveCfg() {
         <Step n={2}>Mở <a className="font-semibold text-brand-700 underline" href="https://script.google.com/home/projects/create" target="_blank" rel="noreferrer">script.google.com → Dự án mới</a>, xóa hết, dán mã dưới đây, bấm Lưu. <Button size="sm" onClick={() => copy(code)}>Chép mã Apps Script</Button>
           <pre className="mt-2 max-h-40 overflow-auto rounded-xl bg-ink-900 p-3 text-[11px] text-ink-100">{code}</pre></Step>
         <Step n={3}>Bánh răng <b>Project Settings</b> → <b>Script properties</b> → thêm dòng <code>BACKUP_TOKEN</code> với giá trị ở bước 1.</Step>
-        <Step n={4}>Quay lại Editor, chọn hàm <b>setup</b> → <b>Run</b> → cho phép quyền. Kiểm tra Drive có thư mục <b>NT-ERP/Sao luu</b> với 1 file mới.</Step>
+        <Step n={4}>Quay lại Editor, chọn hàm <b>setup</b> → <b>Run</b> → cho phép quyền. Kiểm tra Drive có thư mục <b>ERP_NAMTRUNG/Sao luu</b> với 1 file mới.</Step>
         <Step n={5}><b>Deploy → New deployment → Web app</b>: Execute as <b>Me</b>, Who has access <b>Anyone</b> → Deploy → chép link Web app dán vào đây:
           <div className="mt-2 flex gap-2"><Input placeholder="https://script.google.com/macros/s/…/exec" value={url} onChange={e => setUrl(e.target.value)} />
             <Button variant="primary" loading={busy} onClick={() => run(async () => { await db.rpc('set_drive', { p_value: { url: url.trim() } }); await a.reload(); }, 'Đã lưu link')}>Lưu</Button></div></Step>

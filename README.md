@@ -59,7 +59,7 @@ npm run build            # → dist/
 
 ## File PDF hóa đơn (bản 20)
 
-- PDF hóa đơn nháp / đã ký từ MISA lưu **kín** trên Google Drive (`NT-ERP/HD nhap/<tháng>/<sale>`, `NT-ERP/HD da ky/<tháng>/<sale>`), không chia sẻ. Supabase chỉ giữ mã file, không trả mã này ra trình duyệt.
+- PDF hóa đơn nháp / đã ký từ MISA lưu **kín** trên Google Drive (`ERP_NAMTRUNG/HD nhap/<tháng>/<sale>`, `ERP_NAMTRUNG/HD da ky/<tháng>/<sale>`), không chia sẻ. Supabase chỉ giữ mã file, không trả mã này ra trình duyệt.
 - Tên file chuẩn: `NHAP_<MST|CCCD>_<Tổng tiền>_<yyyymmdd>_<stt>.pdf`, `KY_<Ký hiệu>-<Số HĐ>_<MST|CCCD>_<Tổng tiền>.pdf`. Tên khác thì ERP đọc chữ trong PDF (pdf.js tự host ở `vendor/pdfjs`).
 - Xem / tải lên đều qua **vé dùng 1 lần** (`out_file_ticket`, `drive_upload_tickets`, hết hạn 2 / 30 phút). Apps Script đổi vé bằng `drive_redeem` kèm `BACKUP_TOKEN`. Không còn `UPLOAD_KEY`.
 - Quyền: sale của phiếu, cấp trên theo cây nhân sự, Kế toán / Admin / BGĐ. Tải PDF lên: Kế toán / Admin / BGĐ. Mỗi lần xem ghi `audit_logs` (`VIEW_HD_FILE`).

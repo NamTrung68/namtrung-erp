@@ -66,11 +66,16 @@ export const appsScriptCode = (supabaseUrl: string, anonKey: string) => `// ====
 // Cập nhật bản mới: dán đè toàn bộ mã này → Lưu → Deploy → Manage deployments → ✎ → Version: New version → Deploy (link giữ nguyên)
 const SUPABASE_URL = '${supabaseUrl}';
 const ANON_KEY = '${anonKey}';
-const ROOT = 'NT-ERP';           // thư mục gốc trên Drive
+const ROOT = 'ERP_NAMTRUNG';     // thư mục chung chứa mọi file ERP trên Drive (thư mục cũ NT-ERP tự đổi tên thành thư mục này)
 const KEEP_DAYS = 60;            // giữ bản sao lưu 60 ngày
 
 const P = () => PropertiesService.getScriptProperties();
-function root_() { const it = DriveApp.getFoldersByName(ROOT); return it.hasNext() ? it.next() : DriveApp.createFolder(ROOT); }
+function root_() {
+  const it = DriveApp.getFoldersByName(ROOT); if (it.hasNext()) return it.next();
+  const old = DriveApp.getFoldersByName('NT-ERP');   // gom thư mục cũ vào thư mục chung: đổi tên, link file cũ vẫn mở được
+  if (old.hasNext()) { const f = old.next(); f.setName(ROOT); return f; }
+  return DriveApp.createFolder(ROOT);
+}
 function folder_(path) { return String(path || 'Khac').split('/').filter(String).reduce((f, n) => { const it = f.getFoldersByName(n); return it.hasNext() ? it.next() : f.createFolder(n); }, root_()); }
 
 function setup() {

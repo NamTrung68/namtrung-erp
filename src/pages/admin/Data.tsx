@@ -148,7 +148,7 @@ function DriveRestore() {
   }, 'Đã chạy khôi phục');
   if (!a.isAdmin) return null;
   return <Card title="Khôi phục từ file sao lưu Google Drive">
-    <p className="mb-2 text-sm text-ink-600">Tải file <b>nt-erp_…json.gz</b> trong thư mục Drive <b>NT-ERP/Sao luu</b> về máy rồi chọn ở đây.</p>
+    <p className="mb-2 text-sm text-ink-600">Tải file <b>nt-erp_…json.gz</b> trong thư mục Drive <b>ERP_NAMTRUNG/Sao luu</b> về máy rồi chọn ở đây.</p>
     <input type="file" accept=".gz,.json" onChange={e => open(e.target.files?.[0])} />
     {bk && <div className="mt-3"><div className="mb-2 text-sm">File {bk.name} · sao lưu lúc <b>{fmtDateTime(bk.at)}</b></div>
       <div className="grid max-h-60 grid-cols-2 gap-1 overflow-auto rounded-xl border border-ink-200 p-2 text-xs sm:grid-cols-3">{Object.keys(bk.tables).sort().map(t => <label key={t} className="flex items-center gap-1.5">
