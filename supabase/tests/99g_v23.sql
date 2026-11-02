@@ -104,4 +104,14 @@ reset role;
 select pg_temp.as_user('b@nt.vn'); set role authenticated;
 select pg_temp.check(jsonb_array_length(public.out_clean_orders(array['MD2525'])) = 0, 'sale khác không thấy đơn');
 reset role;
+-- bản 23b: pháp nhân nhận HĐ khớp theo username khách; khách mới vào ERP sau vẫn tự gắn
+select pg_temp.as_user('kt@nt.vn'); set role authenticated;
+select public.out_buyers_import('[{"tax_code":"0101999888","name":"CÔNG TY LOA V23","username":"tiendat2603"},{"tax_code":"0101777666","name":"HKD CHƯA VÀO ERP","username":"khachmoi23"}]');
+reset role;
+select pg_temp.check((select is_default from public.out_buyers where tax_code='0101999888' and customer_id='00000000-0000-0000-0023-0000000000c2'), 'username → đúng khách, thành pháp nhân mặc định');
+select pg_temp.check((select customer_id is null and username = 'khachmoi23' from public.out_buyers where tax_code='0101777666'), 'chưa có khách → giữ username chờ gắn');
+insert into public.customers(id, code, company_name, contact_name, customer_type, source, phone, owner_id, sys_username)
+  select '00000000-0000-0000-0023-0000000000c3', 'KHV23C', 'HKD C', 'Anh C', 'nha_buon', 'tu_tim_zalo', '+84 912 230 025', id, 'khachmoi23' from public.profiles where email='a@nt.vn';
+insert into public.out_items(ma_hang, ten, dvt, vat, sl_nhap, dg_nhap, customer_id) values ('HH00001-2099-2026', 'Hàng khách mới', 'Cái', 0.08, 1, 1000, '00000000-0000-0000-0023-0000000000c3');
+select pg_temp.check((select customer_id = '00000000-0000-0000-0023-0000000000c3' and is_default from public.out_buyers where tax_code='0101777666'), 'khách vào ERP + có hàng → pháp nhân tự gắn, mặc định');
 select 'V23 TESTS PASSED' as result;
