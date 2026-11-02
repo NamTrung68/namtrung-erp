@@ -33,6 +33,7 @@ import Account from './pages/Account';
 import Acc from './pages/acc/Acc';
 import { AccApprove, AccMine } from './pages/acc/Mine';
 import Out from './pages/out/Out';
+import { HdKeToan, HdQuanLy, HdSale } from './pages/hd/Hd';
 
 const routes: Record<string, React.FC> = {
   '/': Today, '/dashboard': Dashboard, '/hr/timesheet': Timesheet, '/hr/staff': Staff, '/crm/library': Library, '/crm/replies': Replies, '/inventory': Inventory,
@@ -43,7 +44,7 @@ const routes: Record<string, React.FC> = {
   '/hr/attendance': Attendance, '/hr/leave': Leave, '/hr/approvals': Approvals,
   '/hr/payroll': Payroll, '/hr/payslips': Payslips, '/hr/payslip': PayslipView,
   '/admin/users': Users, '/admin/settings': Settings, '/admin/data': DataAdmin,
-  '/account': Account, '/acc': Acc, '/acc/mine': AccMine, '/acc/approve': AccApprove, '/out': Out,
+  '/account': Account, '/acc': Acc, '/acc/mine': AccMine, '/acc/approve': AccApprove, '/out': Out, '/hd': HdSale, '/hd/kt': HdKeToan, '/hd/ql': HdQuanLy,
 };
 
 function Router() {

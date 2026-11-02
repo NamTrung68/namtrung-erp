@@ -13,6 +13,7 @@ import { Money, useAccCfg } from '../acc/common';
 import { printDraft } from './print';
 import { FileBadge, HdFilesSection, UploadHdPdf, type HdF } from './HdFiles';
 import { BulkInvoices, PricePick, VatBadge, srcTxt } from './Bulk';
+import { downloadMau } from '../../lib/mau';
 
 export const OST: Record<string, [string, string]> = {
   soan: ['Sale đang soạn', 'slate'], cho_duyet_gia: ['Chờ duyệt giá', 'red'], cho_nhap: ['Đã gửi — chờ export', 'amber'], da_nhap: ['Có nháp — chờ sale duyệt', 'blue'],
@@ -45,7 +46,7 @@ export function nextStep(v: any): [string, string] {
 const NextStep = ({ v }: { v: any }) => { const [who, what] = nextStep(v); return who ? <div className="text-[11px] leading-tight text-ink-500"><b className={who === 'Sale' ? 'text-brand-700' : 'text-amber-700'}>{who}</b>: {what}</div> : null; };
 const OBadge = ({ s }: { s: string }) => <Badge color={OST[s]?.[1] || 'gray'}>{OST[s]?.[0] || s}</Badge>;
 const vatTxt = (v: any) => (v === null || v === undefined ? '' : Math.round(Number(v) * 100) + '%');
-const INV_SEL = '*,out_invoice_lines(id,item_id,stt,sl,don_gia,vat,out_items(id,ma_hang,part,ten,dvt,vat,sl_nhap,dg_nhap,gia_khach,so_hd_vao,md))';
+export const INV_SEL = '*,out_invoice_lines(id,item_id,stt,sl,don_gia,vat,out_items(id,ma_hang,part,ten,dvt,vat,sl_nhap,dg_nhap,gia_khach,so_hd_vao,md))';
 const totalOf = (v: any) => (v.out_invoice_lines || []).reduce((t: number, l: any) => { const tt = Math.round(l.sl * l.don_gia); return { tt: t.tt + tt, thue: t.thue + Math.round(tt * Number(l.vat ?? l.out_items?.vat ?? 0)) } as any; }, { tt: 0, thue: 0 } as any);
 
 export default function Out() {
@@ -196,7 +197,7 @@ function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean })
 }
 
 /** Bản 23 — dòng HĐ ký lệch nháp (khóa) hoặc chưa ghép được dòng nháp: ghép lại theo gợi ý, hoặc chấp nhận kèm lý do */
-function LechModal({ t, onClose, onDone }: { t: any; onClose: () => void; onDone: () => void }) {
+export function LechModal({ t, onClose, onDone }: { t: any; onClose: () => void; onDone: () => void }) {
   const { busy, run } = useAction(); const [note, setNote] = useState('');
   const { data: sug, loading } = useLoad(() => db.rpc<any[]>('out_item_suggest', { p_id: t.id }), [t.id]);
   const relink = (line: string) => run(async () => { await db.rpc('out_item_relink', { p_id: t.id, p_line: line }); onDone(); }, 'Đã ghép lại');
@@ -217,7 +218,7 @@ function LechModal({ t, onClose, onDone }: { t: any; onClose: () => void; onDone
 }
 
 /** Báo cáo tồn HĐ đầu vào chưa xuất, theo sale (bản 23) */
-function TonReport() {
+export function TonReport() {
   const a = useApp(); const { busy, run } = useAction(); const [den, setDen] = useState(today());
   const { data, loading } = useLoad(() => db.rpc<any[]>('out_ton_report', { p_den: den }), [den]);
   const rows = data || []; const sum = (k: string) => rows.reduce((x: number, r: any) => x + Number(r[k] || 0), 0);
@@ -286,7 +287,7 @@ function ClaimItem({ t, onClose, onDone }: { t: any; onClose: () => void; onDone
   </Modal>;
 }
 
-function ImportSo({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+export function ImportSo({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const { busy, run } = useAction(); const [file, setFile] = useState<File | null>(null); const [ord, setOrd] = useState<File | null>(null); const [buy, setBuy] = useState<File | null>(null);
   const [res, setRes] = useState<any>(null); const [err, setErr] = useState(''); const [step, setStep] = useState('');
   const analyze = async () => { setErr(''); setRes(null);
@@ -319,14 +320,14 @@ function ImportSo({ onClose, onDone }: { onClose: () => void; onDone: () => void
   return <Modal open onClose={onClose} size="lg" title="Nạp sổ HĐ chính thức · đơn hàng · đơn vị nhận HĐ"
     footer={res ? <Button variant="primary" loading={busy} onClick={save}>Lưu</Button> : <Button variant="dark" onClick={analyze}>Đọc file</Button>}>
     <div className="grid gap-3 sm:grid-cols-3">
-      <F f={file} set={setFile} l="1. Sổ Excel HĐ (mẫu Xuathd)" hint="Mã hàng HH0001-1726-2026, Tên hàng, SL nhập, Số HĐ… ID/NVKD/USER trống cũng được" />
+      <F f={file} set={setFile} l="1. HĐ chính thức APT (sổ nhập)" hint="Mã hàng HH00044-2080-2026, Tên hàng, SL nhập, Đơn giá nhập, Số HĐ — ERP tự ghép về dòng nháp theo tên + SL" />
       <F f={ord} set={setOrd} l="2. Danh sách đơn hàng (+ giá xuất)" hint="Mã đơn hàng, Username, Sale; thêm Tên hàng, Số lượng, Đơn giá xuất → ERP có giá theo đơn" />
       <F f={buy} set={setBuy} l="3. Danh sách đơn vị nhận HĐ" hint="Sheet “Thong tin KH” (MST, Tên đơn vị, Địa chỉ, mail, Username) → gắn đúng khách, lập phiếu tự điền" /></div>
     <div className="mt-2 text-xs text-ink-500">Nạp file nào cũng được, không cần đủ cả 3. Nạp lại nhiều lần không bị trùng.</div>
     <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-ink-50 px-3 py-2 text-xs">⬇ File mẫu (đúng cột):
-      <button className="font-semibold text-brand-700 underline" onClick={() => writeXlsx('Mau_so_HD_dau_vao', TPL_SO, 'So HD')}>1. Sổ HĐ (có Đơn giá xuất)</button>
-      <button className="font-semibold text-brand-700 underline" onClick={() => writeXlsx('Mau_don_hang_gia_xuat', TPL_ORDERS, 'Don hang')}>2. Đơn hàng + giá xuất</button>
-      <button className="font-semibold text-brand-700 underline" onClick={() => writeXlsx('Mau_don_vi_nhan_HD', TPL_BUYERS, 'Thong tin KH')}>3. Đơn vị nhận HĐ</button>
+      <button className="font-semibold text-brand-700 underline" onClick={() => downloadMau('hd')}>1. HĐ chính thức APT</button>
+      <button className="font-semibold text-brand-700 underline" onClick={() => downloadMau('orders')}>2. Đơn hàng + giá xuất</button>
+      <button className="font-semibold text-brand-700 underline" onClick={() => downloadMau('buyers')}>3. Pháp nhân nhận HĐ (có Username)</button>
       <span className="text-ink-500">Giá xuất theo ID đơn + tên hàng + SL: ERP tự khớp đúng dòng; đơn nhiều giá mà không khớp được thì để sale chọn.</span></div>
     {err && <div className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{err}</div>}
     {step && <div className="mt-3 rounded-lg bg-brand-50 p-3 text-sm font-semibold text-brand-800">{step}</div>}
@@ -353,7 +354,7 @@ function ItemEdit({ t, onClose, onDone }: { t: any; onClose: () => void; onDone:
 }
 
 // ============ Lập / sửa phiếu ============
-function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: any; onClose: () => void; onDone: () => void }) {
+export function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: any; onClose: () => void; onDone: () => void }) {
   const a = useApp(); const { busy, run } = useAction(); const cfg = useAccCfg();
   const init = inv ? (inv.out_invoice_lines || []).map((l: any) => ({ item: l.out_items, item_id: l.item_id, sl: String(l.sl), gia: String(Math.round(l.don_gia)), vat: l.vat }))
     : (items || []).map(t => ({ item: t, item_id: t.id, sl: String(+Number(t.ton).toFixed(4)), gia: t.gia_khach ? String(Math.round(t.gia_khach)) : '', vat: t.vat }));
@@ -450,15 +451,8 @@ function Invoices({ acc, openId }: { acc: boolean; openId?: string | null }) {
   const { data: sales } = useLoad(() => acc || a.isLead ? db.rpc<any[]>('out_sale_opts') : Promise.resolve([]), [acc]);
   const saleOpts = (sales || []).map((x: any) => x.id) as string[];
   const exportMisa = () => run(async () => {
-    const ids = chosen.length ? chosen.map((v: any) => v.id) : null;
-    let qq = db.from<any[]>('out_invoices').select(INV_SEL).order('status_at');
-    qq = ids ? qq.in('id', ids) : qq.eq('status', 'cho_nhap').is('misa_at', null);
-    const list = await qq; if (!list.length) throw new Error(ids ? 'Không có phiếu' : 'Không còn phiếu chưa xuất file MISA — tick phiếu muốn xuất lại');
-    await writeXlsx('HD_nhap_MISA_' + today(), misaRows(list), 'Hóa đơn GTGT', true, { headerRow: MISA_HEADER_ROW, fmt: { 11: 'int', 12: 'int', 13: 'int', 14: 'pct', 15: 'int' } });
-    await writeXlsx('HD_nhap_doi_chieu_phieu_' + today(), misaMap(list, id => a.personName(id)), 'Đối chiếu');
-    const cho = list.filter((v: any) => v.status === 'cho_nhap').map((v: any) => v.id);
-    if (cho.length) await db.rpc('out_mark_misa', { p_ids: cho });
-    setPick({}); reload(); toast.ok(`Đã xuất ${list.length} phiếu — nhập file vào MISA, tạo nháp, rồi bấm ② Tải PDF`);
+    const n = await exportMisaFile(chosen.length ? chosen.map((v: any) => v.id) : null, id => a.personName(id));
+    setPick({}); reload(); toast.ok(`Đã xuất ${n} phiếu — nhập file vào MISA, tạo nháp, rồi bấm ② Tải PDF`);
   });
   const misaN = Number(data?.misa_chua || 0), suaN = Number(data?.sua || 0);
   const stItems: [string, string, number, string][] = [['cho_duyet_gia', OST.cho_duyet_gia[0], c('cho_duyet_gia'), 'red'], ['cho_nhap', OST.cho_nhap[0], c('cho_nhap'), 'amber'], ['da_nhap', OST.da_nhap[0], c('da_nhap'), 'blue'],
@@ -509,7 +503,19 @@ function Invoices({ acc, openId }: { acc: boolean; openId?: string | null }) {
   </>;
 }
 
-function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc: boolean; onClose: () => void; onChanged: () => void }) {
+/** Xuất file nhập MISA cho các yêu cầu chọn (hoặc mọi yêu cầu "Đã gửi" chưa export) + file đối chiếu, rồi ghi mốc export */
+export async function exportMisaFile(ids: string[] | null, personName: (id: string) => string): Promise<number> {
+  let qq = db.from<any[]>('out_invoices').select(INV_SEL).order('status_at');
+  qq = ids ? qq.in('id', ids) : qq.eq('status', 'cho_nhap').is('misa_at', null);
+  const list = await qq; if (!list.length) throw new Error(ids ? 'Không có yêu cầu' : 'Không còn yêu cầu chưa export MISA');
+  await writeXlsx('HD_nhap_MISA_' + today(), misaRows(list), 'Hóa đơn GTGT', true, { headerRow: MISA_HEADER_ROW, fmt: { 11: 'int', 12: 'int', 13: 'int', 14: 'pct', 15: 'int' } });
+  await writeXlsx('HD_nhap_doi_chieu_phieu_' + today(), misaMap(list, personName), 'Đối chiếu');
+  const cho = list.filter((v: any) => v.status === 'cho_nhap').map((v: any) => v.id);
+  if (cho.length) await db.rpc('out_mark_misa', { p_ids: cho });
+  return list.length;
+}
+
+export function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc: boolean; onClose: () => void; onChanged: () => void }) {
   const a = useApp(); const { busy, run } = useAction(); const [edit, setEdit] = useState(false); const [msg, setMsg] = useState('');
   const { data: v, loading: vLoading, reload } = useLoad(() => db.from<any>('out_invoices').select(INV_SEL).eq('id', id).maybeSingle(), [id]);
   const { data: ev, reload: rev } = useLoad(() => db.from<any[]>('out_events').select('*').eq('invoice_id', id).order('at'), [id]);

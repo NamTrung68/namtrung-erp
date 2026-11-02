@@ -59,9 +59,12 @@ export function useNav() {
       { to: '/hr/staff', label: a.isAdmin || a.has('hcns', 'bgd') ? 'Hồ sơ nhân sự' : 'Hồ sơ của tôi', icon: '🗂️', show: true },
     ]],
     ['Kế toán – Hóa đơn', [
-      { to: '/acc', label: 'Đối soát xe & HĐ APT', icon: '🧾', show: a.isAdmin || a.has('ke_toan') },
-      { to: '/acc/mine', label: 'Việc HĐ của tôi', icon: '📮', show: a.isSales },
-      { to: '/out', label: 'Xuất HĐ đầu ra', icon: '🧮', show: a.isSales || a.isAdmin || a.has('ke_toan') },
+      { to: '/hd/kt', label: 'Bàn làm việc kế toán', icon: '🧾', show: a.isAdmin || a.has('ke_toan') },
+      { to: '/hd', label: 'Hóa đơn của tôi', icon: '📮', show: a.isSales },
+      { to: '/hd/ql', label: 'Duyệt giá & tồn HĐ', icon: '✅', show: a.isLead || a.has('ke_toan', 'bgd') },
+      { to: '/acc/mine', label: 'Đối soát xe của tôi', icon: '🚚', show: a.isSales },
+      { to: '/acc', label: 'Danh sách xe đối soát', icon: '🚚', show: a.isAdmin || a.has('ke_toan') },
+      { to: '/out', label: 'Tra cứu yêu cầu · bảng gốc', icon: '🔎', show: a.isSales || a.isAdmin || a.has('ke_toan') },
       { to: '/acc/approve', label: 'Duyệt mở chặn HĐ', icon: '🔓', show: a.isAdmin || (a.settings.accounting?.approver_ids || []).includes(a.me.id) },
     ]],
     ['Vận hành', [
@@ -92,7 +95,9 @@ export function Layout({ children, title, actions }: { children: React.ReactNode
         <div key={g}>
           {g && <div className="mb-1 mt-1 px-3 text-[11px] font-bold uppercase tracking-wider text-ink-400">{g}</div>}
           {items.map(i => {
-            const on = i.to === '/' ? path === '/' : path.startsWith(i.to);
+            // mục khớp dài nhất mới sáng (tránh /hd sáng cùng /hd/ql, /acc cùng /acc/mine)
+            const hit = (to: string) => to === '/' ? path === '/' : path === to || path.startsWith(to + '/');
+            const on = hit(i.to) && !nav.some(([, its]) => its.some(o => o.to !== i.to && o.to.length > i.to.length && hit(o.to)));
             return <a key={i.to} href={'#' + i.to} className={cx('mb-0.5 flex items-center gap-3 rounded-2xl px-3 py-2 text-[14.5px] transition', on ? 'bg-ink-900 font-bold text-white shadow-soft' : 'font-semibold text-ink-600 hover:bg-white hover:text-ink-900')}>
               <span className="w-6 text-center text-[17px] leading-none">{i.icon}</span>{i.label}</a>;
           })}

@@ -10,6 +10,7 @@ import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/form
 import { aptPriceList, aptPriceMsg, MATCH_KIND, type MatchKind, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, normMd, parseApt, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile } from '../../lib/doisoat';
 import { driveReady, saveToDrive } from '../../lib/drive';
 import { bienTone, deXuat, dueTxt, GiaApt, lineName, LuongBadge, Money, pctTxt, REPLY, REPLY_SUB, ST, StatusBadge, useAccCfg } from './common';
+import { downloadMau, type MauKind } from '../../lib/mau';
 import { AssignModal, ChotModal, ClaimForm, ReplyForm } from './forms';
 export { useAccCfg, ReplyForm };
 
@@ -62,7 +63,7 @@ export function useSaleMatcher() {
   }, [data]);
 }
 
-function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: () => void; onDone: (id: string) => void }) {
+export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: () => void; onDone: (id: string) => void }) {
   const a = useApp(); const cfg = useAccCfg(); const sm = useSaleMatcher(); const { busy, run } = useAction();
   const [name, setName] = useState(truck?.name || ''); const [date, setDate] = useState(truck?.truck_date || today());
   const [files, setFiles] = useState<Record<string, File | null>>({ kb: null, apt: null, tkn: null });
@@ -110,7 +111,7 @@ function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: () => v
     const n = await db.rpc<number>('acc_relink_truck', { p_truck: id }).catch(() => 0); if (n) toast.info(`${n} dòng HĐ APT đã về trước được ghép vào xe này`);
     onDone(id);
   }, target ? 'Đã nạp lại, giữ nguyên trả lời của sale' : test ? 'Đã lưu xe nạp thử — sale chưa thấy' : 'Đã lưu đối soát, đã báo sale dòng bị chặn');
-  const F = ({ k, l, hint }: { k: string; l: string; hint: string }) => <Field label={l} hint={hint}>
+  const F = ({ k, l, hint, mau }: { k: string; l: string; hint: string; mau?: MauKind }) => <Field label={<span>{l}{mau && <button type="button" className="ml-2 text-[11px] font-semibold text-brand-700 underline" onClick={() => downloadMau(mau)}>⬇ file mẫu</button>}</span>} hint={hint}>
     <label className={cx('flex cursor-pointer items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-sm', files[k] ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : 'border-ink-300 hover:border-brand-400')}>
       <input type="file" accept=".xlsx,.csv" className="hidden" onChange={e => { setFiles(f => ({ ...f, [k]: e.target.files?.[0] || null })); setRes(null); }} />
       {files[k] ? '✓ ' + files[k]!.name : '⇪ Chọn file .xlsx'}</label></Field>;
@@ -119,7 +120,7 @@ function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: () => v
     <div className="grid gap-3 sm:grid-cols-2"><Field label="Tên xe"><Input value={name} placeholder="VD: Xe 25/10" onChange={e => setName(e.target.value)} /></Field>
       <Field label="Ngày xe"><Input type="date" value={date} onChange={e => setDate(e.target.value)} /></Field></div>
     <div className="mt-3 grid gap-3 sm:grid-cols-3">
-      <F k="kb" l="1. File khai báo hệ thống *" hint="Xuất từ NamtrungLog (KhaiBao_XH…)" /><F k="apt" l="2. File check APT *" hint="APT gửi (hoadonnhap…), dòng đầu STT" />
+      <F k="kb" l="1. File xe hệ thống *" hint="Xuất từ NamtrungLog (KhaiBao_XH…) — ID ĐƠN, USERNAME KHÁCH, SALE, MÃ KHAI BÁO, giá khách" mau="xe" /><F k="apt" l="2. Nháp HĐ APT *" hint="APT gửi (Google Sheet tải .xlsx) — có cột MÃ KHAI BÁO" mau="apt" />
       <F k="tkn" l="3. Tờ khai nháp TKN" hint="Không bắt buộc — có thì thêm biên APT theo giá vốn" /></div>
     <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
       <Field label="MD APT xuất thẳng của xe này" hint="Gõ hoặc dán danh sách, cách nhau dấu phẩy/xuống dòng. 2411 hay MD2411 đều được. Dòng có NOTE “XUẤT THẲNG” trên file APT tự nhận.">
