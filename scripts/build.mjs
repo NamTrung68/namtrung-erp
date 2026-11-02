@@ -14,6 +14,10 @@ await build({
   outfile: `${out}/app.js`, jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' }, legalComments: 'none', logLevel: 'info',
 });
 
+// pdf.js (xem / đọc PDF hóa đơn) — tự host, chỉ tải khi mở hóa đơn
+mkdirSync(`${out}/vendor/pdfjs`, { recursive: true });
+for (const f of ['pdf.min.mjs', 'pdf.worker.min.mjs']) cpSync(`node_modules/pdfjs-dist/legacy/build/${f}`, `${out}/vendor/pdfjs/${f}`);
+
 // Tailwind: CLI trong node_modules (CI) hoặc binary chỉ định qua TAILWIND_BIN
 const twArgs = ['-c', 'tailwind.config.cjs', '-i', 'src/styles.css', '-o', `${out}/app.css`, '--minify'];
 if (process.env.TAILWIND_BIN) execFileSync(process.env.TAILWIND_BIN, twArgs, { stdio: 'inherit' });

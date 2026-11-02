@@ -5,16 +5,17 @@ import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, Select, S
 import { Pager, usePager } from '../../components/Pager';
 import { CustomerPicker } from '../../components/CustomerPicker';
 import { db, fetchAll } from '../../lib/sb';
-import { useApp } from '../../state';
+import { go, useApp, useRoute } from '../../state';
 import { readTable, readXlsx, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
 import { MISA_HEADER_ROW, misaMap, misaRows, parseBuyers, parseInfo, parseOrders, parseSoXuat, soRows } from '../../lib/xuathd';
 import { Money, useAccCfg } from '../acc/common';
 import { printDraft } from './print';
+import { FileBadge, HdFilesSection, UploadHdPdf, type HdF } from './HdFiles';
 
 export const OST: Record<string, [string, string]> = {
   soan: ['Sale đang soạn', 'slate'], cho_nhap: ['Chờ xuất nháp', 'amber'], da_nhap: ['Đã xuất nháp — chờ sale', 'blue'],
-  xac_nhan_ky: ['Sale xác nhận ký', 'purple'], da_ky: ['Đã ký', 'green'], huy: ['Hủy', 'gray'],
+  xac_nhan_ky: ['Khách OK — chờ ký', 'purple'], da_ky: ['Đã ký', 'green'], huy: ['Hủy', 'gray'],
 };
 /** Đơn giá xuất so với giá nhập (APT) và giá khách trên hệ thống */
 function giaCheck(gia: number, dgNhap: number | null, gk: number | null, min: number): { tone: string; txt: string; bad: boolean } {
@@ -31,15 +32,15 @@ const INV_SEL = '*,out_invoice_lines(id,item_id,stt,sl,don_gia,vat,out_items(id,
 const totalOf = (v: any) => (v.out_invoice_lines || []).reduce((t: number, l: any) => { const tt = Math.round(l.sl * l.don_gia); return { tt: t.tt + tt, thue: t.thue + Math.round(tt * Number(l.vat ?? l.out_items?.vat ?? 0)) } as any; }, { tt: 0, thue: 0 } as any);
 
 export default function Out() {
-  const a = useApp(); const acc = a.isAdmin || a.has('ke_toan');
+  const a = useApp(); const acc = a.isAdmin || a.has('ke_toan'); const { query } = useRoute(); const openId = query.inv || null;
   const [tab, setTab] = useState<string>(() => sessionStorage.getItem('nt_out_tab') || (acc ? 'inv' : 'mine'));
   const go2 = (t: string) => { setTab(t); sessionStorage.setItem('nt_out_tab', t); };
   if (!acc && !a.isSales) return <Layout title="Xuất HĐ đầu ra"><Card>Chỉ Kế toán và Kinh doanh.</Card></Layout>;
   const tabs: [string, React.ReactNode][] = acc ? [['inv', 'Phiếu xuất HĐ'], ['items', 'Sổ HĐ đầu vào (mã hàng)']] : [['mine', 'Hàng chờ xuất HĐ'], ['inv', 'Phiếu của tôi'], ['free', 'Dòng chưa có sale']];
-  const t = tabs.some(x => x[0] === tab) ? tab : tabs[0][0];
+  const t = openId ? 'inv' : tabs.some(x => x[0] === tab) ? tab : tabs[0][0];
   return <Layout title="Xuất HĐ đầu ra">
     <Tabs value={t} onChange={go2} tabs={tabs} />
-    <div className="mt-4">{t === 'inv' && <Invoices acc={acc} />}{t === 'items' && <Items acc />}{t === 'mine' && <Items />}{t === 'free' && <Items free />}</div>
+    <div className="mt-4">{t === 'inv' && <Invoices acc={acc} openId={openId} />}{t === 'items' && <Items acc />}{t === 'mine' && <Items />}{t === 'free' && <Items free />}</div>
   </Layout>;
 }
 
@@ -59,7 +60,7 @@ function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean })
     if (acc || free) return null;
     const r = await db.rpc<any>('out_invoices_page', { p: { limit: 0 } }); const m = new Date(); const from = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}-01`;
     const k = await db.from<any>('out_invoices').select('id', { count: true }).eq('status', 'da_ky').gte('status_at', from).limit(1) as any;
-    return { ...(r?.counts || {}), ky_thang: k?.count ?? 0 };
+    return { ...(r?.counts || {}), chua_gui: r?.chua_gui ?? 0, ky_thang: k?.count ?? 0 };
   }, [acc, free]);
   const reload = () => { reloadRows(); reloadSt(); };
   const rows: any[] = data?.rows || []; const total: number = data?.total || 0; const S = st || {};
@@ -94,7 +95,7 @@ function Items({ acc = false, free = false }: { acc?: boolean; free?: boolean })
       <Stat label="Dòng chờ xuất HĐ" value={S.ton ?? '…'} tone={S.ton ? 'amber' : undefined} />
       <Stat label="Giá trị còn tồn" value={S.gia_tri !== undefined ? money(S.gia_tri) : '…'} sub="theo giá xuất khách" />
       <Stat label="Phiếu chờ kế toán xuất nháp" value={icN('cho_nhap') + icN('soan')} sub={icN('soan') ? `${icN('soan')} phiếu đang soạn` : ''} />
-      <Stat label="Nháp chờ bạn xác nhận ký" value={icN('da_nhap')} tone={icN('da_nhap') ? 'red' : undefined} />
+      <Stat label="Nháp chờ bạn xác nhận ký" value={icN('da_nhap')} tone={icN('da_nhap') ? 'red' : undefined} sub={icN('chua_gui') ? `${icN('chua_gui')} bản chưa gửi khách` : ''} />
       <Stat label="Đã ký tháng này" value={icN('ky_thang')} tone="green" /></div>}
     {free && <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Dòng trên HĐ chính thức còn tồn mà chưa xác định được sale (dòng đã ký không hiện ở đây). Hàng của bạn thì bấm <b>Nhận</b>, nhập mã đơn.</p>}
     {!acc && !free && <p className="mb-3 text-sm text-ink-600">Tick các dòng cùng 1 đơn vị nhận HĐ → <b>Lập phiếu xuất HĐ</b>: xác nhận giá + thông tin xuất HĐ. Dòng đã ký nằm ở “Phiếu của tôi → Đã ký”.</p>}
@@ -324,9 +325,11 @@ function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: a
 }
 
 // ============ Danh sách phiếu ============
-function Invoices({ acc }: { acc: boolean }) {
-  const a = useApp(); const { busy, run } = useAction();
-  const [st, setSt] = useState('cho_nhap'); const [q, setQ] = useState(''); const qd = useDebounced(q); const [sale, setSale] = useState(''); const [sel, setSel] = useState<string | null>(null);
+function Invoices({ acc, openId }: { acc: boolean; openId?: string | null }) {
+  const a = useApp(); const { busy, run } = useAction(); const [upPdf, setUpPdf] = useState(false);
+  const [st, setSt] = useState(acc ? 'cho_nhap' : 'da_nhap'); const [q, setQ] = useState(''); const qd = useDebounced(q); const [sale, setSale] = useState(''); const [sel, setSelRaw] = useState<string | null>(openId || null);
+  React.useEffect(() => { if (openId) setSelRaw(openId); }, [openId]);
+  const setSel = (id: string | null) => { setSelRaw(id); if (!id && location.hash.includes('inv=')) go('/out'); };
   const [pick, setPick] = useState<Record<string, any>>({});
   const pg = usePager('out_inv', [st, qd, sale]);
   const { data, loading, reload } = useLoad(() => db.rpc<any>('out_invoices_page', { p: { status: st, q: qd, sale, offset: pg.from, limit: pg.size } }), [st, qd, sale, pg.from, pg.size]);
@@ -356,12 +359,14 @@ function Invoices({ acc }: { acc: boolean }) {
       <Input className="max-w-xs" placeholder="🔎 Mã phiếu, đơn vị mua, MST, mã hàng, MD, số HĐ…" value={q} onChange={e => setQ(e.target.value)} />
       {(acc || a.isLead) && saleOpts.length > 1 && <Select className="w-48" placeholder="Tất cả sale" options={(sales || []).map((x: any) => [x.id, x.full_name] as [string, string])} value={sale} onChange={setSale} />}
       <Button onClick={reload}>↻ Tải lại</Button>
+      {acc && <Button variant="dark" onClick={() => setUpPdf(true)}>⇪ Tải PDF hóa đơn (nháp / đã ký)</Button>}
       {acc && <Button variant="primary" loading={busy} onClick={exportMisa}>⬇ Xuất file nháp{chosen.length ? ` (${chosen.length} phiếu)` : ' (tất cả chờ xuất nháp)'}</Button>}
       {acc && chosen.length > 0 && <button className="text-xs text-ink-500 underline" onClick={() => setPick({})}>Bỏ chọn</button>}
     </div>
     {!loading && rows.length > 0 && <div className="mb-3 space-y-2 sm:hidden">{rows.map((v: any) =>
       <button key={v.id} className="block w-full rounded-2xl border border-ink-200 bg-white p-3 text-left shadow-soft" onClick={() => setSel(v.id)}>
         <div className="flex items-center justify-between gap-2"><b>{v.code}</b><OBadge s={v.status} /></div>
+        {(v.nhap_v || v.ky_v) && <div className="mt-1"><FileBadge v={v} /></div>}
         <div className="mt-1 line-clamp-2 text-sm font-medium text-ink-900">{v.buyer_name || v.buyer_info}</div>
         <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-ink-600">{v.tax_code && <span>MST {v.tax_code}</span>}<span>{v.so_dong} dòng</span><span>Tổng <b><Money v={Number(v.tien_hang) + Number(v.tien_thue)} /></b></span>
           {acc && <span>{a.personName(v.sale_id)}</span>}{v.so_hd && <span>HĐ {v.so_hd}</span>}{v.sua_sau_nhap && <span className="font-semibold text-red-600">sửa sau nháp</span>}</div></button>)}
@@ -373,10 +378,11 @@ function Invoices({ acc }: { acc: boolean }) {
           <Td className="whitespace-nowrap font-semibold">{v.code}{flags(v)}</Td>
           <Td className="whitespace-nowrap text-xs">{a.personName(v.sale_id)}</Td><Td className="max-w-[260px] text-xs"><div className="line-clamp-2">{v.buyer_name || v.buyer_info}</div></Td><Td className="text-xs">{v.tax_code}</Td>
           <Td className="text-right">{v.so_dong}</Td><Td className="text-right"><Money v={v.tien_hang} /></Td><Td className="text-right text-xs"><Money v={v.tien_thue} /></Td>
-          <Td><OBadge s={v.status} /></Td><Td className="whitespace-nowrap text-xs">{v.so_hd}<div className="text-ink-400">{v.ngay_hd ? fmtDate(v.ngay_hd) : ''}</div></Td>
+          <Td><OBadge s={v.status} />{(v.nhap_v || v.ky_v) && <div className="mt-1"><FileBadge v={v} /></div>}</Td><Td className="whitespace-nowrap text-xs">{v.so_hd}<div className="text-ink-400">{v.ngay_hd ? fmtDate(v.ngay_hd) : ''}</div></Td>
           <Td className="whitespace-nowrap text-xs text-ink-500">{fmtDateTime(v.status_at)}</Td></tr>)}</Table>}
       <Pager p={pg} total={total} /></Card>
     {sel && <InvoiceDetail id={sel} acc={acc} onClose={() => setSel(null)} onChanged={reload} />}
+    {upPdf && <UploadHdPdf onClose={() => setUpPdf(false)} onDone={reload} />}
   </>;
 }
 
@@ -384,7 +390,9 @@ function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc: boole
   const a = useApp(); const { busy, run } = useAction(); const [edit, setEdit] = useState(false); const [msg, setMsg] = useState('');
   const { data: v, reload } = useLoad(() => db.from<any>('out_invoices').select(INV_SEL).eq('id', id).maybeSingle(), [id]);
   const { data: ev, reload: rev } = useLoad(() => db.from<any[]>('out_events').select('*').eq('invoice_id', id).order('at'), [id]);
-  const done = () => { reload(); rev(); onChanged(); };
+  const { data: files, reload: rf } = useLoad(() => db.rpc<HdF[]>('out_files_list', { p_invoice: id }), [id]);
+  const fl: HdF[] = files || []; const nhapV = fl.find(f => f.kind === 'nhap' && f.latest)?.version ?? null;
+  const done = () => { reload(); rev(); rf(); onChanged(); };
   const go = (status: string, title: string, needNote = false, extra?: () => Promise<any>) => run(async () => {
     const note = needNote ? await ask({ title, input: { label: 'Nội dung', required: true } }) : (await ask({ title, ok: 'Đồng ý' })) ? '' : null;
     if (note === null) return; const x = extra ? await extra() : {}; if (x === null) return;
@@ -398,18 +406,20 @@ function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc: boole
     lines: lines.map((l: any) => ({ ten: l.out_items?.ten, dvt: l.out_items?.dvt, sl: Number(l.sl), gia: Number(l.don_gia), vat: l.vat ?? l.out_items?.vat })) })) toast.err('Trình duyệt chặn cửa sổ mới — cho phép popup'); };
   const s = v.status; const canEdit = !['da_ky', 'huy'].includes(s) && (acc || (mine && s !== 'xac_nhan_ky'));
   return <Modal open onClose={onClose} size="xl" title={<span>{v.code} · <OBadge s={s} /></span>} footer={<>
-    <Button onClick={preview}>🖨 Xem trước / in nháp</Button>
+    <Button onClick={preview}>{fl.length ? 'Bản xem trước ERP' : '🖨 Xem trước / in nháp'}</Button>
     {canEdit && <Button onClick={() => setEdit(true)}>✎ Sửa</Button>}
     {!acc && mine && s === 'soan' && <Button variant="primary" loading={busy} onClick={() => go('cho_nhap', 'Gửi kế toán xuất nháp?')}>Gửi kế toán</Button>}
     {!acc && mine && s === 'da_nhap' && <><Button loading={busy} onClick={() => go('cho_nhap', 'Yêu cầu kế toán sửa nháp', true)}>Yêu cầu sửa</Button>
-      <Button variant="success" loading={busy} onClick={() => go('xac_nhan_ky', 'Khách đã OK bản nháp — xác nhận ký?')}>✓ Xác nhận ký</Button></>}
+      <Button variant="success" loading={busy} onClick={() => run(async () => { if (!(await ask({ title: nhapV ? `Khách đã OK bản nháp v${nhapV} — đề nghị kế toán ký?` : 'Khách đã OK bản nháp — xác nhận ký?', ok: 'Đồng ý' }))) return;
+        await db.rpc('out_confirm_sign', { p_invoice: id, p_version: nhapV }); done(); }, 'Đã báo kế toán ký')}>✓ Khách OK — đề nghị ký</Button></>}
     {acc && s === 'cho_nhap' && <Button variant="primary" loading={busy} onClick={() => go('da_nhap', 'Đánh dấu đã xuất nháp (đã tạo nháp trên phần mềm)?')}>Đã xuất nháp</Button>}
     {acc && ['xac_nhan_ky', 'da_nhap'].includes(s) && <Button variant="success" loading={busy} onClick={sign}>✓ Đã ký</Button>}
     {acc && ['cho_nhap', 'da_nhap', 'xac_nhan_ky'].includes(s) && <Button loading={busy} onClick={() => go('soan', 'Trả lại sale', true)}>Trả lại sale</Button>}
     {s !== 'da_ky' && s !== 'huy' && (acc || (mine && ['soan', 'cho_nhap'].includes(s))) && <Button variant="danger" loading={busy} onClick={() => go('huy', 'Hủy phiếu (trả lại tồn cho dòng hàng)?', acc && !mine)}>Hủy</Button>}
   </>}>
-    {s === 'da_ky' && <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký HĐ số <b>{v.so_hd}</b> ngày {fmtDate(v.ngay_hd)} — kế toán đã gửi mail. Sale báo khách kiểm tra email.</div>}
-    {s === 'da_nhap' && !acc && <div className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900">Kế toán đã tạo nháp. Bấm <b>Xem trước / in nháp</b> → lưu PDF gửi khách. Khách OK → <b>Xác nhận ký</b>; sai → <b>Sửa</b> hoặc <b>Yêu cầu sửa</b>.</div>}
+    <HdFilesSection v={v} files={fl} acc={acc} onChanged={done} />
+    {s === 'da_ky' && !fl.some(f => f.kind === 'ky') && <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký HĐ số <b>{v.so_hd}</b> ngày {fmtDate(v.ngay_hd)} — kế toán đã gửi mail. Sale báo khách kiểm tra email.</div>}
+    {s === 'da_nhap' && !acc && !fl.length && <div className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900">Kế toán đã tạo nháp. Bấm <b>Xem trước / in nháp</b> → lưu PDF gửi khách. Khách OK → <b>Xác nhận ký</b>; sai → <b>Sửa</b> hoặc <b>Yêu cầu sửa</b>.</div>}
     <div className="grid gap-x-6 sm:grid-cols-2 text-sm">
       <div><div className="text-xs font-bold uppercase text-ink-400">Đơn vị mua</div><div className="font-semibold">{v.buyer_name}</div><div>MST: {v.tax_code || '—'}</div><div>Địa chỉ: {v.address || '—'}</div><div>Email: {v.email || '—'}</div><div>Thanh toán: {v.payment}</div>
         {v.buyer_info && <pre className="mt-1 whitespace-pre-wrap rounded bg-ink-50 p-2 text-xs">{v.buyer_info}</pre>}</div>
@@ -421,7 +431,7 @@ function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc: boole
         <Td className="text-right text-xs text-ink-500"><Money v={l.out_items?.dg_nhap} /></Td><Td className="text-xs">{vatTxt(l.vat ?? l.out_items?.vat)}</Td><Td className="text-right"><Money v={Math.round(l.sl * l.don_gia)} /></Td></tr>)}</Table></div>
     <div className="mt-4"><div className="mb-1 text-xs font-bold uppercase text-ink-400">Trao đổi · nhật ký</div>
       <div className="max-h-48 space-y-1 overflow-auto">{(ev || []).map(e => <div key={e.id} className={cx('rounded-lg px-3 py-1.5 text-sm', e.action === 'comment' ? 'bg-brand-50' : 'bg-ink-50 text-xs text-ink-600')}>
-        <b>{a.personName(e.actor)}</b> · <span className="text-xs text-ink-500">{fmtDateTime(e.at)}</span> · {e.action === 'comment' ? '' : e.action === 'status' ? `${OST[e.data?.from]?.[0] || e.data?.from} → ${OST[e.data?.to]?.[0] || e.data?.to}` : e.action === 'create' ? 'lập phiếu' : 'sửa phiếu'}{e.note ? <> — {e.note}</> : ''}</div>)}</div>
+        <b>{a.personName(e.actor)}</b> · <span className="text-xs text-ink-500">{fmtDateTime(e.at)}</span> · {e.action === 'comment' ? '' : e.action === 'status' ? `${OST[e.data?.from]?.[0] || e.data?.from} → ${OST[e.data?.to]?.[0] || e.data?.to}` : e.action === 'create' ? 'lập phiếu' : e.action === 'file' || e.action === 'sent' ? '' : 'sửa phiếu'}{e.note ? <> — {e.note}</> : ''}</div>)}</div>
       {s !== 'huy' && <div className="mt-2 flex gap-2"><Textarea rows={1} className="flex-1" value={msg} onChange={e => setMsg(e.target.value)} placeholder={acc ? 'Nhắn sale…' : 'Nhắn kế toán…'} />
         <Button loading={busy} disabled={!msg.trim()} onClick={() => run(async () => { await db.rpc('out_comment', { p_invoice: id, p_note: msg }); setMsg(''); rev(); })}>Gửi</Button></div>}</div>
     {edit && <InvoiceEditor inv={v} onClose={() => setEdit(false)} onDone={() => { setEdit(false); done(); }} />}

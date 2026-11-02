@@ -381,26 +381,37 @@ function AccCfg() {
 
 function DriveCfg() {
   const a = useApp(); const d = a.settings.drive || {}; const { busy, run } = useAction();
-  const [keys, setKeys] = useState<{ backup: string; upload: string } | null>(null); const [url, setUrl] = useState(d.url || '');
+  const [keys, setKeys] = useState<{ backup: string } | null>(null); const [url, setUrl] = useState(d.url || '');
+  const [ver, setVer] = useState<number | null | undefined>(undefined);
   const rnd = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 57]).join('');
   const c = window.NT_CONFIG!; const code = appsScriptCode(c.supabaseUrl, c.supabaseAnonKey);
   const copy = (t: string) => navigator.clipboard.writeText(t).then(() => toast.ok('Đã sao chép'));
-  const gen = () => run(async () => { const k = { backup: rnd(48), upload: rnd(32) }; await db.rpc('backup_set_token', { p_token: k.backup }); await db.rpc('set_drive', { p_value: { upload_key: k.upload } }); setKeys(k); await a.reload(); }, 'Đã tạo mã mới');
+  const gen = () => run(async () => { const k = { backup: rnd(48) }; await db.rpc('backup_set_token', { p_token: k.backup }); setKeys(k); await a.reload(); }, 'Đã tạo mã mới');
+  const checkVer = async () => { if (!d.url) return setVer(null); try { const j = await (await fetch(d.url)).json(); setVer(Number(j.version || 0)); } catch { setVer(null); } };
+  React.useEffect(() => { checkVer(); }, [d.url]);
   const Step = ({ n, children }: { n: number; children: React.ReactNode }) => <li className="flex gap-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">{n}</span><div className="min-w-0 flex-1 text-sm">{children}</div></li>;
   return <div className="space-y-4">
     <Card title="Trạng thái">
       <div className="text-sm">Sao lưu gần nhất lên Drive: <b>{d.last_backup_at ? fmtDateTime(d.last_backup_at) : 'chưa có'}</b>{d.last_backup_at && (Date.now() - new Date(d.last_backup_at).getTime() > 36 * 36e5) && <Badge color="red" className="ml-2">quá 36 giờ — kiểm tra Apps Script</Badge>}</div>
-      <div className="mt-1 text-sm">Lưu file lên Drive: {d.url && d.upload_key ? <Badge color="green">Đã bật</Badge> : <Badge>Chưa bật</Badge>}</div>
-      <p className="mt-2 text-xs text-ink-500">Mỗi đêm 1h, Google Drive của anh tự kéo toàn bộ dữ liệu ERP về thư mục <b>NT-ERP/Sao luu</b> (file .json.gz, giữ 60 ngày). File Excel đối soát, XML hóa đơn lưu vào <b>NT-ERP/Ke toan</b>. Không cần nâng gói Supabase. Khôi phục: Dữ liệu · Nhật ký → Khôi phục từ file sao lưu.</p>
+      <div className="mt-1 text-sm">Lưu / xem file trên Drive: {!d.url ? <Badge>Chưa bật</Badge> : ver === undefined ? <Badge>đang kiểm tra…</Badge> : (ver || 0) >= 20 ? <Badge color="green">Đã bật · Apps Script bản {ver}</Badge>
+        : <Badge color="red">Apps Script bản cũ — cập nhật theo khung bên dưới</Badge>} <button className="ml-1 text-xs text-brand-700 underline" onClick={checkVer}>kiểm tra lại</button></div>
+      <p className="mt-2 text-xs text-ink-500">Mỗi đêm 1h, Google Drive của anh tự kéo toàn bộ dữ liệu ERP về thư mục <b>NT-ERP/Sao luu</b> (file .json.gz, giữ 60 ngày). File Excel đối soát, XML hóa đơn lưu vào <b>NT-ERP/Ke toan</b>; PDF hóa đơn nháp / đã ký lưu vào <b>NT-ERP/HD nhap</b>, <b>NT-ERP/HD da ky</b> (file để kín, không chia sẻ — sale chỉ xem qua ERP). Khôi phục: Dữ liệu · Nhật ký → Khôi phục từ file sao lưu.</p>
     </Card>
+    {d.url && ver !== undefined && (ver || 0) < 20 && <Card title="Cập nhật Apps Script lên bản 20 (đã cài trước đây — khoảng 2 phút)">
+      <ol className="space-y-3">
+        <Step n={1}><Button size="sm" variant="primary" onClick={() => copy(code)}>Chép mã Apps Script mới</Button></Step>
+        <Step n={2}>Mở dự án Apps Script đang dùng (<a className="font-semibold text-brand-700 underline" href="https://script.google.com/home" target="_blank" rel="noreferrer">script.google.com</a>) → xóa hết mã cũ → dán mã mới → bấm <b>Lưu</b>. Script properties giữ nguyên, không cần tạo mã mới.</Step>
+        <Step n={3}><b>Deploy → Manage deployments</b> → bấm ✎ → <b>Version: New version</b> → <b>Deploy</b>. Link Web app giữ nguyên.</Step>
+        <Step n={4}><Button size="sm" onClick={checkVer}>Kiểm tra lại</Button> — hiện “Apps Script bản 20” là xong.</Step>
+      </ol></Card>}
     <Card title="Cài đặt 1 lần (khoảng 5 phút, đăng nhập Google của công ty)">
       <ol className="space-y-3">
         <Step n={1}><Button size="sm" variant="dark" loading={busy} onClick={gen}>Tạo mã bí mật mới</Button> <span className="text-xs text-ink-500">(tạo lại sẽ vô hiệu mã cũ)</span>
           {keys && <div className="mt-2 space-y-1 rounded-xl bg-amber-50 p-3 text-xs"><div className="font-semibold text-amber-900">Chỉ hiện 1 lần — dán ngay vào Apps Script (bước 3):</div>
-            {[['BACKUP_TOKEN', keys.backup], ['UPLOAD_KEY', keys.upload]].map(([k, v]) => <div key={k} className="flex items-center gap-2"><code className="w-28 font-bold">{k}</code><code className="min-w-0 flex-1 truncate rounded bg-white px-2 py-1">{v}</code><Button size="sm" onClick={() => copy(v)}>Chép</Button></div>)}</div>}</Step>
+            {[['BACKUP_TOKEN', keys.backup]].map(([k, v]) => <div key={k} className="flex items-center gap-2"><code className="w-28 font-bold">{k}</code><code className="min-w-0 flex-1 truncate rounded bg-white px-2 py-1">{v}</code><Button size="sm" onClick={() => copy(v)}>Chép</Button></div>)}</div>}</Step>
         <Step n={2}>Mở <a className="font-semibold text-brand-700 underline" href="https://script.google.com/home/projects/create" target="_blank" rel="noreferrer">script.google.com → Dự án mới</a>, xóa hết, dán mã dưới đây, bấm Lưu. <Button size="sm" onClick={() => copy(code)}>Chép mã Apps Script</Button>
           <pre className="mt-2 max-h-40 overflow-auto rounded-xl bg-ink-900 p-3 text-[11px] text-ink-100">{code}</pre></Step>
-        <Step n={3}>Bánh răng <b>Project Settings</b> → <b>Script properties</b> → thêm 2 dòng <code>BACKUP_TOKEN</code> và <code>UPLOAD_KEY</code> với giá trị ở bước 1.</Step>
+        <Step n={3}>Bánh răng <b>Project Settings</b> → <b>Script properties</b> → thêm dòng <code>BACKUP_TOKEN</code> với giá trị ở bước 1.</Step>
         <Step n={4}>Quay lại Editor, chọn hàm <b>setup</b> → <b>Run</b> → cho phép quyền. Kiểm tra Drive có thư mục <b>NT-ERP/Sao luu</b> với 1 file mới.</Step>
         <Step n={5}><b>Deploy → New deployment → Web app</b>: Execute as <b>Me</b>, Who has access <b>Anyone</b> → Deploy → chép link Web app dán vào đây:
           <div className="mt-2 flex gap-2"><Input placeholder="https://script.google.com/macros/s/…/exec" value={url} onChange={e => setUrl(e.target.value)} />

@@ -4030,3 +4030,3222 @@ revoke all on function public.admin_set_password(uuid, text) from public, anon;
 grant execute on function public.admin_set_password(uuid, text) to authenticated;
 
 reset search_path;
+
+
+-- >>>>> supabase/migrations/0013_v7.sql
+-- =====================================================================
+-- 0013 · Bản 7: COM Mua hàng / CSKH / TP Kế toán trong lương, tồn kho có giá,
+--        câu trả lời mẫu, đếm trạng thái báo giá phía máy chủ (tải nhanh)
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 7');
+
+-- ---------- 1. Lương: COM theo bộ phận ----------
+alter table public.order_results add column if not exists cskh_name text;
+alter table public.order_results add column if not exists cskh_id uuid references public.profiles(id);
+alter table public.order_results add column if not exists buyer_name text;
+alter table public.order_results add column if not exists buyer_id uuid references public.profiles(id);
+alter table public.order_results add column if not exists purchase_fee numeric(18,0) not null default 0;   -- Phí mua hàng (phí dịch vụ)
+alter table public.order_results add column if not exists nego_fee numeric(18,0) not null default 0;       -- Tiền hoa hồng đàm phán
+create index if not exists order_results_cskh on public.order_results(period_id, cskh_id);
+create index if not exists order_results_buyer on public.order_results(period_id, buyer_id);
+alter table public.payslips add column if not exists com_buyer numeric(18,0) not null default 0;
+alter table public.payslips add column if not exists com_cskh numeric(18,0) not null default 0;
+alter table public.payslips add column if not exists com_accounting numeric(18,0) not null default 0;
+
+drop policy if exists or_read on public.order_results;
+create policy or_read on public.order_results for select to authenticated
+  using (app.can_see_hr() or app.in_tree(profile_id) or cskh_id = auth.uid() or buyer_id = auth.uid());
+
+update public.settings set value = value
+  || jsonb_build_object('buyer_com', coalesce(value->'buyer_com', '{"enabled":true,"fee_pct":2,"nego_pct_by_month":[2,3,4,5],"coef_pct":100}'::jsonb))
+  || jsonb_build_object('cskh_com', coalesce(value->'cskh_com', '{"enabled":true,"fee_pct":2,"nego_pct":1}'::jsonb))
+  || jsonb_build_object('accounting_com', coalesce(value->'accounting_com', '{"pct":0.5,"base_pct":60,"profile_ids":[]}'::jsonb))
+  || jsonb_build_object('order_link', coalesce(value->'order_link', '"https://ad.namtrunglog.com/don-hang/{so}"'::jsonb))
+ where key = 'payroll';
+
+create or replace function app.is_assigned(p_name text) returns boolean language sql immutable as $$
+  select coalesce(btrim(p_name), '') <> '' and lower(btrim(p_name)) not in ('chưa phân công', 'chua phan cong', '-', 'không', 'khong')
+$$;
+-- Khớp tên trong file với nhân sự (tên trong file đơn, họ tên, mã NV)
+create or replace function app.match_staff(p_name text) returns uuid
+language sql stable security definer set search_path = public, app as $$
+  select p.id from public.profiles p
+   where app.is_assigned(p_name)
+     and lower(btrim(p_name)) = any(select lower(btrim(x)) from unnest(p.sale_aliases || p.full_name || coalesce(p.employee_code, '')) x)
+   limit 1
+$$;
+
+
+create or replace function public.import_order_results(p_period uuid, p_rows jsonb, p_replace boolean default true)
+returns jsonb language plpgsql security definer set search_path = public, app as $$
+declare r jsonb; v_pid uuid; v_cskh uuid; v_buyer uuid; n int := 0; unmapped text[] := '{}'; st text;
+begin
+  if not app.has_role('admin','bgd','ke_toan') then raise exception 'Chỉ Kế toán/BGĐ được nhập file đơn'; end if;
+  select status into st from public.payroll_periods where id = p_period;
+  if st is null then raise exception 'Kỳ lương không tồn tại'; end if;
+  if st = 'closed' then raise exception 'Kỳ lương đã chốt'; end if;
+  if p_replace then delete from public.order_results where period_id = p_period; end if;
+  for r in select * from jsonb_array_elements(p_rows) loop
+    if coalesce(btrim(r->>'ext_order_code'),'') = '' then continue; end if;
+    select id into v_pid from public.profiles p
+     where lower(btrim(r->>'sale_name')) = any(select lower(btrim(x)) from unnest(p.sale_aliases || p.full_name || p.employee_code) x)
+     limit 1;
+    if v_pid is null and coalesce(r->>'sale_name','') <> '' then unmapped := unmapped || (r->>'sale_name'); end if;
+    v_cskh := app.match_staff(r->>'cskh_name'); v_buyer := app.match_staff(r->>'buyer_name');
+    if v_cskh is null and app.is_assigned(r->>'cskh_name') then unmapped := unmapped || ('CSKH: ' || (r->>'cskh_name')); end if;
+    if v_buyer is null and app.is_assigned(r->>'buyer_name') then unmapped := unmapped || ('Mua hàng: ' || (r->>'buyer_name')); end if;
+    insert into public.order_results(period_id, ext_order_code, sale_name, profile_id, customer_ext, warehouse, order_type, completed_at, goods_value, order_profit, raw,
+                                     cskh_name, cskh_id, buyer_name, buyer_id, purchase_fee, nego_fee)
+    values (p_period, btrim(r->>'ext_order_code'), r->>'sale_name', v_pid, r->>'customer_ext', r->>'warehouse', r->>'order_type',
+            (r->>'completed_at')::date, coalesce((r->>'goods_value')::numeric,0), coalesce((r->>'order_profit')::numeric,0), r->'raw',
+            nullif(r->>'cskh_name', ''), v_cskh, nullif(r->>'buyer_name', ''), v_buyer, coalesce((r->>'purchase_fee')::numeric, 0), coalesce((r->>'nego_fee')::numeric, 0))
+    on conflict (period_id, ext_order_code) do update set sale_name = excluded.sale_name, profile_id = excluded.profile_id,
+       completed_at = excluded.completed_at, goods_value = excluded.goods_value, order_profit = excluded.order_profit, raw = excluded.raw,
+       cskh_name = excluded.cskh_name, cskh_id = excluded.cskh_id, buyer_name = excluded.buyer_name, buyer_id = excluded.buyer_id,
+       purchase_fee = excluded.purchase_fee, nego_fee = excluded.nego_fee;
+    n := n + 1;
+  end loop;
+  return jsonb_build_object('imported', n, 'unmapped', (select coalesce(jsonb_agg(distinct x), '[]') from unnest(unmapped) x));
+end $$;
+
+create or replace function public.payroll_compute(p_period uuid)
+returns int language plpgsql security definer set search_path = public, app as $$
+declare
+  per record; p record; pcfg jsonb := coalesce(app.setting('payroll'),'{}');
+  m_start date; m_end date; d date; info jsonb;
+  std numeric; paid numeric; worked numeric; pleave numeric; unpaid numeric; late int; over int;
+  flex_min int := coalesce(app.setting_num('attendance','flex_minutes'), 100)::int; flex_from date := coalesce((app.setting('attendance')->>'flex_start')::date, '2026-11-01');
+  base_pct numeric := coalesce((pcfg->>'commission_base_pct')::numeric, 60); max_off numeric := coalesce((pcfg->>'loss_offset_max_pct')::numeric, 50);
+  priv record; lvl record; pos numeric; loss numeric; carry_in numeric; com numeric; off numeric; team numeric; adj numeric; sal numeric; flexded numeric; n int := 0; detail jsonb;
+  bcfg jsonb := coalesce(pcfg->'buyer_com', '{}'); ccfg jsonb := coalesce(pcfg->'cskh_com', '{}'); acfg jsonb := coalesce(pcfg->'accounting_com', '{}');
+  b_fee numeric; b_nego numeric; b_orders int; b_month int; b_nego_pct numeric; b_coef numeric; c_buyer numeric; c_fee numeric; c_nego numeric; c_orders int; c_cskh numeric;
+  c_acc numeric; total_profit numeric;
+begin
+  if not app.has_role('admin','bgd','hcns','ke_toan') then raise exception 'Không có quyền tính lương'; end if;
+  select * into per from public.payroll_periods where id = p_period for update;
+  if per.id is null then raise exception 'Kỳ lương không tồn tại'; end if;
+  if per.status not in ('open','review') then raise exception 'Kỳ lương đang chờ duyệt hoặc đã chốt'; end if;
+  m_start := per.month; m_end := (per.month + interval '1 month - 1 day')::date;
+  select coalesce(sum(order_profit), 0) into total_profit from public.order_results where period_id = p_period;
+  for p in select * from public.profiles where status = 'active' loop
+    std := 0; paid := 0; worked := 0; pleave := 0; unpaid := 0; late := 0;
+    for d in select x::date from generate_series(m_start, m_end, interval '1 day') x loop
+      info := app.day_info(p.id, p.work_schedule, p.hire_date, d);
+      std := std + coalesce((info->>'dv')::numeric, 0);
+      if coalesce((info->>'future')::boolean, false) then worked := worked + coalesce((info->>'dv')::numeric, 0) - coalesce((info->>'off')::numeric, 0); pleave := pleave + coalesce((info->>'paid')::numeric, 0); continue; end if;
+      worked := worked + coalesce((info->>'worked')::numeric, 0); pleave := pleave + coalesce((info->>'paid')::numeric, 0);
+      unpaid := unpaid + coalesce((info->>'absent')::numeric, 0) + coalesce((info->>'off')::numeric, 0) - coalesce((info->>'paid')::numeric, 0);
+      late := late + coalesce((info->>'late')::int, 0);
+    end loop;
+    paid := worked + pleave;
+    select * into priv from public.profile_private where profile_id = p.id;
+    select * into lvl from public.job_levels where code = p.job_level;
+    sal := case when std > 0 then round(coalesce(priv.base_salary,0) * least(paid, std) / std) else 0 end;
+    over := case when m_start >= flex_from then greatest(0, late - flex_min) else 0 end;
+    flexded := case when std > 0 then round(coalesce(priv.base_salary,0) / std / 8 / 60 * over) else 0 end;
+    select coalesce(sum(round(order_profit * base_pct / 100)) filter (where order_profit > 0), 0),
+           coalesce(-sum(round(order_profit * base_pct / 100)) filter (where order_profit < 0), 0)
+      into pos, loss from public.order_results where period_id = p_period and profile_id = p.id;
+    select coalesce(ps.carry_loss, 0) into carry_in from public.payslips ps join public.payroll_periods pp on pp.id = ps.period_id
+      where ps.profile_id = p.id and pp.month = (m_start - interval '1 month')::date;
+    carry_in := coalesce(carry_in, 0);
+    com := app.tiered_commission(pos, coalesce(lvl.commission_pct, 0));
+    off := least(loss + carry_in, round(com * max_off / 100));
+    team := 0;
+    if coalesce(lvl.team_bonus_pct, 0) > 0 then
+      with recursive t as (select id from public.profiles where manager_id = p.id union select x.id from public.profiles x join t on x.manager_id = t.id)
+      select coalesce(round(sum(round(o.order_profit * base_pct / 100)) * lvl.team_bonus_pct / 100), 0) into team
+        from public.order_results o where o.period_id = p_period and o.profile_id in (select id from t);
+      team := greatest(team, 0);
+    end if;
+    -- COM Mua hàng: (Phí mua hàng × a% + Hoa hồng đàm phán × b% theo tháng thâm niên) × hệ số
+    select coalesce(sum(purchase_fee), 0), coalesce(sum(nego_fee), 0), count(*) into b_fee, b_nego, b_orders
+      from public.order_results where period_id = p_period and buyer_id = p.id;
+    c_buyer := 0; b_month := null; b_nego_pct := 0; b_coef := coalesce((bcfg->>'coef_pct')::numeric, 100);
+    if coalesce((bcfg->>'enabled')::boolean, true) and b_orders > 0 then
+      b_month := case when p.hire_date is null then 99 else
+        (extract(year from age(m_start, date_trunc('month', p.hire_date)::date)) * 12 + extract(month from age(m_start, date_trunc('month', p.hire_date)::date)))::int + 1 end;
+      b_nego_pct := coalesce((bcfg->'nego_pct_by_month'->>(least(greatest(b_month, 1), jsonb_array_length(coalesce(bcfg->'nego_pct_by_month', '[2,3,4,5]'::jsonb))) - 1))::numeric,
+                             (array[2,3,4,5])[least(greatest(b_month, 1), 4)]);
+      c_buyer := round((b_fee * coalesce((bcfg->>'fee_pct')::numeric, 2) / 100 + b_nego * b_nego_pct / 100) * b_coef / 100);
+    end if;
+    -- COM CSKH: Phí dịch vụ × 2% + Phí đàm phán × 1% các đơn hoàn thành mình phụ trách
+    select coalesce(sum(purchase_fee), 0), coalesce(sum(nego_fee), 0), count(*) into c_fee, c_nego, c_orders
+      from public.order_results where period_id = p_period and cskh_id = p.id;
+    c_cskh := case when coalesce((ccfg->>'enabled')::boolean, true) and c_orders > 0
+                   then round(c_fee * coalesce((ccfg->>'fee_pct')::numeric, 2) / 100 + c_nego * coalesce((ccfg->>'nego_pct')::numeric, 1) / 100) else 0 end;
+    -- COM Trưởng phòng Kế toán: 0,5% × 60% × LN đơn hoàn thành cả công ty
+    c_acc := case when p.id::text in (select jsonb_array_elements_text(coalesce(acfg->'profile_ids', '[]'))) and total_profit > 0
+                  then round(total_profit * coalesce((acfg->>'base_pct')::numeric, 60) / 100 * coalesce((acfg->>'pct')::numeric, 0.5) / 100) else 0 end;
+    select coalesce(sum(a.amount),0) into adj from public.payslip_adjustments a join public.payslips ps on ps.id = a.payslip_id where ps.period_id = p_period and ps.profile_id = p.id;
+    detail := jsonb_build_object('late_minutes', late, 'flex_minutes', flex_min, 'flex_active', m_start >= flex_from, 'commission_pct', coalesce(lvl.commission_pct,0),
+      'commission_base_pct', base_pct, 'loss_this_month', loss, 'carry_in', carry_in, 'orders', (select count(*) from public.order_results where period_id = p_period and profile_id = p.id),
+      'buyer', jsonb_build_object('orders', b_orders, 'purchase_fee', b_fee, 'nego_fee', b_nego, 'month', b_month, 'fee_pct', coalesce((bcfg->>'fee_pct')::numeric, 2), 'nego_pct', b_nego_pct, 'coef_pct', b_coef),
+      'cskh', jsonb_build_object('orders', c_orders, 'purchase_fee', c_fee, 'nego_fee', c_nego, 'fee_pct', coalesce((ccfg->>'fee_pct')::numeric, 2), 'nego_pct', coalesce((ccfg->>'nego_pct')::numeric, 1)),
+      'accounting', jsonb_build_object('total_profit', total_profit, 'base_pct', coalesce((acfg->>'base_pct')::numeric, 60), 'pct', coalesce((acfg->>'pct')::numeric, 0.5)));
+    insert into public.payslips as ps(period_id, profile_id, standard_days, paid_days, worked_days, paid_leave_days, unpaid_days, late_minutes, flex_over_minutes, base_salary,
+      salary_by_days, allowance, profit_total, commission_base, commission, loss_offset, carry_loss, team_bonus, com_buyer, com_cskh, com_accounting, flex_deduction, insurance, adjustments, net, details, status, updated_at)
+    values (p_period, p.id, std, least(paid, std), worked, pleave, greatest(unpaid, 0), late, over, coalesce(priv.base_salary,0), sal, coalesce(priv.allowance,0),
+      (select coalesce(sum(order_profit),0) from public.order_results where period_id = p_period and profile_id = p.id),
+      pos, com, off, loss + carry_in - off, team, c_buyer, c_cskh, c_acc, flexded, coalesce(priv.insurance_deduction,0), adj,
+      sal + coalesce(priv.allowance,0) + com - off + team + c_buyer + c_cskh + c_acc - flexded - coalesce(priv.insurance_deduction,0) + adj, detail, 'draft', now())
+    on conflict (period_id, profile_id) do update set standard_days = excluded.standard_days, paid_days = excluded.paid_days, worked_days = excluded.worked_days,
+      paid_leave_days = excluded.paid_leave_days, unpaid_days = excluded.unpaid_days, late_minutes = excluded.late_minutes, flex_over_minutes = excluded.flex_over_minutes,
+      base_salary = excluded.base_salary, salary_by_days = excluded.salary_by_days, allowance = excluded.allowance, profit_total = excluded.profit_total,
+      commission_base = excluded.commission_base, commission = excluded.commission, loss_offset = excluded.loss_offset, carry_loss = excluded.carry_loss,
+      team_bonus = excluded.team_bonus, com_buyer = excluded.com_buyer, com_cskh = excluded.com_cskh, com_accounting = excluded.com_accounting, flex_deduction = excluded.flex_deduction, insurance = excluded.insurance, adjustments = excluded.adjustments,
+      net = excluded.net, details = excluded.details, status = 'draft', confirmed_at = null, updated_at = now()
+    where ps.status <> 'closed';
+    n := n + 1;
+  end loop;
+  update public.payroll_periods set computed_at = now(), status = 'open' where id = p_period;
+  return n;
+end $$;
+
+-- ---------- 2. Tồn kho: đơn giá nhập / xuất + tổng ----------
+alter table public.inventory_items add column if not exists cost_price numeric(18,2);
+alter table public.inventory_items add column if not exists sale_price numeric(18,2);
+alter table public.inventory_items add column if not exists updated_by uuid references public.profiles(id);
+drop trigger if exists inventory_touch on public.inventory_items;
+create or replace function app.inventory_touch() returns trigger language plpgsql as $$ begin new.updated_at := now(); new.updated_by := auth.uid(); return new; end $$;
+create trigger inventory_touch before update on public.inventory_items for each row execute function app.inventory_touch();
+drop trigger if exists audit_inventory on public.inventory_items;
+create trigger audit_inventory after update or delete on public.inventory_items for each row execute function app.audit();
+
+create or replace function public.import_inventory(p_rows jsonb, p_replace boolean default true) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare n int;
+begin
+  if not app.has_role('admin','bgd','ke_toan') then raise exception 'Chỉ Admin, BGĐ, Kế toán được nhập tồn kho'; end if;
+  if p_replace then delete from public.inventory_items where true; end if;
+  insert into public.inventory_items(sku, name, unit, qty, warehouse, note, cost_price, sale_price)
+  select distinct on (upper(btrim(x->>'sku'))) btrim(x->>'sku'), btrim(x->>'name'), nullif(x->>'unit', ''), nullif(x->>'qty', '')::numeric, nullif(x->>'warehouse', ''), nullif(x->>'note', ''),
+         nullif(x->>'cost_price', '')::numeric, nullif(x->>'sale_price', '')::numeric
+    from jsonb_array_elements(p_rows) x where coalesce(btrim(x->>'name'), '') <> '' and coalesce(btrim(x->>'sku'), '') <> ''
+  on conflict (upper(sku)) where sku is not null do update set name = excluded.name, unit = excluded.unit, qty = excluded.qty, warehouse = excluded.warehouse, note = excluded.note,
+     cost_price = coalesce(excluded.cost_price, inventory_items.cost_price), sale_price = coalesce(excluded.sale_price, inventory_items.sale_price), updated_at = now();
+  get diagnostics n = row_count;
+  insert into public.inventory_items(name, unit, qty, warehouse, note, cost_price, sale_price)
+  select btrim(x->>'name'), nullif(x->>'unit', ''), nullif(x->>'qty', '')::numeric, nullif(x->>'warehouse', ''), nullif(x->>'note', ''), nullif(x->>'cost_price', '')::numeric, nullif(x->>'sale_price', '')::numeric
+    from jsonb_array_elements(p_rows) x where coalesce(btrim(x->>'name'), '') <> '' and coalesce(btrim(x->>'sku'), '') = '';
+  n := n + (select count(*) from jsonb_array_elements(p_rows) x where coalesce(btrim(x->>'name'), '') <> '' and coalesce(btrim(x->>'sku'), '') = '');
+  insert into public.audit_logs(action, table_name, diff) values ('IMPORT', 'inventory_items', jsonb_build_object('rows', n, 'replace', p_replace));
+  return n;
+end $$;
+
+create or replace function public.inventory_totals(p_q text default null)
+returns jsonb language sql stable security definer set search_path = public, app as $$
+  select jsonb_build_object('items', count(*), 'qty', coalesce(sum(qty), 0),
+           'cost_value', coalesce(sum(qty * cost_price), 0), 'sale_value', coalesce(sum(qty * sale_price), 0),
+           'updated_at', max(updated_at))
+    from public.inventory_items
+   where app.is_active() and (coalesce(btrim(p_q), '') = '' or name_norm like '%' || app.norm_text(p_q) || '%' or upper(coalesce(sku, '')) like '%' || upper(btrim(p_q)) || '%')
+$$;
+grant execute on function public.inventory_totals(text) to authenticated;
+
+-- ---------- 3. Câu trả lời mẫu cho Sale / CSKH ----------
+create table if not exists public.reply_templates(
+  id uuid primary key default gen_random_uuid(),
+  category text not null default 'chung',
+  title text not null,
+  content text not null,
+  sort int not null default 0,
+  use_count int not null default 0,
+  active boolean not null default true,
+  created_by uuid references public.profiles(id) default auth.uid(),
+  updated_by uuid references public.profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.reply_templates enable row level security;
+drop policy if exists rt_read on public.reply_templates;
+create policy rt_read on public.reply_templates for select to authenticated using (app.is_active());
+drop policy if exists rt_write on public.reply_templates;
+create policy rt_write on public.reply_templates for all to authenticated using (app.has_role('admin','bgd','tp_kd','tn_kd','hcns')) with check (app.has_role('admin','bgd','tp_kd','tn_kd','hcns'));
+grant select, insert, update, delete on public.reply_templates to authenticated;
+drop trigger if exists rt_touch on public.reply_templates;
+create or replace function app.rt_touch() returns trigger language plpgsql as $$ begin new.updated_at := now(); new.updated_by := auth.uid(); return new; end $$;
+create trigger rt_touch before update on public.reply_templates for each row execute function app.rt_touch();
+create or replace function public.reply_template_used(p_id uuid) returns void
+language sql security definer set search_path = public, app as $$ update public.reply_templates set use_count = use_count + 1 where id = p_id and app.is_active() $$;
+grant execute on function public.reply_template_used(uuid) to authenticated;
+
+insert into public.lookups(category, code, label, sort) values
+ ('reply_cat','chao_hoi','Chào hỏi · giới thiệu',1), ('reply_cat','bao_gia','Báo giá · tư vấn',2), ('reply_cat','coc_thanh_toan','Cọc · thanh toán',3),
+ ('reply_cat','van_chuyen','Vận chuyển · giao hàng',4), ('reply_cat','khieu_nai','Kiểm hàng · khiếu nại',5), ('reply_cat','cham_soc','Chăm sóc · giữ khách',6), ('reply_cat','chung','Khác',9)
+on conflict do nothing;
+
+insert into public.reply_templates(category, title, content, sort, created_by)
+select * from (values
+ ('khieu_nai', 'Nhắc kiểm hàng trong 48h sau khi giao', 'Dạ {danh_xung} ơi, đơn hàng của mình đã giao thành công ạ. {Danh_xung} vui lòng kiểm tra số lượng, chất lượng hàng giúp em trong vòng 48 giờ kể từ khi nhận nhé. Nếu có thiếu, lỗi hay sai mẫu, {danh_xung} chụp ảnh / quay video lúc mở hàng và báo em ngay để em làm việc với shop ạ. Sau 48 giờ, việc khiếu nại với shop rất khó khăn và khả năng không thành công cao. Em cảm ơn {danh_xung} nhiều ạ! 🙏', 1, null::uuid),
+ ('chao_hoi', 'Chào khách mới', 'Dạ em chào {danh_xung}, em là {ten_sale} – Nam Trung Logistics. Bên em chuyên nhập khẩu chính ngạch, mua hộ, vận chuyển hàng Trung Quốc – Việt Nam trọn gói, có hóa đơn VAT đầy đủ. {Danh_xung} đang cần nhập mặt hàng gì để em tư vấn phương án tối ưu chi phí ạ?', 1, null),
+ ('bao_gia', 'Gửi báo giá', 'Dạ em gửi {danh_xung} báo giá chi tiết đơn hàng ạ. Báo giá đã gồm tiền hàng, cước vận chuyển, phí dịch vụ, thuế và VAT; hiệu lực trong 5 ngày. {Danh_xung} xem giúp em, có điểm nào cần điều chỉnh em hỗ trợ ngay ạ.', 1, null),
+ ('coc_thanh_toan', 'Hướng dẫn đặt cọc', 'Dạ để bên em tiến hành đặt hàng, {danh_xung} vui lòng chuyển khoản cọc theo mã QR trên báo giá giúp em, nội dung chuyển khoản đã ghi sẵn trên QR ạ. Nhận cọc xong em báo xác nhận và cập nhật tiến độ cho {danh_xung} ngay ạ.', 1, null),
+ ('van_chuyen', 'Hàng đã về kho Việt Nam', 'Dạ hàng của {danh_xung} đã về kho Việt Nam ạ. Em gửi {danh_xung} thông tin cân nặng / số khối và số tiền còn lại cần thanh toán. {Danh_xung} xác nhận giúp em để em sắp xếp giao hàng sớm nhất ạ.', 1, null)
+) v(category, title, content, sort, created_by)
+where not exists (select 1 from public.reply_templates);
+
+-- ---------- 4. Tải nhanh: đếm báo giá theo trạng thái phía máy chủ ----------
+create or replace function public.quote_status_counts(p_sale uuid default null)
+returns table(status text, n bigint) language sql stable security definer set search_path = public, app as $$
+  select q.status, count(*) from public.quotations q
+   where q.status <> 'da_thay_the' and (app.is_admin() or app.in_tree(q.sale_id)) and (p_sale is null or q.sale_id = p_sale)
+   group by q.status
+$$;
+grant execute on function public.quote_status_counts(uuid) to authenticated;
+create index if not exists quotations_sale_status on public.quotations(sale_id, status, created_at desc);
+create index if not exists customers_owner_next on public.customers(owner_id, next_care_date) where deleted_at is null;
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0014_v8.sql
+-- =====================================================================
+-- 0014 · Bản 8: sửa công thức COM Mua hàng (hệ số theo % hoàn thành chỉ tiêu đàm phán), KPI số đơn MH (tùy chọn)
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 8');
+
+update public.settings set value = jsonb_set(value, '{buyer_com}',
+  (coalesce(value->'buyer_com', '{}'::jsonb) - 'coef_pct') || jsonb_build_object(
+    'fee_pct', coalesce((value->'buyer_com'->>'fee_pct')::numeric, 2),
+    'nego_pct_by_month', coalesce(value->'buyer_com'->'nego_pct_by_month', '[2,3,4,5]'::jsonb),
+    'target_pct_by_month', coalesce(value->'buyer_com'->'target_pct_by_month', '[2,2.4,2.7,3]'::jsonb),
+    'coef_tiers', coalesce(value->'buyer_com'->'coef_tiers', '[{"from":50,"coef":70},{"from":80,"coef":85},{"from":95,"coef":100},{"from":120,"coef":110},{"from":130,"coef":120}]'::jsonb),
+    'coef_on_fee', coalesce((value->'buyer_com'->>'coef_on_fee')::boolean, false)))
+  || jsonb_build_object('buyer_kpi', coalesce(value->'buyer_kpi', '{"enabled":false,"orders":900,"share_pct":30,"profile_ids":[]}'::jsonb))
+ where key = 'payroll';
+
+create or replace function public.payroll_compute(p_period uuid)
+returns int language plpgsql security definer set search_path = public, app as $$
+declare
+  per record; p record; pcfg jsonb := coalesce(app.setting('payroll'),'{}');
+  m_start date; m_end date; d date; info jsonb;
+  std numeric; paid numeric; worked numeric; pleave numeric; unpaid numeric; late int; over int;
+  flex_min int := coalesce(app.setting_num('attendance','flex_minutes'), 100)::int; flex_from date := coalesce((app.setting('attendance')->>'flex_start')::date, '2026-11-01');
+  base_pct numeric := coalesce((pcfg->>'commission_base_pct')::numeric, 60); max_off numeric := coalesce((pcfg->>'loss_offset_max_pct')::numeric, 50);
+  priv record; lvl record; pos numeric; loss numeric; carry_in numeric; com numeric; off numeric; team numeric; adj numeric; sal numeric; flexded numeric; n int := 0; detail jsonb;
+  bcfg jsonb := coalesce(pcfg->'buyer_com', '{}'); ccfg jsonb := coalesce(pcfg->'cskh_com', '{}'); acfg jsonb := coalesce(pcfg->'accounting_com', '{}');
+  b_fee numeric; b_nego numeric; b_goods numeric; b_orders int; b_month int; b_nego_pct numeric; b_coef numeric; b_target numeric; b_rate numeric; b_ach numeric; b_tier jsonb; kcfg jsonb := coalesce(pcfg->'buyer_kpi', '{}'); k_pct numeric; k_share numeric; k_target numeric; k_on boolean; c_buyer numeric; c_fee numeric; c_nego numeric; c_orders int; c_cskh numeric;
+  c_acc numeric; total_profit numeric;
+begin
+  if not app.has_role('admin','bgd','hcns','ke_toan') then raise exception 'Không có quyền tính lương'; end if;
+  select * into per from public.payroll_periods where id = p_period for update;
+  if per.id is null then raise exception 'Kỳ lương không tồn tại'; end if;
+  if per.status not in ('open','review') then raise exception 'Kỳ lương đang chờ duyệt hoặc đã chốt'; end if;
+  m_start := per.month; m_end := (per.month + interval '1 month - 1 day')::date;
+  select coalesce(sum(order_profit), 0) into total_profit from public.order_results where period_id = p_period;
+  for p in select * from public.profiles where status = 'active' loop
+    std := 0; paid := 0; worked := 0; pleave := 0; unpaid := 0; late := 0;
+    for d in select x::date from generate_series(m_start, m_end, interval '1 day') x loop
+      info := app.day_info(p.id, p.work_schedule, p.hire_date, d);
+      std := std + coalesce((info->>'dv')::numeric, 0);
+      if coalesce((info->>'future')::boolean, false) then worked := worked + coalesce((info->>'dv')::numeric, 0) - coalesce((info->>'off')::numeric, 0); pleave := pleave + coalesce((info->>'paid')::numeric, 0); continue; end if;
+      worked := worked + coalesce((info->>'worked')::numeric, 0); pleave := pleave + coalesce((info->>'paid')::numeric, 0);
+      unpaid := unpaid + coalesce((info->>'absent')::numeric, 0) + coalesce((info->>'off')::numeric, 0) - coalesce((info->>'paid')::numeric, 0);
+      late := late + coalesce((info->>'late')::int, 0);
+    end loop;
+    paid := worked + pleave;
+    select * into priv from public.profile_private where profile_id = p.id;
+    select * into lvl from public.job_levels where code = p.job_level;
+    sal := case when std > 0 then round(coalesce(priv.base_salary,0) * least(paid, std) / std) else 0 end;
+    over := case when m_start >= flex_from then greatest(0, late - flex_min) else 0 end;
+    flexded := case when std > 0 then round(coalesce(priv.base_salary,0) / std / 8 / 60 * over) else 0 end;
+    select coalesce(sum(round(order_profit * base_pct / 100)) filter (where order_profit > 0), 0),
+           coalesce(-sum(round(order_profit * base_pct / 100)) filter (where order_profit < 0), 0)
+      into pos, loss from public.order_results where period_id = p_period and profile_id = p.id;
+    select coalesce(ps.carry_loss, 0) into carry_in from public.payslips ps join public.payroll_periods pp on pp.id = ps.period_id
+      where ps.profile_id = p.id and pp.month = (m_start - interval '1 month')::date;
+    carry_in := coalesce(carry_in, 0);
+    com := app.tiered_commission(pos, coalesce(lvl.commission_pct, 0));
+    off := least(loss + carry_in, round(com * max_off / 100));
+    team := 0;
+    if coalesce(lvl.team_bonus_pct, 0) > 0 then
+      with recursive t as (select id from public.profiles where manager_id = p.id union select x.id from public.profiles x join t on x.manager_id = t.id)
+      select coalesce(round(sum(round(o.order_profit * base_pct / 100)) * lvl.team_bonus_pct / 100), 0) into team
+        from public.order_results o where o.period_id = p_period and o.profile_id in (select id from t);
+      team := greatest(team, 0);
+    end if;
+    -- COM Mua hàng = Phí mua hàng × a% + Hoa hồng đàm phán × b% (theo tháng thâm niên) × Hệ số
+    --   Hệ số theo % hoàn thành chỉ tiêu đàm phán: tỷ lệ đạt = Σ đàm phán / Σ tiền hàng (VND); hoàn thành = tỷ lệ đạt / chỉ tiêu tháng thâm niên
+    select coalesce(sum(purchase_fee), 0), coalesce(sum(nego_fee), 0), coalesce(sum(goods_value), 0), count(*) into b_fee, b_nego, b_goods, b_orders
+      from public.order_results where period_id = p_period and buyer_id = p.id;
+    c_buyer := 0; b_month := null; b_nego_pct := 0; b_coef := 0; b_target := null; b_rate := null; b_ach := null;
+    if coalesce((bcfg->>'enabled')::boolean, true) and b_orders > 0 then
+      b_month := case when p.hire_date is null then 99 else
+        (extract(year from age(m_start, date_trunc('month', p.hire_date)::date)) * 12 + extract(month from age(m_start, date_trunc('month', p.hire_date)::date)))::int + 1 end;
+      b_nego_pct := coalesce((bcfg->'nego_pct_by_month'->>(least(greatest(b_month, 1), 4) - 1))::numeric, (array[2,3,4,5])[least(greatest(b_month, 1), 4)]);
+      b_target := coalesce((bcfg->'target_pct_by_month'->>(least(greatest(b_month, 1), 4) - 1))::numeric, (array[2,2.4,2.7,3])[least(greatest(b_month, 1), 4)]);
+      b_rate := case when b_goods > 0 then round(b_nego / b_goods * 100, 4) else 0 end;
+      b_ach := case when b_target > 0 then round(b_rate / b_target * 100, 2) else 0 end;
+      b_coef := 0;
+      for b_tier in select x from jsonb_array_elements(coalesce(bcfg->'coef_tiers', '[{"from":50,"coef":70},{"from":80,"coef":85},{"from":95,"coef":100},{"from":120,"coef":110},{"from":130,"coef":120}]'::jsonb)) x
+                    order by (x->>'from')::numeric loop
+        if b_ach >= (b_tier->>'from')::numeric then b_coef := (b_tier->>'coef')::numeric; end if;
+      end loop;
+      c_buyer := round(b_fee * coalesce((bcfg->>'fee_pct')::numeric, 2) / 100 * (case when coalesce((bcfg->>'coef_on_fee')::boolean, false) then b_coef / 100 else 1 end)
+                       + b_nego * b_nego_pct / 100 * b_coef / 100);
+    end if;
+    -- Lương Mua hàng theo KPI số đơn (tắt mặc định): lương × (1 − x%) + lương × x% × min(số đơn / chỉ tiêu, 1)
+    k_on := coalesce((kcfg->>'enabled')::boolean, false) and p.id::text in (select jsonb_array_elements_text(coalesce(kcfg->'profile_ids', '[]')));
+    k_share := coalesce((kcfg->>'share_pct')::numeric, 30); k_target := coalesce((kcfg->>'orders')::numeric, 900); k_pct := null;
+    if k_on and k_target > 0 then
+      k_pct := least(coalesce(b_orders, 0) / k_target, 1);
+      sal := round(sal * (1 - k_share / 100) + sal * k_share / 100 * k_pct);
+    end if;
+    -- COM CSKH: Phí dịch vụ × 2% + Phí đàm phán × 1% các đơn hoàn thành mình phụ trách
+    select coalesce(sum(purchase_fee), 0), coalesce(sum(nego_fee), 0), count(*) into c_fee, c_nego, c_orders
+      from public.order_results where period_id = p_period and cskh_id = p.id;
+    c_cskh := case when coalesce((ccfg->>'enabled')::boolean, true) and c_orders > 0
+                   then round(c_fee * coalesce((ccfg->>'fee_pct')::numeric, 2) / 100 + c_nego * coalesce((ccfg->>'nego_pct')::numeric, 1) / 100) else 0 end;
+    -- COM Trưởng phòng Kế toán: 0,5% × 60% × LN đơn hoàn thành cả công ty
+    c_acc := case when p.id::text in (select jsonb_array_elements_text(coalesce(acfg->'profile_ids', '[]'))) and total_profit > 0
+                  then round(total_profit * coalesce((acfg->>'base_pct')::numeric, 60) / 100 * coalesce((acfg->>'pct')::numeric, 0.5) / 100) else 0 end;
+    select coalesce(sum(a.amount),0) into adj from public.payslip_adjustments a join public.payslips ps on ps.id = a.payslip_id where ps.period_id = p_period and ps.profile_id = p.id;
+    detail := jsonb_build_object('late_minutes', late, 'flex_minutes', flex_min, 'flex_active', m_start >= flex_from, 'commission_pct', coalesce(lvl.commission_pct,0),
+      'commission_base_pct', base_pct, 'loss_this_month', loss, 'carry_in', carry_in, 'orders', (select count(*) from public.order_results where period_id = p_period and profile_id = p.id),
+      'buyer', jsonb_build_object('orders', b_orders, 'purchase_fee', b_fee, 'nego_fee', b_nego, 'goods', b_goods, 'month', b_month, 'fee_pct', coalesce((bcfg->>'fee_pct')::numeric, 2), 'nego_pct', b_nego_pct,
+        'target_pct', b_target, 'rate_pct', b_rate, 'ach_pct', b_ach, 'coef_pct', b_coef, 'coef_on_fee', coalesce((bcfg->>'coef_on_fee')::boolean, false)),
+      'buyer_kpi', case when k_on then jsonb_build_object('orders', b_orders, 'target', k_target, 'share_pct', k_share, 'pct', round(k_pct * 100, 2)) end,
+      'cskh', jsonb_build_object('orders', c_orders, 'purchase_fee', c_fee, 'nego_fee', c_nego, 'fee_pct', coalesce((ccfg->>'fee_pct')::numeric, 2), 'nego_pct', coalesce((ccfg->>'nego_pct')::numeric, 1)),
+      'accounting', jsonb_build_object('total_profit', total_profit, 'base_pct', coalesce((acfg->>'base_pct')::numeric, 60), 'pct', coalesce((acfg->>'pct')::numeric, 0.5)));
+    insert into public.payslips as ps(period_id, profile_id, standard_days, paid_days, worked_days, paid_leave_days, unpaid_days, late_minutes, flex_over_minutes, base_salary,
+      salary_by_days, allowance, profit_total, commission_base, commission, loss_offset, carry_loss, team_bonus, com_buyer, com_cskh, com_accounting, flex_deduction, insurance, adjustments, net, details, status, updated_at)
+    values (p_period, p.id, std, least(paid, std), worked, pleave, greatest(unpaid, 0), late, over, coalesce(priv.base_salary,0), sal, coalesce(priv.allowance,0),
+      (select coalesce(sum(order_profit),0) from public.order_results where period_id = p_period and profile_id = p.id),
+      pos, com, off, loss + carry_in - off, team, c_buyer, c_cskh, c_acc, flexded, coalesce(priv.insurance_deduction,0), adj,
+      sal + coalesce(priv.allowance,0) + com - off + team + c_buyer + c_cskh + c_acc - flexded - coalesce(priv.insurance_deduction,0) + adj, detail, 'draft', now())
+    on conflict (period_id, profile_id) do update set standard_days = excluded.standard_days, paid_days = excluded.paid_days, worked_days = excluded.worked_days,
+      paid_leave_days = excluded.paid_leave_days, unpaid_days = excluded.unpaid_days, late_minutes = excluded.late_minutes, flex_over_minutes = excluded.flex_over_minutes,
+      base_salary = excluded.base_salary, salary_by_days = excluded.salary_by_days, allowance = excluded.allowance, profit_total = excluded.profit_total,
+      commission_base = excluded.commission_base, commission = excluded.commission, loss_offset = excluded.loss_offset, carry_loss = excluded.carry_loss,
+      team_bonus = excluded.team_bonus, com_buyer = excluded.com_buyer, com_cskh = excluded.com_cskh, com_accounting = excluded.com_accounting, flex_deduction = excluded.flex_deduction, insurance = excluded.insurance, adjustments = excluded.adjustments,
+      net = excluded.net, details = excluded.details, status = 'draft', confirmed_at = null, updated_at = now()
+    where ps.status <> 'closed';
+    n := n + 1;
+  end loop;
+  update public.payroll_periods set computed_at = now(), status = 'open' where id = p_period;
+  return n;
+end $$;
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0015_v9.sql
+-- =====================================================================
+-- 0015 · Bản 9: mẫu số % đàm phán = Tiền hàng trên web + Phí vận chuyển nội địa TQ (VND)
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 9');
+
+alter table public.order_results add column if not exists domestic_ship numeric(18,0) not null default 0;  -- Phí vận chuyển nội địa TQ (VND)
+-- Lấy lại từ dữ liệu gốc đã nhập (cột raw) để không phải nhập lại file
+update public.order_results o set domestic_ship = coalesce((
+  select round(nullif(regexp_replace(e.value, '[^0-9.-]', '', 'g'), '')::numeric) from jsonb_each_text(o.raw) e
+   where app.norm_text(e.key) like 'phi van chuyen noi dia%' and app.norm_text(e.key) like '%vnd%' limit 1), 0)
+ where o.raw is not null;
+
+create or replace function public.import_order_results(p_period uuid, p_rows jsonb, p_replace boolean default true)
+returns jsonb language plpgsql security definer set search_path = public, app as $$
+declare r jsonb; v_pid uuid; v_cskh uuid; v_buyer uuid; n int := 0; unmapped text[] := '{}'; st text;
+begin
+  if not app.has_role('admin','bgd','ke_toan') then raise exception 'Chỉ Kế toán/BGĐ được nhập file đơn'; end if;
+  select status into st from public.payroll_periods where id = p_period;
+  if st is null then raise exception 'Kỳ lương không tồn tại'; end if;
+  if st = 'closed' then raise exception 'Kỳ lương đã chốt'; end if;
+  if p_replace then delete from public.order_results where period_id = p_period; end if;
+  for r in select * from jsonb_array_elements(p_rows) loop
+    if coalesce(btrim(r->>'ext_order_code'),'') = '' then continue; end if;
+    select id into v_pid from public.profiles p
+     where lower(btrim(r->>'sale_name')) = any(select lower(btrim(x)) from unnest(p.sale_aliases || p.full_name || p.employee_code) x)
+     limit 1;
+    if v_pid is null and coalesce(r->>'sale_name','') <> '' then unmapped := unmapped || (r->>'sale_name'); end if;
+    v_cskh := app.match_staff(r->>'cskh_name'); v_buyer := app.match_staff(r->>'buyer_name');
+    if v_cskh is null and app.is_assigned(r->>'cskh_name') then unmapped := unmapped || ('CSKH: ' || (r->>'cskh_name')); end if;
+    if v_buyer is null and app.is_assigned(r->>'buyer_name') then unmapped := unmapped || ('Mua hàng: ' || (r->>'buyer_name')); end if;
+    insert into public.order_results(period_id, ext_order_code, sale_name, profile_id, customer_ext, warehouse, order_type, completed_at, goods_value, order_profit, raw,
+                                     cskh_name, cskh_id, buyer_name, buyer_id, purchase_fee, nego_fee, domestic_ship)
+    values (p_period, btrim(r->>'ext_order_code'), r->>'sale_name', v_pid, r->>'customer_ext', r->>'warehouse', r->>'order_type',
+            (r->>'completed_at')::date, coalesce((r->>'goods_value')::numeric,0), coalesce((r->>'order_profit')::numeric,0), r->'raw',
+            nullif(r->>'cskh_name', ''), v_cskh, nullif(r->>'buyer_name', ''), v_buyer, coalesce((r->>'purchase_fee')::numeric, 0), coalesce((r->>'nego_fee')::numeric, 0), coalesce((r->>'domestic_ship')::numeric, 0))
+    on conflict (period_id, ext_order_code) do update set sale_name = excluded.sale_name, profile_id = excluded.profile_id,
+       completed_at = excluded.completed_at, goods_value = excluded.goods_value, order_profit = excluded.order_profit, raw = excluded.raw,
+       cskh_name = excluded.cskh_name, cskh_id = excluded.cskh_id, buyer_name = excluded.buyer_name, buyer_id = excluded.buyer_id,
+       purchase_fee = excluded.purchase_fee, nego_fee = excluded.nego_fee, domestic_ship = excluded.domestic_ship;
+    n := n + 1;
+  end loop;
+  return jsonb_build_object('imported', n, 'unmapped', (select coalesce(jsonb_agg(distinct x), '[]') from unnest(unmapped) x));
+end $$;
+
+create or replace function public.payroll_compute(p_period uuid)
+returns int language plpgsql security definer set search_path = public, app as $$
+declare
+  per record; p record; pcfg jsonb := coalesce(app.setting('payroll'),'{}');
+  m_start date; m_end date; d date; info jsonb;
+  std numeric; paid numeric; worked numeric; pleave numeric; unpaid numeric; late int; over int;
+  flex_min int := coalesce(app.setting_num('attendance','flex_minutes'), 100)::int; flex_from date := coalesce((app.setting('attendance')->>'flex_start')::date, '2026-11-01');
+  base_pct numeric := coalesce((pcfg->>'commission_base_pct')::numeric, 60); max_off numeric := coalesce((pcfg->>'loss_offset_max_pct')::numeric, 50);
+  priv record; lvl record; pos numeric; loss numeric; carry_in numeric; com numeric; off numeric; team numeric; adj numeric; sal numeric; flexded numeric; n int := 0; detail jsonb;
+  bcfg jsonb := coalesce(pcfg->'buyer_com', '{}'); ccfg jsonb := coalesce(pcfg->'cskh_com', '{}'); acfg jsonb := coalesce(pcfg->'accounting_com', '{}');
+  b_fee numeric; b_nego numeric; b_goods numeric; b_orders int; b_month int; b_nego_pct numeric; b_coef numeric; b_target numeric; b_rate numeric; b_ach numeric; b_tier jsonb; kcfg jsonb := coalesce(pcfg->'buyer_kpi', '{}'); k_pct numeric; k_share numeric; k_target numeric; k_on boolean; c_buyer numeric; c_fee numeric; c_nego numeric; c_orders int; c_cskh numeric;
+  c_acc numeric; total_profit numeric;
+begin
+  if not app.has_role('admin','bgd','hcns','ke_toan') then raise exception 'Không có quyền tính lương'; end if;
+  select * into per from public.payroll_periods where id = p_period for update;
+  if per.id is null then raise exception 'Kỳ lương không tồn tại'; end if;
+  if per.status not in ('open','review') then raise exception 'Kỳ lương đang chờ duyệt hoặc đã chốt'; end if;
+  m_start := per.month; m_end := (per.month + interval '1 month - 1 day')::date;
+  select coalesce(sum(order_profit), 0) into total_profit from public.order_results where period_id = p_period;
+  for p in select * from public.profiles where status = 'active' loop
+    std := 0; paid := 0; worked := 0; pleave := 0; unpaid := 0; late := 0;
+    for d in select x::date from generate_series(m_start, m_end, interval '1 day') x loop
+      info := app.day_info(p.id, p.work_schedule, p.hire_date, d);
+      std := std + coalesce((info->>'dv')::numeric, 0);
+      if coalesce((info->>'future')::boolean, false) then worked := worked + coalesce((info->>'dv')::numeric, 0) - coalesce((info->>'off')::numeric, 0); pleave := pleave + coalesce((info->>'paid')::numeric, 0); continue; end if;
+      worked := worked + coalesce((info->>'worked')::numeric, 0); pleave := pleave + coalesce((info->>'paid')::numeric, 0);
+      unpaid := unpaid + coalesce((info->>'absent')::numeric, 0) + coalesce((info->>'off')::numeric, 0) - coalesce((info->>'paid')::numeric, 0);
+      late := late + coalesce((info->>'late')::int, 0);
+    end loop;
+    paid := worked + pleave;
+    select * into priv from public.profile_private where profile_id = p.id;
+    select * into lvl from public.job_levels where code = p.job_level;
+    sal := case when std > 0 then round(coalesce(priv.base_salary,0) * least(paid, std) / std) else 0 end;
+    over := case when m_start >= flex_from then greatest(0, late - flex_min) else 0 end;
+    flexded := case when std > 0 then round(coalesce(priv.base_salary,0) / std / 8 / 60 * over) else 0 end;
+    select coalesce(sum(round(order_profit * base_pct / 100)) filter (where order_profit > 0), 0),
+           coalesce(-sum(round(order_profit * base_pct / 100)) filter (where order_profit < 0), 0)
+      into pos, loss from public.order_results where period_id = p_period and profile_id = p.id;
+    select coalesce(ps.carry_loss, 0) into carry_in from public.payslips ps join public.payroll_periods pp on pp.id = ps.period_id
+      where ps.profile_id = p.id and pp.month = (m_start - interval '1 month')::date;
+    carry_in := coalesce(carry_in, 0);
+    com := app.tiered_commission(pos, coalesce(lvl.commission_pct, 0));
+    off := least(loss + carry_in, round(com * max_off / 100));
+    team := 0;
+    if coalesce(lvl.team_bonus_pct, 0) > 0 then
+      with recursive t as (select id from public.profiles where manager_id = p.id union select x.id from public.profiles x join t on x.manager_id = t.id)
+      select coalesce(round(sum(round(o.order_profit * base_pct / 100)) * lvl.team_bonus_pct / 100), 0) into team
+        from public.order_results o where o.period_id = p_period and o.profile_id in (select id from t);
+      team := greatest(team, 0);
+    end if;
+    -- COM Mua hàng = Phí mua hàng × a% + Hoa hồng đàm phán × b% (theo tháng thâm niên) × Hệ số
+    --   Hệ số theo % hoàn thành chỉ tiêu đàm phán: tỷ lệ đạt = Σ đàm phán / Σ (tiền hàng web + phí VC nội địa TQ) (VND); hoàn thành = tỷ lệ đạt / chỉ tiêu tháng thâm niên
+    select coalesce(sum(purchase_fee), 0), coalesce(sum(nego_fee), 0), coalesce(sum(goods_value + domestic_ship), 0), count(*) into b_fee, b_nego, b_goods, b_orders
+      from public.order_results where period_id = p_period and buyer_id = p.id;
+    c_buyer := 0; b_month := null; b_nego_pct := 0; b_coef := 0; b_target := null; b_rate := null; b_ach := null;
+    if coalesce((bcfg->>'enabled')::boolean, true) and b_orders > 0 then
+      b_month := case when p.hire_date is null then 99 else
+        (extract(year from age(m_start, date_trunc('month', p.hire_date)::date)) * 12 + extract(month from age(m_start, date_trunc('month', p.hire_date)::date)))::int + 1 end;
+      b_nego_pct := coalesce((bcfg->'nego_pct_by_month'->>(least(greatest(b_month, 1), 4) - 1))::numeric, (array[2,3,4,5])[least(greatest(b_month, 1), 4)]);
+      b_target := coalesce((bcfg->'target_pct_by_month'->>(least(greatest(b_month, 1), 4) - 1))::numeric, (array[2,2.4,2.7,3])[least(greatest(b_month, 1), 4)]);
+      b_rate := case when b_goods > 0 then round(b_nego / b_goods * 100, 4) else 0 end;
+      b_ach := case when b_target > 0 then round(b_rate / b_target * 100, 2) else 0 end;
+      b_coef := 0;
+      for b_tier in select x from jsonb_array_elements(coalesce(bcfg->'coef_tiers', '[{"from":50,"coef":70},{"from":80,"coef":85},{"from":95,"coef":100},{"from":120,"coef":110},{"from":130,"coef":120}]'::jsonb)) x
+                    order by (x->>'from')::numeric loop
+        if b_ach >= (b_tier->>'from')::numeric then b_coef := (b_tier->>'coef')::numeric; end if;
+      end loop;
+      c_buyer := round(b_fee * coalesce((bcfg->>'fee_pct')::numeric, 2) / 100 * (case when coalesce((bcfg->>'coef_on_fee')::boolean, false) then b_coef / 100 else 1 end)
+                       + b_nego * b_nego_pct / 100 * b_coef / 100);
+    end if;
+    -- Lương Mua hàng theo KPI số đơn (tắt mặc định): lương × (1 − x%) + lương × x% × min(số đơn / chỉ tiêu, 1)
+    k_on := coalesce((kcfg->>'enabled')::boolean, false) and p.id::text in (select jsonb_array_elements_text(coalesce(kcfg->'profile_ids', '[]')));
+    k_share := coalesce((kcfg->>'share_pct')::numeric, 30); k_target := coalesce((kcfg->>'orders')::numeric, 900); k_pct := null;
+    if k_on and k_target > 0 then
+      k_pct := least(coalesce(b_orders, 0) / k_target, 1);
+      sal := round(sal * (1 - k_share / 100) + sal * k_share / 100 * k_pct);
+    end if;
+    -- COM CSKH: Phí dịch vụ × 2% + Phí đàm phán × 1% các đơn hoàn thành mình phụ trách
+    select coalesce(sum(purchase_fee), 0), coalesce(sum(nego_fee), 0), count(*) into c_fee, c_nego, c_orders
+      from public.order_results where period_id = p_period and cskh_id = p.id;
+    c_cskh := case when coalesce((ccfg->>'enabled')::boolean, true) and c_orders > 0
+                   then round(c_fee * coalesce((ccfg->>'fee_pct')::numeric, 2) / 100 + c_nego * coalesce((ccfg->>'nego_pct')::numeric, 1) / 100) else 0 end;
+    -- COM Trưởng phòng Kế toán: 0,5% × 60% × LN đơn hoàn thành cả công ty
+    c_acc := case when p.id::text in (select jsonb_array_elements_text(coalesce(acfg->'profile_ids', '[]'))) and total_profit > 0
+                  then round(total_profit * coalesce((acfg->>'base_pct')::numeric, 60) / 100 * coalesce((acfg->>'pct')::numeric, 0.5) / 100) else 0 end;
+    select coalesce(sum(a.amount),0) into adj from public.payslip_adjustments a join public.payslips ps on ps.id = a.payslip_id where ps.period_id = p_period and ps.profile_id = p.id;
+    detail := jsonb_build_object('late_minutes', late, 'flex_minutes', flex_min, 'flex_active', m_start >= flex_from, 'commission_pct', coalesce(lvl.commission_pct,0),
+      'commission_base_pct', base_pct, 'loss_this_month', loss, 'carry_in', carry_in, 'orders', (select count(*) from public.order_results where period_id = p_period and profile_id = p.id),
+      'buyer', jsonb_build_object('orders', b_orders, 'purchase_fee', b_fee, 'nego_fee', b_nego, 'goods', b_goods, 'month', b_month, 'fee_pct', coalesce((bcfg->>'fee_pct')::numeric, 2), 'nego_pct', b_nego_pct,
+        'target_pct', b_target, 'rate_pct', b_rate, 'ach_pct', b_ach, 'coef_pct', b_coef, 'coef_on_fee', coalesce((bcfg->>'coef_on_fee')::boolean, false)),
+      'buyer_kpi', case when k_on then jsonb_build_object('orders', b_orders, 'target', k_target, 'share_pct', k_share, 'pct', round(k_pct * 100, 2)) end,
+      'cskh', jsonb_build_object('orders', c_orders, 'purchase_fee', c_fee, 'nego_fee', c_nego, 'fee_pct', coalesce((ccfg->>'fee_pct')::numeric, 2), 'nego_pct', coalesce((ccfg->>'nego_pct')::numeric, 1)),
+      'accounting', jsonb_build_object('total_profit', total_profit, 'base_pct', coalesce((acfg->>'base_pct')::numeric, 60), 'pct', coalesce((acfg->>'pct')::numeric, 0.5)));
+    insert into public.payslips as ps(period_id, profile_id, standard_days, paid_days, worked_days, paid_leave_days, unpaid_days, late_minutes, flex_over_minutes, base_salary,
+      salary_by_days, allowance, profit_total, commission_base, commission, loss_offset, carry_loss, team_bonus, com_buyer, com_cskh, com_accounting, flex_deduction, insurance, adjustments, net, details, status, updated_at)
+    values (p_period, p.id, std, least(paid, std), worked, pleave, greatest(unpaid, 0), late, over, coalesce(priv.base_salary,0), sal, coalesce(priv.allowance,0),
+      (select coalesce(sum(order_profit),0) from public.order_results where period_id = p_period and profile_id = p.id),
+      pos, com, off, loss + carry_in - off, team, c_buyer, c_cskh, c_acc, flexded, coalesce(priv.insurance_deduction,0), adj,
+      sal + coalesce(priv.allowance,0) + com - off + team + c_buyer + c_cskh + c_acc - flexded - coalesce(priv.insurance_deduction,0) + adj, detail, 'draft', now())
+    on conflict (period_id, profile_id) do update set standard_days = excluded.standard_days, paid_days = excluded.paid_days, worked_days = excluded.worked_days,
+      paid_leave_days = excluded.paid_leave_days, unpaid_days = excluded.unpaid_days, late_minutes = excluded.late_minutes, flex_over_minutes = excluded.flex_over_minutes,
+      base_salary = excluded.base_salary, salary_by_days = excluded.salary_by_days, allowance = excluded.allowance, profit_total = excluded.profit_total,
+      commission_base = excluded.commission_base, commission = excluded.commission, loss_offset = excluded.loss_offset, carry_loss = excluded.carry_loss,
+      team_bonus = excluded.team_bonus, com_buyer = excluded.com_buyer, com_cskh = excluded.com_cskh, com_accounting = excluded.com_accounting, flex_deduction = excluded.flex_deduction, insurance = excluded.insurance, adjustments = excluded.adjustments,
+      net = excluded.net, details = excluded.details, status = 'draft', confirmed_at = null, updated_at = now()
+    where ps.status <> 'closed';
+    n := n + 1;
+  end loop;
+  update public.payroll_periods set computed_at = now(), status = 'open' where id = p_period;
+  return n;
+end $$;
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0016_v10.sql
+-- =====================================================================
+-- 0016 · Bản 10: Kế toán – Hóa đơn (đợt 1: đối soát xe APT B1 + HĐ đầu vào B2) · Sao lưu hằng ngày lên Google Drive
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 10');
+
+-- ---------- Cấu hình ----------
+insert into public.settings(key, value) values ('accounting', jsonb_build_object(
+  'bien_muc_tieu', 0.03, 'bien_nt_min', 0.025, 'bien_nt_max', 0.04, 'dung_sai_bien', 0.001, 'tien_bo_qua', 50000, 'nguong_ghep', 0.65,
+  'sale_lanchi', '["huyennk29","yenttt","Yentth"]'::jsonb, 'md_xuat_thang', '["MD2421","MD2744","MD2784","MD2785"]'::jsonb,
+  'hs_hop_quy_chuong', '["50","51","52","53","54","55","56","57","58","59","60","61","62","63"]'::jsonb, 'han_sale_gio', 24,
+  'approver_ids', '[]'::jsonb,
+  'sale_names', '[{"acc":"khoile","names":["Lê Thị Minh Khơi","Khơi Lê"]},{"acc":"trungdv22","names":["Đỗ Văn Trung","Trungdv22"]},
+    {"acc":"trangdtk","names":["Đắc Thị Kiều Trang","Trang"]},{"acc":"Linhnt","names":["Nguyễn Thị Linh","Linh NT"]},{"acc":"huevt","names":["Vũ Thị Huệ","Huệ Vũ"]},
+    {"acc":"thuyltp","names":["Lê Thị Phương Thúy","Phương Thúy"]},{"acc":"ngocdtb","names":["Đào Bích Ngọc"]},{"acc":"huyenttt","names":["Trần Thị Thanh Huyền","Huyền Trần"]},
+    {"acc":"huyennk29","names":[]},{"acc":"yenttt","names":["Yentth"]}]'::jsonb
+)) on conflict (key) do nothing;
+insert into public.settings(key, value) values ('drive', '{}'::jsonb) on conflict (key) do nothing;
+
+create or replace function public.set_setting(p_key text, p_value jsonb)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare v_old jsonb;
+begin
+  if not (app.is_admin() or (app.has_role('hcns') and p_key in ('attendance','leave','payroll'))
+          or (app.has_role('ke_toan') and p_key in ('vietqr','payroll','quote_defaults','accounting'))) then
+    raise exception 'Không có quyền sửa cấu hình %', p_key;
+  end if;
+  -- Kế toán không tự thêm người duyệt mở chặn: chỉ Admin/BGĐ
+  if p_key = 'accounting' and not app.is_admin() then
+    select value into v_old from public.settings where key = p_key;
+    p_value := jsonb_set(p_value, '{approver_ids}', coalesce(v_old->'approver_ids', '[]'));
+  end if;
+  select value into v_old from public.settings where key = p_key;
+  insert into public.settings(key, value, updated_by) values (p_key, p_value, auth.uid())
+    on conflict (key) do update set value = excluded.value, updated_at = now(), updated_by = auth.uid();
+  insert into public.settings_history(key, old_value, new_value, changed_by) values (p_key, v_old, p_value, auth.uid());
+end $$;
+
+create or replace function app.is_acc() returns boolean language sql stable security definer set search_path = public, app as $$
+  select app.has_role('admin','bgd','ke_toan')
+$$;
+create or replace function app.is_acc_approver() returns boolean language sql stable security definer set search_path = public, app as $$
+  select app.is_admin() or auth.uid()::text in (select jsonb_array_elements_text(coalesce(app.setting('accounting')->'approver_ids', '[]')))
+$$;
+
+-- ---------- Bảng ----------
+create table if not exists public.acc_trucks(
+  id uuid primary key default gen_random_uuid(),
+  name text not null,                              -- VD: Xe 25/10/2026
+  truck_date date,
+  files jsonb not null default '{}',               -- tên file đã nạp
+  stats jsonb not null default '{}',
+  warnings text[] not null default '{}',
+  status text not null default 'open' check (status in ('open','closed')),
+  created_by uuid default auth.uid() references public.profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.acc_lines(
+  id uuid primary key default gen_random_uuid(),
+  truck_id uuid not null references public.acc_trucks(id) on delete cascade,
+  line_key text not null,
+  ma_dong text, md text, sale_name text, sale_acc text, sale_id uuid references public.profiles(id), ma_kh text,
+  sys_row int, ten_ht text, sl_ht numeric, dvt_ht text, gia_khach numeric, nk_ht numeric,
+  apt_stt int, hh text, dh text, sale_apt text, ten_apt text, sl_apt numeric, dvt_apt text, gia_nhap numeric, gia_note numeric, note_apt text, nk_apt numeric, vat numeric,
+  tk_row int, ten_tk text, hs text, sl_tk numeric, dvt_tk text, gia_tk_nh numeric, nk_tk numeric, tnk_dv numeric, md_header text,
+  luong text not null, gia_ap_dung numeric, gia_de_xuat numeric, bien_nt numeric, tt_apt numeric, tt_khach numeric,
+  status text not null check (status in ('ok','blocked','replied','pending_approval','approved','info')),
+  level int not null default 3, issues text[] not null default '{}', notes text[] not null default '{}', phan_hoi text, match_score numeric,
+  due_at timestamptz,
+  reply text check (reply in ('da_sua_ht','de_xuat_gia','chuyen_xe_sau','xin_duyet')), reply_price numeric, reply_note text, replied_by uuid references public.profiles(id), replied_at timestamptz,
+  approved_by uuid references public.profiles(id), approved_at timestamptz, approve_note text,
+  inv_id uuid, inv_no text, inv_stt int, inv_price numeric, inv_qty numeric, inv_amount numeric, inv_result text,
+  updated_at timestamptz not null default now(),
+  unique (truck_id, line_key)
+);
+create index if not exists acc_lines_sale on public.acc_lines(sale_id, status);
+create index if not exists acc_lines_hh on public.acc_lines(hh);
+create index if not exists acc_lines_md on public.acc_lines(md);
+create table if not exists public.acc_invoices(
+  id uuid primary key default gen_random_uuid(),
+  ky_hieu text not null, so_hd text not null, ngay date, mst_ban text, ten_ban text, mst_mua text, ten_mua text,
+  tong_truoc_thue numeric, tien_thue numeric, tong numeric, file_name text,
+  stats jsonb not null default '{}',
+  created_by uuid default auth.uid() references public.profiles(id), created_at timestamptz not null default now(),
+  unique (mst_ban, ky_hieu, so_hd)
+);
+create table if not exists public.acc_invoice_lines(
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references public.acc_invoices(id) on delete cascade,
+  stt int not null, hh text, ten text, dvt text, sl numeric, dg numeric, tt numeric, vat text,
+  line_id uuid references public.acc_lines(id) on delete set null, result text not null,
+  unique (invoice_id, stt)
+);
+create table if not exists public.acc_events(
+  id bigint generated always as identity primary key,
+  line_id uuid references public.acc_lines(id) on delete cascade,
+  truck_id uuid references public.acc_trucks(id) on delete cascade,
+  action text not null, note text, data jsonb,
+  actor uuid default auth.uid() references public.profiles(id), at timestamptz not null default now()
+);
+create index if not exists acc_events_line on public.acc_events(line_id, at desc);
+
+alter table public.acc_trucks enable row level security;
+alter table public.acc_lines enable row level security;
+alter table public.acc_invoices enable row level security;
+alter table public.acc_invoice_lines enable row level security;
+alter table public.acc_events enable row level security;
+drop policy if exists acc_trucks_read on public.acc_trucks;
+create policy acc_trucks_read on public.acc_trucks for select to authenticated using (app.is_acc() or app.is_acc_approver() or exists(select 1 from public.acc_lines l where l.truck_id = acc_trucks.id and app.in_tree(l.sale_id)));
+drop policy if exists acc_trucks_write on public.acc_trucks;
+create policy acc_trucks_write on public.acc_trucks for all to authenticated using (app.is_acc()) with check (app.is_acc());
+drop policy if exists acc_lines_read on public.acc_lines;
+create policy acc_lines_read on public.acc_lines for select to authenticated using (app.is_acc() or app.in_tree(sale_id) or (app.is_acc_approver() and status = 'pending_approval'));
+drop policy if exists acc_lines_write on public.acc_lines;
+create policy acc_lines_write on public.acc_lines for all to authenticated using (app.is_acc()) with check (app.is_acc());
+drop policy if exists acc_inv_all on public.acc_invoices;
+create policy acc_inv_all on public.acc_invoices for all to authenticated using (app.is_acc()) with check (app.is_acc());
+drop policy if exists acc_invl_all on public.acc_invoice_lines;
+create policy acc_invl_all on public.acc_invoice_lines for all to authenticated using (app.is_acc()) with check (app.is_acc());
+drop policy if exists acc_ev_read on public.acc_events;
+create policy acc_ev_read on public.acc_events for select to authenticated using (app.is_acc() or exists(select 1 from public.acc_lines l where l.id = acc_events.line_id and (app.in_tree(l.sale_id) or app.is_acc_approver())));
+grant select, insert, update, delete on public.acc_trucks, public.acc_lines, public.acc_invoices, public.acc_invoice_lines to authenticated;
+grant select on public.acc_events to authenticated;
+
+-- Ghép sale trong file với nhân sự: tên trong file / họ tên / mã NV (không dấu, không phân biệt hoa thường)
+create or replace function app.match_sale(p_name text) returns uuid
+language sql stable security definer set search_path = public, app as $$
+  select coalesce(app.match_staff(p_name), (
+    select p.id from public.profiles p where app.is_assigned(p_name)
+       and app.norm_text(p_name) = any(select app.norm_text(x) from unnest(p.sale_aliases || p.full_name) x) limit 1))
+$$;
+
+-- ---------- Lưu kết quả đối soát 1 xe (nạp lại: giữ trả lời của sale theo line_key) ----------
+create or replace function public.acc_truck_save(p_truck uuid, p_info jsonb, p_lines jsonb)
+returns uuid language plpgsql security definer set search_path = public, app as $$
+declare v_id uuid := p_truck; r jsonb; v_sale uuid; v_old public.acc_lines; v_status text; v_due timestamptz;
+        h int := coalesce((app.setting('accounting')->>'han_sale_gio')::int, 24); n_block int; s record; v_keys text[] := '{}';
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán được nạp đối soát'; end if;
+  if v_id is null then
+    insert into public.acc_trucks(name, truck_date, files, stats, warnings)
+    values (p_info->>'name', nullif(p_info->>'truck_date','')::date, coalesce(p_info->'files','{}'), coalesce(p_info->'stats','{}'),
+            coalesce(array(select jsonb_array_elements_text(p_info->'warnings')), '{}'))
+    returning id into v_id;
+  else
+    update public.acc_trucks set name = coalesce(p_info->>'name', name), truck_date = coalesce(nullif(p_info->>'truck_date','')::date, truck_date),
+      files = coalesce(p_info->'files', files), stats = coalesce(p_info->'stats', stats),
+      warnings = coalesce(array(select jsonb_array_elements_text(p_info->'warnings')), warnings), updated_at = now() where id = v_id;
+  end if;
+  for r in select * from jsonb_array_elements(p_lines) loop
+    v_keys := v_keys || (r->>'line_key');
+    v_sale := coalesce(nullif(r->>'sale_id','')::uuid, app.match_sale(r->>'sale_name'), app.match_sale(r->>'sale_acc'));
+    select * into v_old from public.acc_lines where truck_id = v_id and line_key = r->>'line_key';
+    v_status := r->>'status';
+    -- Đã được duyệt mở chặn thì giữ; sale đã trả lời mà vẫn chặn → giữ trạng thái đã trả lời
+    if v_old.id is not null and v_status = 'blocked' and v_old.status in ('approved','replied','pending_approval') then v_status := v_old.status; end if;
+    v_due := case when v_status = 'blocked' then coalesce(v_old.due_at, now() + make_interval(hours => h)) else null end;
+    insert into public.acc_lines as l(truck_id, line_key, ma_dong, md, sale_name, sale_acc, sale_id, ma_kh, sys_row, ten_ht, sl_ht, dvt_ht, gia_khach, nk_ht,
+      apt_stt, hh, dh, sale_apt, ten_apt, sl_apt, dvt_apt, gia_nhap, gia_note, note_apt, nk_apt, vat, tk_row, ten_tk, hs, sl_tk, dvt_tk, gia_tk_nh, nk_tk, tnk_dv, md_header,
+      luong, gia_ap_dung, gia_de_xuat, bien_nt, tt_apt, tt_khach, status, level, issues, notes, phan_hoi, match_score, due_at, updated_at)
+    select v_id, x.line_key, x.ma_dong, x.md, x.sale_name, x.sale_acc, v_sale, x.ma_kh, x.sys_row, x.ten_ht, x.sl_ht, x.dvt_ht, x.gia_khach, x.nk_ht,
+      x.apt_stt, x.hh, x.dh, x.sale_apt, x.ten_apt, x.sl_apt, x.dvt_apt, x.gia_nhap, x.gia_note, x.note_apt, x.nk_apt, x.vat, x.tk_row, x.ten_tk, x.hs, x.sl_tk, x.dvt_tk, x.gia_tk_nh, x.nk_tk, x.tnk_dv, x.md_header,
+      x.luong, x.gia_ap_dung, x.gia_de_xuat, x.bien_nt, x.tt_apt, x.tt_khach, v_status, x.level, coalesce(x.issues, '{}'), coalesce(x.notes, '{}'), x.phan_hoi, x.match_score, v_due, now()
+    from jsonb_populate_record(null::public.acc_lines, r) x
+    on conflict (truck_id, line_key) do update set ma_dong = excluded.ma_dong, md = excluded.md, sale_name = excluded.sale_name, sale_acc = excluded.sale_acc, sale_id = excluded.sale_id,
+      ma_kh = excluded.ma_kh, sys_row = excluded.sys_row, ten_ht = excluded.ten_ht, sl_ht = excluded.sl_ht, dvt_ht = excluded.dvt_ht, gia_khach = excluded.gia_khach, nk_ht = excluded.nk_ht,
+      apt_stt = excluded.apt_stt, hh = excluded.hh, dh = excluded.dh, sale_apt = excluded.sale_apt, ten_apt = excluded.ten_apt, sl_apt = excluded.sl_apt, dvt_apt = excluded.dvt_apt,
+      gia_nhap = excluded.gia_nhap, gia_note = excluded.gia_note, note_apt = excluded.note_apt, nk_apt = excluded.nk_apt, vat = excluded.vat, tk_row = excluded.tk_row, ten_tk = excluded.ten_tk,
+      hs = excluded.hs, sl_tk = excluded.sl_tk, dvt_tk = excluded.dvt_tk, gia_tk_nh = excluded.gia_tk_nh, nk_tk = excluded.nk_tk, tnk_dv = excluded.tnk_dv, md_header = excluded.md_header,
+      luong = excluded.luong, gia_ap_dung = excluded.gia_ap_dung, gia_de_xuat = excluded.gia_de_xuat, bien_nt = excluded.bien_nt, tt_apt = excluded.tt_apt, tt_khach = excluded.tt_khach,
+      status = excluded.status, level = excluded.level, issues = excluded.issues, notes = excluded.notes, phan_hoi = excluded.phan_hoi, match_score = excluded.match_score,
+      due_at = excluded.due_at, updated_at = now();
+  end loop;
+  -- Dòng cũ không còn trong lần nạp mới → xóa (đã có nhật ký)
+  delete from public.acc_lines where truck_id = v_id and line_key <> all(v_keys);
+  insert into public.acc_events(truck_id, action, note, data) values (v_id, case when p_truck is null then 'import' else 'reimport' end, p_info->>'name', p_info->'stats');
+  -- Báo sale có dòng bị chặn
+  for s in select sale_id, count(*) c from public.acc_lines where truck_id = v_id and status = 'blocked' and sale_id is not null group by sale_id loop
+    perform app.notify(s.sale_id, 'acc', 'Hóa đơn APT: ' || s.c || ' dòng cần bạn xử lý', coalesce(p_info->>'name','') || ' · hạn ' || h || 'h', '#/acc/mine');
+  end loop;
+  select count(*) into n_block from public.acc_lines where truck_id = v_id and status = 'blocked' and sale_id is null;
+  if n_block > 0 then perform app.notify_roles(array['ke_toan'], 'acc', n_block || ' dòng bị chặn chưa ghép được sale', p_info->>'name', '#/acc?truck=' || v_id); end if;
+  return v_id;
+end $$;
+grant execute on function public.acc_truck_save(uuid, jsonb, jsonb) to authenticated;
+
+-- ---------- Sale trả lời dòng bị chặn ----------
+create or replace function public.acc_line_reply(p_id uuid, p_reply text, p_price numeric default null, p_note text default null)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines; v_status text;
+begin
+  select * into l from public.acc_lines where id = p_id for update;
+  if l.id is null then raise exception 'Không tìm thấy dòng'; end if;
+  if not (app.is_acc() or app.in_tree(l.sale_id)) then raise exception 'Dòng này không thuộc khách của bạn'; end if;
+  if l.status not in ('blocked','replied') then raise exception 'Dòng không ở trạng thái chờ sale'; end if;
+  if p_reply not in ('da_sua_ht','de_xuat_gia','chuyen_xe_sau','xin_duyet') then raise exception 'Lựa chọn không hợp lệ'; end if;
+  if p_reply = 'de_xuat_gia' and coalesce(p_price, 0) <= 0 then raise exception 'Nhập giá đề xuất'; end if;
+  if p_reply = 'xin_duyet' and coalesce(btrim(p_note), '') = '' then raise exception 'Ghi lý do xin duyệt ngoại lệ'; end if;
+  v_status := case when p_reply = 'xin_duyet' then 'pending_approval' else 'replied' end;
+  update public.acc_lines set reply = p_reply, reply_price = p_price, reply_note = nullif(btrim(p_note), ''), replied_by = auth.uid(), replied_at = now(), status = v_status, updated_at = now() where id = p_id;
+  insert into public.acc_events(line_id, truck_id, action, note, data) values (p_id, l.truck_id, 'reply', p_note, jsonb_build_object('reply', p_reply, 'price', p_price));
+  if p_reply = 'xin_duyet' then
+    perform app.notify(x::uuid, 'acc', 'Xin duyệt ngoại lệ HĐ: ' || coalesce(l.md, 'dòng không có đơn'), left(coalesce(l.ten_apt, l.ten_ht, ''), 80) || ' — ' || p_note, '#/acc/approve')
+      from jsonb_array_elements_text(coalesce(app.setting('accounting')->'approver_ids', '[]')) x;
+  end if;
+end $$;
+grant execute on function public.acc_line_reply(uuid, text, numeric, text) to authenticated;
+
+-- ---------- Người được cấp quyền duyệt mở chặn ----------
+create or replace function public.acc_line_approve(p_id uuid, p_ok boolean, p_note text default null)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines;
+begin
+  if not app.is_acc_approver() then raise exception 'Bạn không có quyền duyệt mở chặn'; end if;
+  select * into l from public.acc_lines where id = p_id for update;
+  if l.id is null then raise exception 'Không tìm thấy dòng'; end if;
+  if l.status not in ('pending_approval','blocked','replied') then raise exception 'Dòng không chờ duyệt'; end if;
+  if not p_ok and coalesce(btrim(p_note), '') = '' then raise exception 'Ghi lý do từ chối'; end if;
+  update public.acc_lines set status = case when p_ok then 'approved' else 'blocked' end, approved_by = auth.uid(), approved_at = now(), approve_note = nullif(btrim(p_note), ''),
+    phan_hoi = case when p_ok then coalesce(case when l.reply_price > 0 then 'XUẤT GIÁ ' || to_char(l.reply_price, 'FM999G999G999') end, 'CHỐT (duyệt ngoại lệ)') else phan_hoi end,
+    due_at = case when p_ok then null else now() + interval '24 hours' end, updated_at = now() where id = p_id;
+  insert into public.acc_events(line_id, truck_id, action, note) values (p_id, l.truck_id, case when p_ok then 'approve' else 'reject' end, p_note);
+  perform app.notify(l.sale_id, 'acc', case when p_ok then 'Đã duyệt mở chặn: ' else 'Từ chối mở chặn: ' end || coalesce(l.md, ''), p_note, '#/acc/mine');
+end $$;
+grant execute on function public.acc_line_approve(uuid, boolean, text) to authenticated;
+
+-- ---------- Kế toán chốt / trả lại dòng ----------
+create or replace function public.acc_line_set(p_id uuid, p_status text, p_note text default null)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  if p_status not in ('ok','blocked') then raise exception 'Trạng thái không hợp lệ'; end if;
+  select * into l from public.acc_lines where id = p_id for update;
+  update public.acc_lines set status = p_status, due_at = case when p_status = 'blocked' then now() + interval '24 hours' end,
+    phan_hoi = case when p_status = 'ok' then coalesce(case when l.reply = 'de_xuat_gia' and l.reply_price > 0 then 'XUẤT GIÁ ' || to_char(l.reply_price, 'FM999G999G999') end,
+                    case when l.phan_hoi like 'CHỜ SALE%' then 'CHỐT' else l.phan_hoi end) else 'CHỜ SALE — chưa xuất' end,
+    updated_at = now() where id = p_id;
+  insert into public.acc_events(line_id, truck_id, action, note) values (p_id, l.truck_id, 'set_' || p_status, p_note);
+  if p_status = 'blocked' then perform app.notify(l.sale_id, 'acc', 'Kế toán trả lại dòng HĐ: ' || coalesce(l.md, ''), p_note, '#/acc/mine'); end if;
+end $$;
+grant execute on function public.acc_line_set(uuid, text, text) to authenticated;
+
+-- ---------- HĐ đầu vào (XML): lưu + ghi kết quả vào dòng đối soát ----------
+create or replace function public.acc_invoice_save(p_inv jsonb, p_lines jsonb)
+returns uuid language plpgsql security definer set search_path = public, app as $$
+declare v_id uuid; r jsonb;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  insert into public.acc_invoices as i(ky_hieu, so_hd, ngay, mst_ban, ten_ban, mst_mua, ten_mua, tong_truoc_thue, tien_thue, tong, file_name, stats)
+  values (p_inv->>'ky_hieu', p_inv->>'so_hd', nullif(p_inv->>'ngay','')::date, p_inv->>'mst_ban', p_inv->>'ten_ban', p_inv->>'mst_mua', p_inv->>'ten_mua',
+          (p_inv->>'tong_truoc_thue')::numeric, (p_inv->>'tien_thue')::numeric, (p_inv->>'tong')::numeric, p_inv->>'file_name', coalesce(p_inv->'stats','{}'))
+  on conflict (mst_ban, ky_hieu, so_hd) do update set ngay = excluded.ngay, tong_truoc_thue = excluded.tong_truoc_thue, tien_thue = excluded.tien_thue, tong = excluded.tong,
+    file_name = excluded.file_name, stats = excluded.stats
+  returning id into v_id;
+  update public.acc_lines set inv_id = null, inv_no = null, inv_stt = null, inv_price = null, inv_qty = null, inv_amount = null, inv_result = null where inv_id = v_id;
+  delete from public.acc_invoice_lines where invoice_id = v_id;
+  for r in select * from jsonb_array_elements(p_lines) loop
+    insert into public.acc_invoice_lines(invoice_id, stt, hh, ten, dvt, sl, dg, tt, vat, line_id, result)
+    values (v_id, (r->>'stt')::int, r->>'hh', r->>'ten', r->>'dvt', (r->>'sl')::numeric, (r->>'dg')::numeric, (r->>'tt')::numeric, r->>'vat', nullif(r->>'line_id','')::uuid, r->>'result');
+    if nullif(r->>'line_id','') is not null then
+      update public.acc_lines set inv_id = v_id, inv_no = p_inv->>'so_hd', inv_stt = (r->>'stt')::int, inv_price = (r->>'dg')::numeric, inv_qty = (r->>'sl')::numeric,
+        inv_amount = (r->>'tt')::numeric, inv_result = r->>'result', updated_at = now() where id = (r->>'line_id')::uuid;
+    end if;
+  end loop;
+  if exists(select 1 from public.acc_invoice_lines where invoice_id = v_id and result in ('khong_don','gia_khach_0','lech')) then
+    perform app.telegram('acc_invoice', '🧾 HĐ APT <b>' || app.esc(p_inv->>'so_hd') || '</b>: ' ||
+      (select count(*) from public.acc_invoice_lines where invoice_id = v_id and result in ('khong_don','gia_khach_0')) || ' dòng chưa có đơn/giá khách, ' ||
+      (select count(*) from public.acc_invoice_lines where invoice_id = v_id and result = 'lech') || ' dòng lệch giá/SL.');
+  end if;
+  return v_id;
+end $$;
+grant execute on function public.acc_invoice_save(jsonb, jsonb) to authenticated;
+
+-- Cho phép Kế toán ghép "tên trong file" qua hàm acc_set_sale_alias (chỉ đổi sale_aliases)
+create or replace function app.guard_profile() returns trigger
+language plpgsql security definer set search_path = public, app as $$
+begin
+  if auth.uid() is null then return new; end if; -- chạy từ hệ thống
+  if new.roles is distinct from old.roles and not app.is_admin() then
+    if not app.has_role('hcns') or new.roles && array['admin','bgd'] or old.roles && array['admin','bgd'] then
+      raise exception 'Không có quyền đổi vai trò';
+    end if;
+  end if;
+  if (new.manager_id, new.job_level, new.org_unit_id, new.status, new.email, new.employee_code, new.work_schedule, new.is_new_hire)
+     is distinct from (old.manager_id, old.job_level, old.org_unit_id, old.status, old.email, old.employee_code, old.work_schedule, old.is_new_hire)
+     and not app.has_role('admin','bgd','hcns') then
+    raise exception 'Chỉ HCNS/Admin được sửa thông tin tổ chức';
+  end if;
+  if new.sale_aliases is distinct from old.sale_aliases and not app.has_role('admin','bgd','hcns')
+     and coalesce(current_setting('nt.alias_ok', true), '') <> '1' then
+    raise exception 'Chỉ HCNS/Admin/Kế toán được sửa tên trong file';
+  end if;
+  if new.manager_id = new.id then raise exception 'Không thể tự làm quản lý của mình'; end if;
+  return new;
+end $$;
+
+-- ---------- Ghép tên sale trong file với nhân sự (kế toán tự làm) ----------
+create or replace function public.acc_set_sale_alias(p_profile uuid, p_names text[])
+returns void language plpgsql security definer set search_path = public, app as $$
+begin
+  if not (app.is_acc() or app.has_role('hcns')) then raise exception 'Không có quyền'; end if;
+  perform set_config('nt.alias_ok', '1', true);
+  -- gỡ tên này khỏi người khác để không trùng
+  update public.profiles set sale_aliases = array(select x from unnest(sale_aliases) x where app.norm_text(x) <> all(select app.norm_text(y) from unnest(p_names) y))
+   where id <> p_profile and sale_aliases && p_names;
+  update public.profiles set sale_aliases = array(select distinct x from unnest(sale_aliases || p_names) x where btrim(x) <> '') where id = p_profile;
+  perform set_config('nt.alias_ok', '', true);
+  -- Gắn lại các dòng đối soát mang tên này (không cần nạp lại file); bỏ lỗi "chưa ghép", hết lỗi thì tự chốt
+  update public.acc_lines l set sale_id = p_profile, updated_at = now(),
+    issues = array(select x from unnest(l.issues) x where x not like 'Tên sale "%chưa ghép%'),
+    status = case when l.status = 'blocked' and not exists(select 1 from unnest(l.issues) x where x not like 'Tên sale "%chưa ghép%')
+                  then case when l.luong in ('A','E') then 'ok' else 'info' end else l.status end,
+    due_at = case when l.status = 'blocked' and not exists(select 1 from unnest(l.issues) x where x not like 'Tên sale "%chưa ghép%') then null else l.due_at end,
+    phan_hoi = case when l.status = 'blocked' and l.apt_stt is not null and l.luong = 'A' and not exists(select 1 from unnest(l.issues) x where x not like 'Tên sale "%chưa ghép%')
+                    then case when l.gia_note is not null and abs(l.gia_note - coalesce(l.gia_nhap, 0)) > 0.5 then 'XUẤT GIÁ ' || to_char(l.gia_note, 'FM999G999G999')
+                              when l.gia_de_xuat is not null then 'XUẤT GIÁ ' || to_char(l.gia_de_xuat, 'FM999G999G999') else 'CHỐT' end
+                    else l.phan_hoi end
+   where (l.sale_id is null or l.sale_id <> p_profile)
+     and app.norm_text(coalesce(l.sale_name, '')) = any(select app.norm_text(y) from unnest(p_names) y);
+end $$;
+grant execute on function public.acc_set_sale_alias(uuid, text[]) to authenticated;
+
+create or replace function public.acc_sale_directory()
+returns table(id uuid, full_name text, sale_aliases text[]) language sql stable security definer set search_path = public, app as $$
+  select id, full_name, sale_aliases from public.profiles where status = 'active' and (app.is_acc() or app.has_role('hcns')) order by full_name
+$$;
+grant execute on function public.acc_sale_directory() to authenticated;
+
+-- ---------- Nhắc hạn: dòng chặn quá hạn ----------
+create or replace function app.job_acc_remind() returns void language plpgsql security definer set search_path = public, app as $$
+declare s record; n int;
+begin
+  for s in select sale_id, count(*) c from public.acc_lines where status = 'blocked' and due_at < now() and sale_id is not null group by sale_id loop
+    perform app.notify(s.sale_id, 'acc', 'Quá hạn: ' || s.c || ' dòng HĐ APT chưa xử lý', 'Mở Kế toán – Hóa đơn → Việc của tôi', '#/acc/mine');
+  end loop;
+  select count(*) into n from public.acc_lines where status = 'blocked' and due_at < now();
+  if n > 0 then perform app.telegram('acc_overdue', '⏰ ' || n || ' dòng HĐ APT quá hạn sale chưa xử lý.'); end if;
+end $$;
+do $$ begin perform cron.unschedule('nt_acc_remind'); exception when others then null; end $$;
+select cron.schedule('nt_acc_remind', '30 1,7 * * 1-6', 'select app.job_acc_remind()');
+
+-- ---------- Sao lưu hằng ngày lên Google Drive (Apps Script gọi bằng mã bí mật) ----------
+create or replace function public.backup_set_token(p_token text) returns void
+language plpgsql security definer set search_path = public, app, extensions as $$
+begin
+  if not app.is_admin() then raise exception 'Chỉ Admin/BGĐ'; end if;
+  if length(coalesce(p_token, '')) < 32 then raise exception 'Mã quá ngắn'; end if;
+  insert into app.secrets(key, value, updated_by) values ('backup_token_hash', encode(digest(p_token, 'sha256'), 'hex'), auth.uid())
+    on conflict (key) do update set value = excluded.value, updated_at = now(), updated_by = auth.uid();
+end $$;
+grant execute on function public.backup_set_token(text) to authenticated;
+
+create or replace function public.backup_export(p_token text) returns jsonb
+language plpgsql security definer set search_path = public, app, extensions as $$
+declare v_hash text; t record; out jsonb := '{}'; v jsonb;
+begin
+  select value into v_hash from app.secrets where key = 'backup_token_hash';
+  if v_hash is null or encode(digest(coalesce(p_token, ''), 'sha256'), 'hex') <> v_hash then
+    perform pg_sleep(1); raise exception 'Sai mã sao lưu';
+  end if;
+  for t in select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r' order by 1 loop
+    execute format('select coalesce(jsonb_agg(to_jsonb(x)), ''[]'') from public.%I x', t.relname) into v;
+    out := out || jsonb_build_object(t.relname, v);
+  end loop;
+  insert into public.audit_logs(action, table_name, diff) values ('BACKUP_DRIVE', 'all', jsonb_build_object('tables', (select count(*) from jsonb_object_keys(out))));
+  update public.settings set value = value || jsonb_build_object('last_backup_at', now()) where key = 'drive';
+  return jsonb_build_object('generated_at', now(), 'version', 1, 'tables', out);
+end $$;
+revoke all on function public.backup_export(text) from public;
+grant execute on function public.backup_export(text) to anon, authenticated;
+
+-- Khôi phục 1 bảng từ file sao lưu Drive (Admin; ghi đè theo khóa chính, dòng mới tạo sau giữ nguyên)
+create or replace function public.backup_restore_json(p_table text, p_rows jsonb) returns bigint
+language plpgsql security definer set search_path = public, app as $$
+declare cols text; pk text; upd text; n bigint;
+begin
+  if not app.is_admin() then raise exception 'Chỉ Admin/BGĐ'; end if;
+  if to_regclass(format('public.%I', p_table)) is null then raise exception 'Không có bảng %', p_table; end if;
+  select string_agg(format('%I', a.attname), ', ' order by a.attnum) into cols
+    from pg_attribute a where a.attrelid = format('public.%I', p_table)::regclass and a.attnum > 0 and not a.attisdropped and a.attgenerated = '';
+  select string_agg(format('%I', a.attname), ', ') into pk
+    from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+   where i.indrelid = format('public.%I', p_table)::regclass and i.indisprimary;
+  if pk is null then raise exception 'Bảng % không có khóa chính', p_table; end if;
+  select string_agg(format('%1$I = excluded.%1$I', x), ', ') into upd
+    from unnest(string_to_array(replace(cols, '"', ''), ', ')) x where x <> all(string_to_array(replace(pk, '"', ''), ', '));
+  execute format('alter table public.%I disable trigger user', p_table);
+  execute format('insert into public.%I (%s) overriding system value select %s from jsonb_populate_recordset(null::public.%I, $1) on conflict (%s) do %s',
+                 p_table, cols, cols, p_table, pk, case when upd is null then 'nothing' else 'update set ' || upd end) using p_rows;
+  get diagnostics n = row_count;
+  execute format('alter table public.%I enable trigger user', p_table);
+  insert into public.audit_logs(action, table_name, diff) values ('RESTORE_DRIVE', p_table, jsonb_build_object('rows', n));
+  return n;
+end $$;
+revoke all on function public.backup_restore_json(text, jsonb) from public, anon;
+grant execute on function public.backup_restore_json(text, jsonb) to authenticated;
+
+create or replace function public.set_drive(p_value jsonb) returns void
+language plpgsql security definer set search_path = public, app as $$
+begin
+  if not app.is_admin() then raise exception 'Chỉ Admin/BGĐ'; end if;
+  insert into public.settings(key, value, updated_by) values ('drive', p_value, auth.uid())
+    on conflict (key) do update set value = public.settings.value || excluded.value, updated_at = now(), updated_by = auth.uid();
+end $$;
+grant execute on function public.set_drive(jsonb) to authenticated;
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0017_v10b.sql
+-- =====================================================================
+-- 0017 · Bản 10b: sao lưu Drive lấy theo từng bảng, từng trang (tránh quá thời gian chờ của Supabase gói miễn phí)
+-- =====================================================================
+set search_path = public, app, extensions;
+
+create or replace function app.backup_check(p_token text) returns void
+language plpgsql security definer set search_path = public, app, extensions as $$
+declare v_hash text;
+begin
+  select value into v_hash from app.secrets where key = 'backup_token_hash';
+  if v_hash is null or encode(digest(coalesce(p_token, ''), 'sha256'), 'hex') <> v_hash then
+    perform pg_sleep(1); raise exception 'Sai mã sao lưu';
+  end if;
+end $$;
+
+-- Danh sách bảng cần sao lưu
+create or replace function public.backup_tables(p_token text) returns jsonb
+language plpgsql security definer set search_path = public, app, extensions as $$
+begin
+  perform app.backup_check(p_token);
+  update public.settings set value = value || jsonb_build_object('last_backup_at', now()) where key = 'drive';
+  insert into public.audit_logs(action, table_name) values ('BACKUP_DRIVE', 'all');
+  return (select jsonb_agg(c.relname order by c.relname) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r');
+end $$;
+
+-- 1 trang dữ liệu của 1 bảng (sắp theo khóa chính để không sót/trùng)
+create or replace function public.backup_page(p_token text, p_table text, p_offset int default 0, p_limit int default 1000) returns jsonb
+language plpgsql security definer set search_path = public, app, extensions as $$
+declare pk text; v jsonb;
+begin
+  perform app.backup_check(p_token);
+  if to_regclass(format('public.%I', p_table)) is null then raise exception 'Không có bảng %', p_table; end if;
+  select string_agg(format('%I', a.attname), ', ') into pk
+    from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+   where i.indrelid = format('public.%I', p_table)::regclass and i.indisprimary;
+  execute format('select coalesce(jsonb_agg(to_jsonb(x)), ''[]'') from (select * from public.%I order by %s offset %s limit %s) x',
+                 p_table, coalesce(pk, 'ctid'), greatest(p_offset, 0), least(greatest(p_limit, 1), 5000)) into v;
+  return v;
+end $$;
+revoke all on function public.backup_tables(text) from public;
+revoke all on function public.backup_page(text, text, int, int) from public;
+grant execute on function public.backup_tables(text) to anon, authenticated;
+grant execute on function public.backup_page(text, text, int, int) to anon, authenticated;
+drop function if exists public.backup_export(text);
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0018_v11.sql
+-- =====================================================================
+-- 0018 · Bản 11: xuất thẳng theo từng xe, nạp thử không báo sale, xóa xe, chống trùng, lưu file gốc lên Drive, theo dõi HĐ chưa về / xuất muộn
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 11');
+
+alter table public.acc_trucks add column if not exists is_test boolean not null default false;
+alter table public.acc_trucks add column if not exists md_xuat_thang text[] not null default '{}';
+alter table public.acc_trucks add column if not exists xt_keys text[] not null default '{}';
+alter table public.acc_trucks add column if not exists file_links jsonb not null default '{}';
+alter table public.acc_lines add column if not exists is_test boolean not null default false;
+create index if not exists acc_lines_open on public.acc_lines(truck_id) where inv_no is null;
+update public.settings set value = (value - 'md_xuat_thang') || jsonb_build_object('han_hd_ngay', coalesce((value->>'han_hd_ngay')::int, 15)) where key = 'accounting';
+
+-- Xe nạp thử: sale, người duyệt không thấy
+drop policy if exists acc_lines_read on public.acc_lines;
+create policy acc_lines_read on public.acc_lines for select to authenticated
+  using (app.is_acc() or (not is_test and (app.in_tree(sale_id) or (app.is_acc_approver() and status = 'pending_approval'))));
+
+create or replace function public.acc_truck_save(p_truck uuid, p_info jsonb, p_lines jsonb)
+returns uuid language plpgsql security definer set search_path = public, app as $$
+declare v_id uuid := p_truck; r jsonb; v_sale uuid; v_old public.acc_lines; v_status text; v_due timestamptz;
+        h int := coalesce((app.setting('accounting')->>'han_sale_gio')::int, 24); n_block int; s record; v_keys text[] := '{}'; v_test boolean;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán được nạp đối soát'; end if;
+  if v_id is null then
+    insert into public.acc_trucks(name, truck_date, files, stats, warnings, is_test, md_xuat_thang, xt_keys)
+    values (p_info->>'name', nullif(p_info->>'truck_date','')::date, coalesce(p_info->'files','{}'), coalesce(p_info->'stats','{}'),
+            coalesce(array(select jsonb_array_elements_text(p_info->'warnings')), '{}'), coalesce((p_info->>'is_test')::boolean, false),
+            coalesce(array(select jsonb_array_elements_text(p_info->'md_xuat_thang')), '{}'), coalesce(array(select jsonb_array_elements_text(p_info->'xt_keys')), '{}'))
+    returning id into v_id;
+  else
+    update public.acc_trucks set name = coalesce(p_info->>'name', name), truck_date = coalesce(nullif(p_info->>'truck_date','')::date, truck_date),
+      files = coalesce(p_info->'files', files), stats = coalesce(p_info->'stats', stats),
+      warnings = coalesce(array(select jsonb_array_elements_text(p_info->'warnings')), warnings),
+      md_xuat_thang = coalesce(array(select jsonb_array_elements_text(p_info->'md_xuat_thang')), md_xuat_thang),
+      xt_keys = coalesce(array(select jsonb_array_elements_text(p_info->'xt_keys')), xt_keys), updated_at = now() where id = v_id;
+  end if;
+  select is_test into v_test from public.acc_trucks where id = v_id;
+  for r in select * from jsonb_array_elements(p_lines) loop
+    v_keys := v_keys || (r->>'line_key');
+    v_sale := coalesce(nullif(r->>'sale_id','')::uuid, app.match_sale(r->>'sale_name'), app.match_sale(r->>'sale_acc'));
+    select * into v_old from public.acc_lines where truck_id = v_id and line_key = r->>'line_key';
+    v_status := r->>'status';
+    -- Đã được duyệt mở chặn thì giữ; sale đã trả lời mà vẫn chặn → giữ trạng thái đã trả lời
+    if v_old.id is not null and v_status = 'blocked' and v_old.status in ('approved','replied','pending_approval') then v_status := v_old.status; end if;
+    v_due := case when v_status = 'blocked' then coalesce(v_old.due_at, now() + make_interval(hours => h)) else null end;
+    insert into public.acc_lines as l(truck_id, line_key, ma_dong, md, sale_name, sale_acc, sale_id, ma_kh, sys_row, ten_ht, sl_ht, dvt_ht, gia_khach, nk_ht,
+      apt_stt, hh, dh, sale_apt, ten_apt, sl_apt, dvt_apt, gia_nhap, gia_note, note_apt, nk_apt, vat, tk_row, ten_tk, hs, sl_tk, dvt_tk, gia_tk_nh, nk_tk, tnk_dv, md_header,
+      luong, gia_ap_dung, gia_de_xuat, bien_nt, tt_apt, tt_khach, status, level, issues, notes, phan_hoi, match_score, due_at, updated_at, is_test)
+    select v_id, x.line_key, x.ma_dong, x.md, x.sale_name, x.sale_acc, v_sale, x.ma_kh, x.sys_row, x.ten_ht, x.sl_ht, x.dvt_ht, x.gia_khach, x.nk_ht,
+      x.apt_stt, x.hh, x.dh, x.sale_apt, x.ten_apt, x.sl_apt, x.dvt_apt, x.gia_nhap, x.gia_note, x.note_apt, x.nk_apt, x.vat, x.tk_row, x.ten_tk, x.hs, x.sl_tk, x.dvt_tk, x.gia_tk_nh, x.nk_tk, x.tnk_dv, x.md_header,
+      x.luong, x.gia_ap_dung, x.gia_de_xuat, x.bien_nt, x.tt_apt, x.tt_khach, v_status, x.level, coalesce(x.issues, '{}'), coalesce(x.notes, '{}'), x.phan_hoi, x.match_score, v_due, now(), v_test
+    from jsonb_populate_record(null::public.acc_lines, r) x
+    on conflict (truck_id, line_key) do update set ma_dong = excluded.ma_dong, md = excluded.md, sale_name = excluded.sale_name, sale_acc = excluded.sale_acc, sale_id = excluded.sale_id,
+      ma_kh = excluded.ma_kh, sys_row = excluded.sys_row, ten_ht = excluded.ten_ht, sl_ht = excluded.sl_ht, dvt_ht = excluded.dvt_ht, gia_khach = excluded.gia_khach, nk_ht = excluded.nk_ht,
+      apt_stt = excluded.apt_stt, hh = excluded.hh, dh = excluded.dh, sale_apt = excluded.sale_apt, ten_apt = excluded.ten_apt, sl_apt = excluded.sl_apt, dvt_apt = excluded.dvt_apt,
+      gia_nhap = excluded.gia_nhap, gia_note = excluded.gia_note, note_apt = excluded.note_apt, nk_apt = excluded.nk_apt, vat = excluded.vat, tk_row = excluded.tk_row, ten_tk = excluded.ten_tk,
+      hs = excluded.hs, sl_tk = excluded.sl_tk, dvt_tk = excluded.dvt_tk, gia_tk_nh = excluded.gia_tk_nh, nk_tk = excluded.nk_tk, tnk_dv = excluded.tnk_dv, md_header = excluded.md_header,
+      luong = excluded.luong, gia_ap_dung = excluded.gia_ap_dung, gia_de_xuat = excluded.gia_de_xuat, bien_nt = excluded.bien_nt, tt_apt = excluded.tt_apt, tt_khach = excluded.tt_khach,
+      status = excluded.status, level = excluded.level, issues = excluded.issues, notes = excluded.notes, phan_hoi = excluded.phan_hoi, match_score = excluded.match_score,
+      due_at = excluded.due_at, updated_at = now(), is_test = excluded.is_test;
+  end loop;
+  -- Dòng cũ không còn trong lần nạp mới → xóa (đã có nhật ký)
+  delete from public.acc_lines where truck_id = v_id and line_key <> all(v_keys);
+  insert into public.acc_events(truck_id, action, note, data) values (v_id, case when p_truck is null then 'import' else 'reimport' end, p_info->>'name', p_info->'stats');
+  -- Báo sale có dòng bị chặn (xe nạp thử: không báo ai)
+  if v_test then return v_id; end if;
+  for s in select sale_id, count(*) c from public.acc_lines where truck_id = v_id and status = 'blocked' and sale_id is not null group by sale_id loop
+    perform app.notify(s.sale_id, 'acc', 'Hóa đơn APT: ' || s.c || ' dòng cần bạn xử lý', coalesce(p_info->>'name','') || ' · hạn ' || h || 'h', '#/acc/mine');
+  end loop;
+  select count(*) into n_block from public.acc_lines where truck_id = v_id and status = 'blocked' and sale_id is null;
+  if n_block > 0 then perform app.notify_roles(array['ke_toan'], 'acc', n_block || ' dòng bị chặn chưa ghép được sale', p_info->>'name', '#/acc?truck=' || v_id); end if;
+  return v_id;
+end $$;
+
+-- Xóa xe (nạp nhầm/nạp thử). Xe đã ghép HĐ chỉ Admin/BGĐ xóa được.
+create or replace function public.acc_truck_delete(p_id uuid) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare t public.acc_trucks; n_inv int;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  select * into t from public.acc_trucks where id = p_id; if t.id is null then raise exception 'Không tìm thấy xe'; end if;
+  select count(*) into n_inv from public.acc_lines where truck_id = p_id and inv_id is not null;
+  if n_inv > 0 and not app.is_admin() then raise exception 'Xe đã ghép % dòng HĐ — chỉ Admin/BGĐ được xóa', n_inv; end if;
+  insert into public.audit_logs(action, table_name, record_id, diff)
+    values ('DELETE', 'acc_trucks', p_id::text, jsonb_build_object('name', t.name, 'truck_date', t.truck_date, 'is_test', t.is_test, 'stats', t.stats, 'files', t.files,
+            'lines', (select count(*) from public.acc_lines where truck_id = p_id), 'replied', (select count(*) from public.acc_lines where truck_id = p_id and reply is not null)));
+  delete from public.acc_trucks where id = p_id;
+end $$;
+grant execute on function public.acc_truck_delete(uuid) to authenticated;
+
+-- Chuyển xe nạp thử thành chính thức: báo sale, tính hạn từ lúc này
+create or replace function public.acc_truck_publish(p_id uuid) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare h int := coalesce((app.setting('accounting')->>'han_sale_gio')::int, 24); s record; t public.acc_trucks;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  update public.acc_trucks set is_test = false, updated_at = now() where id = p_id and is_test returning * into t;
+  if t.id is null then raise exception 'Xe không ở chế độ nạp thử'; end if;
+  update public.acc_lines set is_test = false, due_at = case when status = 'blocked' then now() + make_interval(hours => h) end where truck_id = p_id;
+  insert into public.acc_events(truck_id, action, note) values (p_id, 'publish', t.name);
+  for s in select sale_id, count(*) c from public.acc_lines where truck_id = p_id and status = 'blocked' and sale_id is not null group by sale_id loop
+    perform app.notify(s.sale_id, 'acc', 'Hóa đơn APT: ' || s.c || ' dòng cần bạn xử lý', t.name || ' · hạn ' || h || 'h', '#/acc/mine');
+  end loop;
+end $$;
+grant execute on function public.acc_truck_publish(uuid) to authenticated;
+
+-- Đánh dấu / bỏ đánh dấu APT xuất thẳng cho 1 dòng (lưu theo xe để nạp lại vẫn giữ)
+create or replace function public.acc_line_xuat_thang(p_id uuid, p_on boolean) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  select * into l from public.acc_lines where id = p_id for update; if l.id is null then raise exception 'Không tìm thấy dòng'; end if;
+  if p_on then
+    update public.acc_trucks set xt_keys = array(select distinct x from unnest(xt_keys || l.line_key) x) where id = l.truck_id;
+    update public.acc_lines set luong = 'C', status = 'info', phan_hoi = case when apt_stt is not null then 'XUẤT THẲNG' end, due_at = null,
+      notes = array_prepend('Kế toán đánh dấu APT xuất thẳng.', notes), updated_at = now() where id = p_id;
+  else
+    update public.acc_trucks set xt_keys = array_remove(xt_keys, l.line_key), md_xuat_thang = array_remove(md_xuat_thang, l.md) where id = l.truck_id;
+    update public.acc_lines set luong = 'A', status = 'blocked', phan_hoi = 'CHỜ KẾ TOÁN — nạp lại file', due_at = null,
+      issues = array['Kế toán bỏ đánh dấu xuất thẳng → bấm “Nạp lại file” để hệ thống chấm lại dòng này.'], updated_at = now() where id = p_id;
+  end if;
+  insert into public.acc_events(line_id, truck_id, action) values (p_id, l.truck_id, case when p_on then 'xuat_thang' else 'bo_xuat_thang' end);
+end $$;
+grant execute on function public.acc_line_xuat_thang(uuid, boolean) to authenticated;
+
+-- Nhắc hạn: bỏ xe nạp thử
+create or replace function app.job_acc_remind() returns void language plpgsql security definer set search_path = public, app as $$
+declare s record; n int;
+begin
+  for s in select sale_id, count(*) c from public.acc_lines where status = 'blocked' and not is_test and due_at < now() and sale_id is not null group by sale_id loop
+    perform app.notify(s.sale_id, 'acc', 'Quá hạn: ' || s.c || ' dòng HĐ APT chưa xử lý', 'Mở Kế toán – Hóa đơn → Việc của tôi', '#/acc/mine');
+  end loop;
+  select count(*) into n from public.acc_lines where status = 'blocked' and not is_test and due_at < now();
+  if n > 0 then perform app.telegram('acc_overdue', '⏰ ' || n || ' dòng HĐ APT quá hạn sale chưa xử lý.'); end if;
+end $$;
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0019_v12.sql
+-- =====================================================================
+-- 0019 · Bản 12: biên APT theo tờ khai nháp; HĐ APT nhiều đợt (gộp nhiều HĐ / xuất một phần);
+--        HĐ về sau tự ghép vào xe nạp sau; tự ghép đủ tên sale (khoile…)
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 12');
+
+-- Giá vốn APT theo tờ khai nháp = đơn giá theo tỷ giá NH + thuế NK/đv; biên APT = giá APT ÷ giá vốn − 1
+alter table public.acc_lines add column if not exists gia_von numeric generated always as (case when gia_tk_nh is not null then gia_tk_nh + coalesce(tnk_dv, 0) end) stored;
+alter table public.acc_lines add column if not exists bien_apt numeric generated always as (
+  case when gia_tk_nh is not null and gia_tk_nh + coalesce(tnk_dv, 0) > 0 and gia_ap_dung > 0 then round(gia_ap_dung / (gia_tk_nh + coalesce(tnk_dv, 0)) - 1, 6) end) stored;
+create index if not exists acc_invl_line on public.acc_invoice_lines(line_id);
+create index if not exists acc_invl_hh_free on public.acc_invoice_lines(hh) where line_id is null;
+
+-- Kết luận 1 dòng HĐ so với dòng đối soát (chỉ giá; số lượng xét khi cộng các HĐ)
+create or replace function app.acc_judge(p_dg numeric, l public.acc_lines) returns text language sql immutable as $$
+  select case when l.id is null then 'khong_thuoc_xe' when l.md is null then 'khong_don' when coalesce(l.gia_khach, 0) = 0 then 'gia_khach_0'
+              when coalesce(l.gia_note, l.gia_de_xuat, l.gia_nhap) is null then 'khop'
+              when (l.gia_note is not null and abs(p_dg - l.gia_note) <= 0.5) or (l.gia_de_xuat is not null and abs(p_dg - l.gia_de_xuat) <= 0.5)
+                or (l.gia_nhap is not null and abs(p_dg - l.gia_nhap) <= 0.5) then 'khop' else 'lech' end
+$$;
+
+-- Cộng mọi dòng HĐ (nhiều đợt, nhiều HĐ) của 1 dòng đối soát
+create or replace function app.acc_line_inv_refresh(p_line uuid) returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines; agg record; v_res text; v_sl numeric;
+begin
+  select * into l from public.acc_lines where id = p_line; if l.id is null then return; end if;
+  select count(*) n, string_agg(distinct i.so_hd, ', ' order by i.so_hd) so, sum(il.sl) sl, sum(il.tt) tt,
+         (array_agg(i.id order by i.ngay desc nulls last, i.created_at desc))[1] last_id, (array_agg(il.dg order by i.ngay desc nulls last))[1] dg,
+         (array_agg(il.stt order by i.ngay desc nulls last))[1] stt,
+         bool_or(il.result = 'khong_don') kd, bool_or(il.result = 'gia_khach_0') g0, bool_or(il.result = 'lech') lech
+    into agg from public.acc_invoice_lines il join public.acc_invoices i on i.id = il.invoice_id where il.line_id = p_line;
+  if agg.n = 0 then
+    update public.acc_lines set inv_id = null, inv_no = null, inv_stt = null, inv_price = null, inv_qty = null, inv_amount = null, inv_result = null where id = p_line; return;
+  end if;
+  v_sl := coalesce(l.sl_tk, l.sl_apt);
+  v_res := case when agg.kd then 'khong_don' when agg.g0 then 'gia_khach_0' when agg.lech then 'lech'
+                when v_sl is not null and agg.sl > v_sl + 0.01 then 'lech' when v_sl is not null and agg.sl < v_sl - 0.01 then 'mot_phan' else 'khop' end;
+  update public.acc_lines set inv_id = agg.last_id, inv_no = agg.so, inv_stt = agg.stt, inv_price = agg.dg, inv_qty = agg.sl, inv_amount = agg.tt, inv_result = v_res, updated_at = now() where id = p_line;
+end $$;
+
+create or replace function app.acc_inv_stats_refresh(p_inv uuid) returns void language sql security definer set search_path = public, app as $$
+  update public.acc_invoices i set stats = coalesce((select jsonb_object_agg(result, c) from (select il.result, count(*) c from public.acc_invoice_lines il where il.invoice_id = p_inv group by il.result) x), '{}')
+    || jsonb_build_object('tien_khong_don', (select coalesce(sum(tt), 0) from public.acc_invoice_lines where invoice_id = p_inv and result in ('khong_don','gia_khach_0')),
+                          'mot_phan', (select count(*) from public.acc_invoice_lines il join public.acc_lines l on l.id = il.line_id where il.invoice_id = p_inv and l.inv_result = 'mot_phan'))
+   where i.id = p_inv
+$$;
+
+-- Lưu HĐ: giữ kết luận từng dòng theo giá, cộng số lượng các đợt ở dòng đối soát
+create or replace function public.acc_invoice_save(p_inv jsonb, p_lines jsonb)
+returns uuid language plpgsql security definer set search_path = public, app as $$
+declare v_id uuid; r jsonb; v_old uuid[]; x uuid;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  insert into public.acc_invoices as i(ky_hieu, so_hd, ngay, mst_ban, ten_ban, mst_mua, ten_mua, tong_truoc_thue, tien_thue, tong, file_name, stats)
+  values (p_inv->>'ky_hieu', p_inv->>'so_hd', nullif(p_inv->>'ngay','')::date, p_inv->>'mst_ban', p_inv->>'ten_ban', p_inv->>'mst_mua', p_inv->>'ten_mua',
+          (p_inv->>'tong_truoc_thue')::numeric, (p_inv->>'tien_thue')::numeric, (p_inv->>'tong')::numeric, p_inv->>'file_name', '{}')
+  on conflict (mst_ban, ky_hieu, so_hd) do update set ngay = excluded.ngay, tong_truoc_thue = excluded.tong_truoc_thue, tien_thue = excluded.tien_thue, tong = excluded.tong, file_name = excluded.file_name
+  returning id into v_id;
+  select array_agg(distinct line_id) into v_old from public.acc_invoice_lines where invoice_id = v_id and line_id is not null;
+  delete from public.acc_invoice_lines where invoice_id = v_id;
+  for r in select * from jsonb_array_elements(p_lines) loop
+    insert into public.acc_invoice_lines(invoice_id, stt, hh, ten, dvt, sl, dg, tt, vat, line_id, result)
+    values (v_id, (r->>'stt')::int, r->>'hh', r->>'ten', r->>'dvt', (r->>'sl')::numeric, (r->>'dg')::numeric, (r->>'tt')::numeric, r->>'vat', nullif(r->>'line_id','')::uuid, r->>'result');
+  end loop;
+  for x in select distinct line_id from public.acc_invoice_lines where invoice_id = v_id and line_id is not null union select unnest(coalesce(v_old, '{}')) loop
+    perform app.acc_line_inv_refresh(x);
+  end loop;
+  perform app.acc_inv_stats_refresh(v_id);
+  if exists(select 1 from public.acc_invoice_lines where invoice_id = v_id and result in ('khong_don','gia_khach_0','lech')) then
+    perform app.telegram('acc_invoice', '🧾 HĐ APT <b>' || app.esc(p_inv->>'so_hd') || '</b>: ' ||
+      (select count(*) from public.acc_invoice_lines where invoice_id = v_id and result in ('khong_don','gia_khach_0')) || ' dòng chưa có đơn/giá khách, ' ||
+      (select count(*) from public.acc_invoice_lines where invoice_id = v_id and result = 'lech') || ' dòng lệch giá.');
+  end if;
+  return v_id;
+end $$;
+
+-- HĐ về trước, xe nạp sau: ghép các dòng HĐ "không thuộc xe" vào xe vừa nạp theo mã HH
+create or replace function public.acc_relink_truck(p_truck uuid) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare n int := 0; x uuid; v_inv uuid[];
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  if (select is_test from public.acc_trucks where id = p_truck) then return 0; end if;
+  with m as (
+    update public.acc_invoice_lines il set line_id = l.id, result = app.acc_judge(il.dg, l)
+      from public.acc_lines l where l.truck_id = p_truck and il.line_id is null and coalesce(il.hh, '') <> '' and il.hh = l.hh
+    returning il.line_id, il.invoice_id)
+  select count(*), array_agg(distinct invoice_id) into n, v_inv from m;
+  for x in select distinct line_id from public.acc_invoice_lines where invoice_id = any(coalesce(v_inv, '{}')) and line_id is not null loop perform app.acc_line_inv_refresh(x); end loop;
+  for x in select unnest(coalesce(v_inv, '{}')) loop perform app.acc_inv_stats_refresh(x); end loop;
+  if n > 0 then insert into public.acc_events(truck_id, action, note) values (p_truck, 'relink_invoice', n || ' dòng HĐ đã về trước được ghép vào xe này'); end if;
+  return n;
+end $$;
+grant execute on function public.acc_relink_truck(uuid) to authenticated;
+
+-- Chuyển xe nạp thử thành chính thức: ghép luôn HĐ đã về trước
+create or replace function public.acc_truck_publish(p_id uuid) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare h int := coalesce((app.setting('accounting')->>'han_sale_gio')::int, 24); s record; t public.acc_trucks;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  update public.acc_trucks set is_test = false, updated_at = now() where id = p_id and is_test returning * into t;
+  if t.id is null then raise exception 'Xe không ở chế độ nạp thử'; end if;
+  update public.acc_lines set is_test = false, due_at = case when status = 'blocked' then now() + make_interval(hours => h) end where truck_id = p_id;
+  insert into public.acc_events(truck_id, action, note) values (p_id, 'publish', t.name);
+  perform public.acc_relink_truck(p_id);
+  for s in select sale_id, count(*) c from public.acc_lines where truck_id = p_id and status = 'blocked' and sale_id is not null group by sale_id loop
+    perform app.notify(s.sale_id, 'acc', 'Hóa đơn APT: ' || s.c || ' dòng cần bạn xử lý', t.name || ' · hạn ' || h || 'h', '#/acc/mine');
+  end loop;
+end $$;
+
+-- Tính lại kết quả HĐ các dòng đã ghép (theo cách cộng nhiều đợt)
+do $$ declare x uuid; begin
+  for x in select distinct line_id from public.acc_invoice_lines where line_id is not null loop perform app.acc_line_inv_refresh(x); end loop;
+  for x in select id from public.acc_invoices loop perform app.acc_inv_stats_refresh(x); end loop;
+end $$;
+
+-- Ghép đủ tên trong file cho sale đã khớp 1 tên (VD đã khớp "Lê Thị Minh Khơi" nhưng thiếu tài khoản "khoile")
+do $$ declare g jsonb; v_names text[]; v_pid uuid; n int;
+begin
+  perform set_config('nt.alias_ok', '1', true);
+  for g in select * from jsonb_array_elements(coalesce(app.setting('accounting')->'sale_names', '[]')) loop
+    v_names := array(select jsonb_array_elements_text(g->'names')) || (g->>'acc');
+    select count(distinct p.id), min(p.id::text)::uuid into n, v_pid from public.profiles p
+     where p.status = 'active' and exists(select 1 from unnest(v_names) y where app.norm_text(y) = any(select app.norm_text(z) from unnest(p.sale_aliases || p.full_name) z));
+    if n = 1 then
+      update public.profiles set sale_aliases = array(select distinct x from unnest(sale_aliases || v_names) x where btrim(x) <> '') where id = v_pid;
+      update public.acc_lines l set sale_id = v_pid,
+        issues = array(select x from unnest(l.issues) x where x not like 'Tên sale "%chưa ghép%'),
+        status = case when l.status = 'blocked' and not exists(select 1 from unnest(l.issues) x where x not like 'Tên sale "%chưa ghép%') then case when l.luong in ('A','E') then 'ok' else 'info' end else l.status end
+       where l.sale_id is null and app.norm_text(coalesce(l.sale_name, '')) = any(select app.norm_text(y) from unnest(v_names) y);
+    end if;
+  end loop;
+  perform set_config('nt.alias_ok', '', true);
+end $$;
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0020_v13.sql
+-- =====================================================================
+-- 0020 · Bản 13: sale xem toàn bộ dòng của mình; dòng chưa có chủ cho mọi sale nhận; kế toán chốt kèm giá khách/MD;
+--        sale báo "Đơn APT xuất thẳng"; gán/ghép dòng HĐ chưa thuộc xe; mã KH hệ thống → khách ERP
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 13');
+
+create or replace function app.norm_md(p text) returns text language sql immutable as $$
+  select case when substring(coalesce(p, '') from '(\d+)') is null then null else 'MD' || (substring(p from '(\d+)'))::bigint end
+$$;
+
+alter table public.acc_lines add column if not exists claim_md text;
+alter table public.acc_lines add column if not exists claim_gia numeric;
+alter table public.acc_lines add column if not exists claimed_by uuid references public.profiles(id);
+alter table public.acc_lines add column if not exists claimed_at timestamptz;
+alter table public.acc_lines add column if not exists customer_id uuid references public.customers(id) on delete set null;
+alter table public.acc_lines drop constraint if exists acc_lines_reply_check;
+alter table public.acc_lines add constraint acc_lines_reply_check check (reply in ('da_sua_ht','de_xuat_gia','chuyen_xe_sau','xin_duyet','xuat_thang'));
+create index if not exists acc_lines_unowned on public.acc_lines(truck_id) where sale_id is null;
+
+-- Mã khách trên file khai báo (NT93844 hoặc username) → khách hàng ERP
+create or replace function app.acc_line_customer() returns trigger language plpgsql security definer set search_path = public, app as $$
+begin
+  if coalesce(btrim(new.ma_kh), '') = '' then new.customer_id := null;
+  elsif tg_op = 'INSERT' or new.ma_kh is distinct from old.ma_kh or new.customer_id is null then
+    select id into new.customer_id from public.customers
+     where deleted_at is null and (upper(sys_code) = upper(btrim(new.ma_kh)) or lower(sys_username) = lower(btrim(new.ma_kh)) or upper(code) = upper(btrim(new.ma_kh))) limit 1;
+  end if;
+  return new;
+end $$;
+drop trigger if exists acc_line_customer on public.acc_lines;
+create trigger acc_line_customer before insert or update of ma_kh on public.acc_lines for each row execute function app.acc_line_customer();
+
+-- Sale: thấy mọi dòng của mình; mọi sale thấy dòng chưa có sale phụ trách để nhận
+drop policy if exists acc_lines_read on public.acc_lines;
+create policy acc_lines_read on public.acc_lines for select to authenticated
+  using (app.is_acc() or (not is_test and (app.in_tree(sale_id) or (app.is_acc_approver() and status = 'pending_approval')
+         or (sale_id is null and luong in ('A','B') and app.has_role('sale','tn_kd','tp_kd')))));
+
+drop policy if exists acc_trucks_read on public.acc_trucks;
+create policy acc_trucks_read on public.acc_trucks for select to authenticated using (app.is_acc() or app.is_acc_approver()
+  or exists(select 1 from public.acc_lines l where l.truck_id = acc_trucks.id and not l.is_test and (app.in_tree(l.sale_id) or (l.sale_id is null and l.luong in ('A','B') and app.has_role('sale','tn_kd','tp_kd')))));
+
+-- Sale trả lời (thêm MD + giá khách khi đã sửa hệ thống; "Đơn APT xuất thẳng" đổi luồng ngay)
+drop function if exists public.acc_line_reply(uuid, text, numeric, text);
+create or replace function public.acc_line_reply(p_id uuid, p_reply text, p_price numeric default null, p_note text default null, p_md text default null, p_gia_khach numeric default null)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines; v_status text; v_md text := nullif(app.norm_md(p_md), '');
+begin
+  select * into l from public.acc_lines where id = p_id for update;
+  if l.id is null then raise exception 'Không tìm thấy dòng'; end if;
+  if not (app.is_acc() or app.in_tree(l.sale_id)) then raise exception 'Dòng này không thuộc khách của bạn'; end if;
+  if l.status not in ('blocked','replied') then raise exception 'Dòng không ở trạng thái chờ sale'; end if;
+  if p_reply not in ('da_sua_ht','de_xuat_gia','chuyen_xe_sau','xin_duyet','xuat_thang') then raise exception 'Lựa chọn không hợp lệ'; end if;
+  if p_reply = 'de_xuat_gia' and coalesce(p_price, 0) <= 0 then raise exception 'Nhập giá đề xuất'; end if;
+  if p_reply = 'xin_duyet' and coalesce(btrim(p_note), '') = '' then raise exception 'Ghi lý do xin duyệt ngoại lệ'; end if;
+  if p_reply = 'da_sua_ht' and l.md is null and l.luong in ('A','B') and v_md is null then raise exception 'Nhập mã đơn (MD) đã tạo trên hệ thống'; end if;
+  if p_reply = 'da_sua_ht' and coalesce(l.gia_khach, 0) = 0 and l.luong in ('A','B') and coalesce(p_gia_khach, 0) <= 0 then raise exception 'Nhập giá khách (giá xuất HĐ cho khách)'; end if;
+  if p_reply = 'xuat_thang' then
+    update public.acc_trucks set xt_keys = array(select distinct x from unnest(xt_keys || l.line_key) x),
+      md_xuat_thang = case when l.md is null then md_xuat_thang else array(select distinct x from unnest(md_xuat_thang || l.md) x) end where id = l.truck_id;
+    update public.acc_lines set reply = p_reply, reply_note = nullif(btrim(p_note), ''), replied_by = auth.uid(), replied_at = now(), luong = 'C', status = 'info', due_at = null,
+      phan_hoi = case when apt_stt is not null then 'XUẤT THẲNG' end, issues = '{}', notes = array_prepend('Sale báo APT xuất thẳng.', notes), updated_at = now() where id = p_id;
+    insert into public.acc_events(line_id, truck_id, action, note) values (p_id, l.truck_id, 'reply_xuat_thang', p_note);
+    return;
+  end if;
+  v_status := case when p_reply = 'xin_duyet' then 'pending_approval' else 'replied' end;
+  update public.acc_lines set reply = p_reply, reply_price = p_price, reply_note = nullif(btrim(p_note), ''), replied_by = auth.uid(), replied_at = now(), status = v_status,
+    claim_md = coalesce(v_md, claim_md), claim_gia = coalesce(nullif(p_gia_khach, 0), claim_gia), updated_at = now() where id = p_id;
+  insert into public.acc_events(line_id, truck_id, action, note, data) values (p_id, l.truck_id, 'reply', p_note, jsonb_build_object('reply', p_reply, 'price', p_price, 'md', v_md, 'gia_khach', p_gia_khach));
+  if p_reply = 'xin_duyet' then
+    perform app.notify(x::uuid, 'acc', 'Xin duyệt ngoại lệ HĐ: ' || coalesce(l.md, 'dòng không có đơn'), left(coalesce(l.ten_apt, l.ten_ht, ''), 80) || ' — ' || p_note, '#/acc/approve')
+      from jsonb_array_elements_text(coalesce(app.setting('accounting')->'approver_ids', '[]')) x;
+  end if;
+end $$;
+grant execute on function public.acc_line_reply(uuid, text, numeric, text, text, numeric) to authenticated;
+
+
+-- Nhận dòng chưa có chủ (sale) / gán cho sale (kế toán, admin)
+create or replace function public.acc_line_claim(p_id uuid, p_md text, p_gia_khach numeric, p_note text default null, p_sale uuid default null)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines; v_sale uuid := coalesce(p_sale, auth.uid()); v_md text := app.norm_md(p_md);
+begin
+  select * into l from public.acc_lines where id = p_id for update;
+  if l.id is null then raise exception 'Không tìm thấy dòng'; end if;
+  if p_sale is not null and not app.is_acc() then raise exception 'Chỉ Kế toán/Admin được gán cho sale khác'; end if;
+  if not app.is_acc() then
+    if not app.has_role('sale','tn_kd','tp_kd') then raise exception 'Chỉ sale được nhận dòng'; end if;
+    if l.is_test then raise exception 'Xe nạp thử'; end if;
+    if l.sale_id is not null then raise exception 'Dòng đã có sale phụ trách — báo kế toán nếu nhầm'; end if;
+  end if;
+  if v_md is null and l.md is null then raise exception 'Nhập mã đơn (MD)'; end if;
+  if coalesce(p_gia_khach, 0) <= 0 and coalesce(l.gia_khach, 0) = 0 then raise exception 'Nhập giá khách'; end if;
+  update public.acc_lines set sale_id = v_sale, claimed_by = auth.uid(), claimed_at = now(), claim_md = coalesce(v_md, claim_md), claim_gia = coalesce(nullif(p_gia_khach, 0), claim_gia),
+    reply = 'da_sua_ht', reply_note = nullif(btrim(p_note), ''), replied_by = auth.uid(), replied_at = now(),
+    status = case when status in ('blocked','replied') then 'replied' else status end, due_at = null, updated_at = now() where id = p_id;
+  insert into public.acc_events(line_id, truck_id, action, note, data) values (p_id, l.truck_id, case when p_sale is null then 'claim' else 'assign' end, p_note,
+    jsonb_build_object('md', v_md, 'gia_khach', p_gia_khach, 'sale', v_sale));
+  if p_sale is not null and p_sale <> auth.uid() then perform app.notify(p_sale, 'acc', 'Kế toán gán cho bạn 1 dòng HĐ APT', coalesce(v_md, '') || ' · ' || left(coalesce(l.ten_apt, ''), 80), '#/acc/mine'); end if;
+end $$;
+grant execute on function public.acc_line_claim(uuid, text, numeric, text, uuid) to authenticated;
+
+-- Kế toán chốt / trả lại: chốt phải có giá khách (điền chuẩn theo hệ thống), có thể bổ sung MD
+drop function if exists public.acc_line_set(uuid, text, text);
+create or replace function public.acc_line_set(p_id uuid, p_status text, p_note text default null, p_gia_khach numeric default null, p_md text default null)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines; c jsonb := coalesce(app.setting('accounting'), '{}'); v_gk numeric; v_md text; v_ga numeric; v_b numeric; v_de numeric; v_ph text;
+        tgt numeric := coalesce((c->>'bien_muc_tieu')::numeric, 0.03); hi numeric := coalesce((c->>'bien_nt_max')::numeric, 0.04);
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  if p_status not in ('ok','blocked') then raise exception 'Trạng thái không hợp lệ'; end if;
+  select * into l from public.acc_lines where id = p_id for update;
+  if p_status = 'blocked' then
+    update public.acc_lines set status = 'blocked', due_at = now() + interval '24 hours', phan_hoi = 'CHỜ SALE — chưa xuất', updated_at = now() where id = p_id;
+    insert into public.acc_events(line_id, truck_id, action, note) values (p_id, l.truck_id, 'set_blocked', p_note);
+    perform app.notify(l.sale_id, 'acc', 'Kế toán trả lại dòng HĐ: ' || coalesce(l.md, ''), p_note, '#/acc/mine');
+    return;
+  end if;
+  v_gk := coalesce(nullif(p_gia_khach, 0), nullif(l.gia_khach, 0), l.claim_gia);
+  v_md := coalesce(app.norm_md(p_md), l.md, l.claim_md);
+  if l.luong in ('A','B') and coalesce(v_gk, 0) <= 0 then raise exception 'Nhập giá khách để chốt'; end if;
+  v_ga := coalesce(l.gia_note, l.gia_nhap); v_b := case when v_gk > 0 and v_ga > 0 then v_gk / v_ga - 1 end;
+  if l.reply = 'de_xuat_gia' and l.reply_price > 0 then v_de := l.reply_price;
+  elsif v_b is not null and v_b > hi + 0.001 then v_de := round(v_gk / (1 + tgt)); end if;
+  v_ph := case when l.apt_stt is null then null when l.luong = 'C' then 'XUẤT THẲNG'
+               when v_de is not null then 'XUẤT GIÁ ' || round(v_de)::bigint::text
+               when l.gia_note is not null and abs(l.gia_note - coalesce(l.gia_nhap, 0)) > 0.5 then 'XUẤT GIÁ ' || round(l.gia_note)::bigint::text else 'CHỐT' end;
+  update public.acc_lines set status = 'ok', due_at = null, gia_khach = v_gk, md = v_md, ma_dong = coalesce(ma_dong, v_md),
+    gia_de_xuat = coalesce(v_de, gia_de_xuat), gia_ap_dung = coalesce(v_de, gia_note, gia_nhap),
+    bien_nt = case when v_gk > 0 and coalesce(v_de, v_ga) > 0 then v_gk / coalesce(v_de, v_ga) - 1 end,
+    tt_khach = case when v_gk > 0 then round(v_gk * coalesce(sl_tk, sl_apt, sl_ht, 0)) end, tt_apt = round(coalesce(v_de, v_ga, 0) * coalesce(sl_tk, sl_apt, sl_ht, 0)),
+    phan_hoi = v_ph, issues = '{}', notes = array_prepend('Kế toán chốt' || coalesce(': ' || nullif(btrim(p_note), ''), '') || '.', notes), updated_at = now() where id = p_id;
+  insert into public.acc_events(line_id, truck_id, action, note, data) values (p_id, l.truck_id, 'set_ok', p_note, jsonb_build_object('gia_khach', v_gk, 'md', v_md));
+  if l.inv_id is not null then perform app.acc_line_inv_refresh(p_id); end if;
+end $$;
+grant execute on function public.acc_line_set(uuid, text, text, numeric, text) to authenticated;
+
+-- Ghép tay 1 dòng HĐ (chưa thuộc xe nào / ghép nhầm) vào dòng đối soát; p_line null = gỡ ghép
+create or replace function public.acc_invoice_line_link(p_invline uuid, p_line uuid) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare il public.acc_invoice_lines; l public.acc_lines; v_old uuid;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  select * into il from public.acc_invoice_lines where id = p_invline for update; if il.id is null then raise exception 'Không tìm thấy dòng HĐ'; end if;
+  v_old := il.line_id;
+  if p_line is not null then select * into l from public.acc_lines where id = p_line; if l.id is null then raise exception 'Không tìm thấy dòng đối soát'; end if; end if;
+  update public.acc_invoice_lines set line_id = p_line, result = case when p_line is null then 'khong_thuoc_xe' else app.acc_judge(il.dg, l) end where id = p_invline;
+  if v_old is not null then perform app.acc_line_inv_refresh(v_old); end if;
+  if p_line is not null then perform app.acc_line_inv_refresh(p_line); insert into public.acc_events(line_id, truck_id, action, note) values (p_line, l.truck_id, 'link_invoice', il.hh); end if;
+  perform app.acc_inv_stats_refresh(il.invoice_id);
+end $$;
+grant execute on function public.acc_invoice_line_link(uuid, uuid) to authenticated;
+
+create or replace function public.acc_line_approve(p_id uuid, p_ok boolean, p_note text default null)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines;
+begin
+  if not app.is_acc_approver() then raise exception 'Bạn không có quyền duyệt mở chặn'; end if;
+  select * into l from public.acc_lines where id = p_id for update;
+  if l.id is null then raise exception 'Không tìm thấy dòng'; end if;
+  if l.status not in ('pending_approval','blocked','replied') then raise exception 'Dòng không chờ duyệt'; end if;
+  if not p_ok and coalesce(btrim(p_note), '') = '' then raise exception 'Ghi lý do từ chối'; end if;
+  update public.acc_lines set status = case when p_ok then 'approved' else 'blocked' end, approved_by = auth.uid(), approved_at = now(), approve_note = nullif(btrim(p_note), ''),
+    phan_hoi = case when p_ok then coalesce(case when l.reply_price > 0 then 'XUẤT GIÁ ' || round(l.reply_price)::bigint::text end, 'CHỐT (duyệt ngoại lệ)') else phan_hoi end,
+    due_at = case when p_ok then null else now() + interval '24 hours' end, updated_at = now() where id = p_id;
+  insert into public.acc_events(line_id, truck_id, action, note) values (p_id, l.truck_id, case when p_ok then 'approve' else 'reject' end, p_note);
+  perform app.notify(l.sale_id, 'acc', case when p_ok then 'Đã duyệt mở chặn: ' else 'Từ chối mở chặn: ' end || coalesce(l.md, ''), p_note, '#/acc/mine');
+end $$;
+
+
+-- Đưa "XUẤT GIÁ" về dạng số liền (APT dán thẳng)
+update public.acc_lines set phan_hoi = 'XUẤT GIÁ ' || replace(replace(substring(phan_hoi from 10), '.', ''), ',', '') where phan_hoi like 'XUẤT GIÁ %';
+-- Gắn khách cho dòng đã có mã KH
+update public.acc_lines set ma_kh = ma_kh where coalesce(ma_kh, '') <> '';
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0021_v14.sql
+-- =====================================================================
+-- 0021 · Bản 14
+--  A. Đối soát: biên NT ngoài khung → chặn, sale gửi APT giá đề xuất rồi tự chốt; "Nhầm sale / nhầm đơn"; "Dòng thừa / Không khai";
+--     nạp lại file giữ quyết định đã xử lý tay (nhận dòng, chốt, gửi giá…)
+--  B. Xuất HĐ đầu ra (độc lập): kế toán nạp sổ Excel HĐ chính thức (mã hàng MISA) → gắn ID đơn/NVKD/USER →
+--     sale lập phiếu xuất HĐ (giá + đơn vị nhận HĐ) → kế toán xuất file nháp → sale xác nhận ký → kế toán xác nhận đã ký
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 14');
+
+-- ============ A. Đối soát ============
+alter table public.acc_lines add column if not exists gia_nhap_goc numeric;
+alter table public.acc_lines add column if not exists released_from uuid references public.profiles(id);
+alter table public.acc_lines add column if not exists reply_sub text;
+alter table public.acc_lines drop constraint if exists acc_lines_reply_check;
+alter table public.acc_lines add constraint acc_lines_reply_check
+  check (reply in ('da_sua_ht','de_xuat_gia','chuyen_xe_sau','xin_duyet','xuat_thang','da_gui_gia','nham','dong_thua'));
+
+drop function if exists public.acc_line_reply(uuid, text, numeric, text, text, numeric);
+create or replace function public.acc_line_reply(p_id uuid, p_reply text, p_price numeric default null, p_note text default null,
+  p_md text default null, p_gia_khach numeric default null, p_sub text default null)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines; v_status text; v_md text := app.norm_md(p_md); v_gk numeric; v_g numeric;
+        h int := coalesce((app.setting('accounting')->>'han_sale_gio')::int, 24);
+begin
+  select * into l from public.acc_lines where id = p_id for update;
+  if l.id is null then raise exception 'Không tìm thấy dòng'; end if;
+  if not (app.is_acc() or app.in_tree(l.sale_id)) then raise exception 'Dòng này không thuộc khách của bạn'; end if;
+  if l.status not in ('blocked','replied') then raise exception 'Dòng không ở trạng thái chờ sale'; end if;
+  if p_reply not in ('da_sua_ht','de_xuat_gia','chuyen_xe_sau','xin_duyet','xuat_thang','da_gui_gia','nham','dong_thua') then raise exception 'Lựa chọn không hợp lệ'; end if;
+  if p_reply = 'de_xuat_gia' and coalesce(p_price, 0) <= 0 then raise exception 'Nhập giá đề xuất'; end if;
+  if p_reply = 'xin_duyet' and coalesce(btrim(p_note), '') = '' then raise exception 'Ghi lý do xin duyệt ngoại lệ'; end if;
+  if p_reply = 'da_sua_ht' and l.md is null and l.luong in ('A','B') and v_md is null then raise exception 'Nhập mã đơn (MD) đã tạo trên hệ thống'; end if;
+  if p_reply = 'da_sua_ht' and coalesce(l.gia_khach, 0) = 0 and l.luong in ('A','B') and coalesce(p_gia_khach, 0) <= 0 then raise exception 'Nhập giá khách (giá xuất HĐ cho khách)'; end if;
+
+  if p_reply = 'xuat_thang' then
+    update public.acc_trucks set xt_keys = array(select distinct x from unnest(xt_keys || l.line_key) x),
+      md_xuat_thang = case when l.md is null then md_xuat_thang else array(select distinct x from unnest(md_xuat_thang || l.md) x) end where id = l.truck_id;
+    update public.acc_lines set reply = p_reply, reply_sub = null, reply_note = nullif(btrim(p_note), ''), replied_by = auth.uid(), replied_at = now(), luong = 'C', status = 'info', due_at = null,
+      phan_hoi = case when apt_stt is not null then 'XUẤT THẲNG' end, issues = '{}', notes = array_prepend('Sale báo APT xuất thẳng.', notes), updated_at = now() where id = p_id;
+    insert into public.acc_events(line_id, truck_id, action, note) values (p_id, l.truck_id, 'reply_xuat_thang', p_note);
+    return;
+  end if;
+
+  -- Sale đã gửi APT giá đề xuất → đổi giá nháp APT theo giá đề xuất, dòng tự chốt (HĐ chính thức lệch giá sẽ báo đỏ)
+  if p_reply = 'da_gui_gia' then
+    if coalesce(l.gia_de_xuat, 0) <= 0 then raise exception 'Dòng không có giá đề xuất'; end if;
+    v_gk := coalesce(nullif(l.gia_khach, 0), l.claim_gia); v_g := l.gia_de_xuat;
+    if coalesce(v_gk, 0) <= 0 then raise exception 'Dòng chưa có giá khách'; end if;
+    update public.acc_lines set reply = p_reply, reply_sub = null, reply_price = v_g, reply_note = nullif(btrim(p_note), ''), replied_by = auth.uid(), replied_at = now(),
+      gia_nhap_goc = coalesce(gia_nhap_goc, gia_nhap), gia_nhap = v_g, gia_note = null, gia_ap_dung = v_g, bien_nt = v_gk / v_g - 1,
+      tt_apt = round(v_g * coalesce(sl_tk, sl_apt, sl_ht, 0)), status = 'ok', due_at = null, issues = '{}',
+      phan_hoi = case when apt_stt is not null then 'XUẤT GIÁ ' || round(v_g)::bigint::text end,
+      notes = array_prepend('Sale đã gửi APT giá đề xuất ' || round(v_g)::bigint::text || ' (giá nháp cũ ' || coalesce(round(l.gia_nhap)::bigint::text, '—') || ').', notes),
+      updated_at = now() where id = p_id;
+    insert into public.acc_events(line_id, truck_id, action, note, data) values (p_id, l.truck_id, 'reply_da_gui_gia', p_note, jsonb_build_object('gia', v_g, 'gia_cu', l.gia_nhap));
+    return;
+  end if;
+
+  -- Nhầm sale: nhả dòng về "Dòng chưa có chủ" · Nhầm đơn: ghi MD đúng, kế toán chốt
+  if p_reply = 'nham' then
+    if p_sub not in ('khong_phai','sai_md') then raise exception 'Chọn: không phải hàng của tôi / sai mã đơn'; end if;
+    if p_sub = 'khong_phai' then
+      update public.acc_lines set reply = p_reply, reply_sub = p_sub, reply_note = nullif(btrim(p_note), ''), replied_by = auth.uid(), replied_at = now(),
+        released_from = sale_id, sale_id = null, claimed_by = null, claimed_at = null, claim_md = null, claim_gia = null,
+        status = 'blocked', due_at = now() + make_interval(hours => h),
+        notes = array_prepend('Sale ' || coalesce((select full_name from public.profiles where id = auth.uid()), '') || ' báo không phải hàng của mình' || coalesce(': ' || nullif(btrim(p_note), ''), '') || '.', notes),
+        updated_at = now() where id = p_id;
+      perform app.notify_roles(array['ke_toan'], 'acc', 'Sale nhả dòng HĐ (nhầm sale)', coalesce(l.md, '') || ' · ' || left(coalesce(l.ten_apt, l.ten_ht, ''), 80) || coalesce(' — ' || p_note, ''), '#/acc?truck=' || l.truck_id);
+    else
+      if v_md is null then raise exception 'Nhập mã đơn (MD) đúng'; end if;
+      update public.acc_lines set reply = p_reply, reply_sub = p_sub, reply_note = nullif(btrim(p_note), ''), replied_by = auth.uid(), replied_at = now(),
+        claim_md = v_md, claim_gia = coalesce(nullif(p_gia_khach, 0), claim_gia), status = 'replied', updated_at = now() where id = p_id;
+    end if;
+    insert into public.acc_events(line_id, truck_id, action, note, data) values (p_id, l.truck_id, 'reply_nham', p_note, jsonb_build_object('sub', p_sub, 'md', v_md));
+    return;
+  end if;
+
+  if p_reply = 'dong_thua' and p_sub not in ('thua','khong_khai') then raise exception 'Chọn: dòng thừa / không khai qua APT'; end if;
+  v_status := case when p_reply = 'xin_duyet' then 'pending_approval' else 'replied' end;
+  update public.acc_lines set reply = p_reply, reply_sub = case when p_reply = 'dong_thua' then p_sub end, reply_price = p_price, reply_note = nullif(btrim(p_note), ''),
+    replied_by = auth.uid(), replied_at = now(), status = v_status,
+    claim_md = coalesce(v_md, claim_md), claim_gia = coalesce(nullif(p_gia_khach, 0), claim_gia), updated_at = now() where id = p_id;
+  insert into public.acc_events(line_id, truck_id, action, note, data) values (p_id, l.truck_id, 'reply', p_note, jsonb_build_object('reply', p_reply, 'sub', p_sub, 'price', p_price, 'md', v_md, 'gia_khach', p_gia_khach));
+  if p_reply = 'xin_duyet' then
+    perform app.notify(x::uuid, 'acc', 'Xin duyệt ngoại lệ HĐ: ' || coalesce(l.md, 'dòng không có đơn'), left(coalesce(l.ten_apt, l.ten_ht, ''), 80) || ' — ' || p_note, '#/acc/approve')
+      from jsonb_array_elements_text(coalesce(app.setting('accounting')->'approver_ids', '[]')) x;
+  end if;
+end $$;
+grant execute on function public.acc_line_reply(uuid, text, numeric, text, text, numeric, text) to authenticated;
+
+-- Nhận dòng chưa có chủ: sale vừa nhả thì không tự nhận lại
+create or replace function public.acc_line_claim(p_id uuid, p_md text, p_gia_khach numeric, p_note text default null, p_sale uuid default null)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines; v_sale uuid := coalesce(p_sale, auth.uid()); v_md text := app.norm_md(p_md);
+begin
+  select * into l from public.acc_lines where id = p_id for update;
+  if l.id is null then raise exception 'Không tìm thấy dòng'; end if;
+  if p_sale is not null and not app.is_acc() then raise exception 'Chỉ Kế toán/Admin được gán cho sale khác'; end if;
+  if not app.is_acc() then
+    if not app.has_role('sale','tn_kd','tp_kd') then raise exception 'Chỉ sale được nhận dòng'; end if;
+    if l.is_test then raise exception 'Xe nạp thử'; end if;
+    if l.sale_id is not null then raise exception 'Dòng đã có sale phụ trách — báo kế toán nếu nhầm'; end if;
+  end if;
+  if v_md is null and l.md is null then raise exception 'Nhập mã đơn (MD)'; end if;
+  if coalesce(p_gia_khach, 0) <= 0 and coalesce(l.gia_khach, 0) = 0 and l.luong in ('A','B') then raise exception 'Nhập giá khách'; end if;
+  update public.acc_lines set sale_id = v_sale, claimed_by = auth.uid(), claimed_at = now(), claim_md = coalesce(v_md, claim_md), claim_gia = coalesce(nullif(p_gia_khach, 0), claim_gia),
+    reply = 'da_sua_ht', reply_sub = null, reply_note = nullif(btrim(p_note), ''), replied_by = auth.uid(), replied_at = now(),
+    status = case when status in ('blocked','replied') then 'replied' else status end, due_at = null, updated_at = now() where id = p_id;
+  insert into public.acc_events(line_id, truck_id, action, note, data) values (p_id, l.truck_id, case when p_sale is null then 'claim' else 'assign' end, p_note,
+    jsonb_build_object('md', v_md, 'gia_khach', p_gia_khach, 'sale', v_sale));
+  if p_sale is not null and p_sale <> auth.uid() then perform app.notify(p_sale, 'acc', 'Kế toán gán cho bạn 1 dòng HĐ APT', coalesce(v_md, '') || ' · ' || left(coalesce(l.ten_apt, ''), 80), '#/acc/mine'); end if;
+end $$;
+
+-- Kế toán chốt: dòng thừa/không khai → đóng theo dõi; nhầm đơn → lấy MD sale ghi
+drop function if exists public.acc_line_set(uuid, text, text, numeric, text);
+create or replace function public.acc_line_set(p_id uuid, p_status text, p_note text default null, p_gia_khach numeric default null, p_md text default null)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines; c jsonb := coalesce(app.setting('accounting'), '{}'); v_gk numeric; v_md text; v_ga numeric; v_b numeric; v_de numeric; v_ph text;
+        tgt numeric := coalesce((c->>'bien_muc_tieu')::numeric, 0.03); hi numeric := coalesce((c->>'bien_nt_max')::numeric, 0.04);
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  if p_status not in ('ok','blocked') then raise exception 'Trạng thái không hợp lệ'; end if;
+  select * into l from public.acc_lines where id = p_id for update;
+  if p_status = 'blocked' then
+    update public.acc_lines set status = 'blocked', due_at = now() + interval '24 hours', phan_hoi = case when apt_stt is not null then 'CHỜ SALE — chưa xuất' end, updated_at = now() where id = p_id;
+    insert into public.acc_events(line_id, truck_id, action, note) values (p_id, l.truck_id, 'set_blocked', p_note);
+    perform app.notify(l.sale_id, 'acc', 'Kế toán trả lại dòng HĐ: ' || coalesce(l.md, ''), p_note, '#/acc/mine');
+    return;
+  end if;
+  if l.reply = 'dong_thua' then
+    update public.acc_lines set status = 'info', due_at = null, issues = '{}', phan_hoi = null,
+      notes = array_prepend(case when l.reply_sub = 'khong_khai' then 'Không khai qua APT (đi đường khác)' else 'Dòng thừa trên hệ thống' end || ' — sale chốt, kế toán xác nhận' || coalesce(': ' || nullif(btrim(p_note), ''), '') || '.', notes),
+      updated_at = now() where id = p_id;
+    insert into public.acc_events(line_id, truck_id, action, note) values (p_id, l.truck_id, 'set_dong_thua', p_note);
+    return;
+  end if;
+  v_gk := coalesce(nullif(p_gia_khach, 0), nullif(l.gia_khach, 0), l.claim_gia);
+  v_md := coalesce(app.norm_md(p_md), case when l.reply = 'nham' then l.claim_md end, l.md, l.claim_md);
+  if l.luong in ('A','B') and coalesce(v_gk, 0) <= 0 then raise exception 'Nhập giá khách để chốt'; end if;
+  v_ga := coalesce(l.gia_note, l.gia_nhap); v_b := case when v_gk > 0 and v_ga > 0 then v_gk / v_ga - 1 end;
+  if l.reply = 'de_xuat_gia' and l.reply_price > 0 then v_de := l.reply_price;
+  elsif v_b is not null and v_b > hi + 0.001 then v_de := round(v_gk / (1 + tgt)); end if;
+  v_ph := case when l.apt_stt is null then null when l.luong = 'C' then 'XUẤT THẲNG'
+               when v_de is not null then 'XUẤT GIÁ ' || round(v_de)::bigint::text
+               when l.gia_note is not null and abs(l.gia_note - coalesce(l.gia_nhap, 0)) > 0.5 then 'XUẤT GIÁ ' || round(l.gia_note)::bigint::text else 'CHỐT' end;
+  update public.acc_lines set status = 'ok', due_at = null, gia_khach = v_gk, md = v_md, ma_dong = case when md is distinct from v_md then v_md else coalesce(ma_dong, v_md) end,
+    gia_de_xuat = coalesce(v_de, gia_de_xuat), gia_ap_dung = coalesce(v_de, gia_note, gia_nhap),
+    bien_nt = case when v_gk > 0 and coalesce(v_de, v_ga) > 0 then v_gk / coalesce(v_de, v_ga) - 1 end,
+    tt_khach = case when v_gk > 0 then round(v_gk * coalesce(sl_tk, sl_apt, sl_ht, 0)) end, tt_apt = round(coalesce(v_de, v_ga, 0) * coalesce(sl_tk, sl_apt, sl_ht, 0)),
+    phan_hoi = v_ph, issues = '{}', notes = array_prepend('Kế toán chốt' || coalesce(': ' || nullif(btrim(p_note), ''), '') || '.', notes), updated_at = now() where id = p_id;
+  insert into public.acc_events(line_id, truck_id, action, note, data) values (p_id, l.truck_id, 'set_ok', p_note, jsonb_build_object('gia_khach', v_gk, 'md', v_md));
+  if l.inv_id is not null then perform app.acc_line_inv_refresh(p_id); end if;
+end $$;
+grant execute on function public.acc_line_set(uuid, text, text, numeric, text) to authenticated;
+
+-- Nạp lại file: giữ quyết định đã xử lý tay nếu file mới chưa tự giải quyết được dòng đó
+create or replace function app.acc_keep_manual(p_old public.acc_lines, p_id uuid) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare n public.acc_lines;
+begin
+  select * into n from public.acc_lines where id = p_id;
+  -- sale/MD/giá khách đã nhận/gán/chốt tay mà file vẫn trống → giữ
+  update public.acc_lines set
+    sale_id = case when n.sale_id is null or n.sale_id = p_old.released_from then case when p_old.reply = 'nham' and p_old.reply_sub = 'khong_phai' then p_old.sale_id else coalesce(p_old.sale_id, n.sale_id) end else n.sale_id end,
+    md = case when p_old.reply = 'nham' or p_old.claimed_at is not null then coalesce(p_old.md, n.md) else coalesce(n.md, p_old.md) end,
+    ma_dong = case when p_old.reply = 'nham' or p_old.claimed_at is not null then coalesce(p_old.ma_dong, n.ma_dong) else n.ma_dong end, gia_khach = coalesce(nullif(n.gia_khach, 0), nullif(p_old.gia_khach, 0), n.gia_khach),
+    released_from = p_old.released_from, claim_md = p_old.claim_md, claim_gia = p_old.claim_gia, claimed_by = p_old.claimed_by, claimed_at = p_old.claimed_at,
+    reply = p_old.reply, reply_sub = p_old.reply_sub, reply_price = p_old.reply_price, reply_note = p_old.reply_note, replied_by = p_old.replied_by, replied_at = p_old.replied_at
+  where id = p_id;
+  if n.status = 'ok' then return; end if; -- file mới đã sạch → theo file
+  if p_old.reply is not null or p_old.claimed_at is not null or p_old.status in ('approved','pending_approval') then
+    update public.acc_lines set status = p_old.status, luong = p_old.luong, phan_hoi = p_old.phan_hoi, issues = p_old.issues, due_at = p_old.due_at,
+      gia_nhap = case when p_old.reply = 'da_gui_gia' then p_old.gia_nhap else gia_nhap end, gia_nhap_goc = p_old.gia_nhap_goc,
+      gia_ap_dung = p_old.gia_ap_dung, gia_de_xuat = p_old.gia_de_xuat, bien_nt = p_old.bien_nt, tt_apt = p_old.tt_apt, tt_khach = p_old.tt_khach
+    where id = p_id;
+  end if;
+end $$;
+
+create or replace function public.acc_truck_save(p_truck uuid, p_info jsonb, p_lines jsonb) returns uuid
+language plpgsql security definer set search_path = public, app as $$
+declare v_id uuid := p_truck; r jsonb; v_keys text[] := '{}'; v_sale uuid; v_old public.acc_lines; v_status text; v_due timestamptz; v_lid uuid;
+        h int := coalesce((app.setting('accounting')->>'han_sale_gio')::int, 24); s record; n_block int; v_test boolean;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán được nạp đối soát'; end if;
+  if v_id is null then
+    insert into public.acc_trucks(name, truck_date, files, stats, warnings, is_test, md_xuat_thang, xt_keys)
+    values (p_info->>'name', nullif(p_info->>'truck_date','')::date, coalesce(p_info->'files','{}'), coalesce(p_info->'stats','{}'),
+            coalesce(array(select jsonb_array_elements_text(p_info->'warnings')), '{}'), coalesce((p_info->>'is_test')::boolean, false),
+            coalesce(array(select jsonb_array_elements_text(p_info->'md_xuat_thang')), '{}'), coalesce(array(select jsonb_array_elements_text(p_info->'xt_keys')), '{}'))
+    returning id into v_id;
+  else
+    update public.acc_trucks set name = coalesce(p_info->>'name', name), truck_date = coalesce(nullif(p_info->>'truck_date','')::date, truck_date),
+      files = coalesce(p_info->'files', files), stats = coalesce(p_info->'stats', stats),
+      warnings = coalesce(array(select jsonb_array_elements_text(p_info->'warnings')), warnings),
+      md_xuat_thang = coalesce(array(select jsonb_array_elements_text(p_info->'md_xuat_thang')), md_xuat_thang),
+      xt_keys = coalesce(array(select jsonb_array_elements_text(p_info->'xt_keys')), xt_keys), updated_at = now() where id = v_id;
+  end if;
+  select is_test into v_test from public.acc_trucks where id = v_id;
+  for r in select * from jsonb_array_elements(p_lines) loop
+    v_keys := v_keys || (r->>'line_key');
+    v_sale := coalesce(nullif(r->>'sale_id','')::uuid, app.match_sale(r->>'sale_name'), app.match_sale(r->>'sale_acc'));
+    select * into v_old from public.acc_lines where truck_id = v_id and line_key = r->>'line_key';
+    v_status := r->>'status';
+    v_due := case when v_status = 'blocked' then coalesce(v_old.due_at, now() + make_interval(hours => h)) else null end;
+    insert into public.acc_lines as l(truck_id, line_key, ma_dong, md, sale_name, sale_acc, sale_id, ma_kh, sys_row, ten_ht, sl_ht, dvt_ht, gia_khach, nk_ht,
+      apt_stt, hh, dh, sale_apt, ten_apt, sl_apt, dvt_apt, gia_nhap, gia_note, note_apt, nk_apt, vat, tk_row, ten_tk, hs, sl_tk, dvt_tk, gia_tk_nh, nk_tk, tnk_dv, md_header,
+      luong, gia_ap_dung, gia_de_xuat, bien_nt, tt_apt, tt_khach, status, level, issues, notes, phan_hoi, match_score, due_at, updated_at, is_test)
+    select v_id, x.line_key, x.ma_dong, x.md, x.sale_name, x.sale_acc, v_sale, x.ma_kh, x.sys_row, x.ten_ht, x.sl_ht, x.dvt_ht, x.gia_khach, x.nk_ht,
+      x.apt_stt, x.hh, x.dh, x.sale_apt, x.ten_apt, x.sl_apt, x.dvt_apt, x.gia_nhap, x.gia_note, x.note_apt, x.nk_apt, x.vat, x.tk_row, x.ten_tk, x.hs, x.sl_tk, x.dvt_tk, x.gia_tk_nh, x.nk_tk, x.tnk_dv, x.md_header,
+      x.luong, x.gia_ap_dung, x.gia_de_xuat, x.bien_nt, x.tt_apt, x.tt_khach, v_status, x.level, coalesce(x.issues, '{}'), coalesce(x.notes, '{}'), x.phan_hoi, x.match_score, v_due, now(), v_test
+    from jsonb_populate_record(null::public.acc_lines, r) x
+    on conflict (truck_id, line_key) do update set ma_dong = excluded.ma_dong, md = excluded.md, sale_name = excluded.sale_name, sale_acc = excluded.sale_acc, sale_id = excluded.sale_id,
+      ma_kh = excluded.ma_kh, sys_row = excluded.sys_row, ten_ht = excluded.ten_ht, sl_ht = excluded.sl_ht, dvt_ht = excluded.dvt_ht, gia_khach = excluded.gia_khach, nk_ht = excluded.nk_ht,
+      apt_stt = excluded.apt_stt, hh = excluded.hh, dh = excluded.dh, sale_apt = excluded.sale_apt, ten_apt = excluded.ten_apt, sl_apt = excluded.sl_apt, dvt_apt = excluded.dvt_apt,
+      gia_nhap = excluded.gia_nhap, gia_note = excluded.gia_note, note_apt = excluded.note_apt, nk_apt = excluded.nk_apt, vat = excluded.vat, tk_row = excluded.tk_row, ten_tk = excluded.ten_tk,
+      hs = excluded.hs, sl_tk = excluded.sl_tk, dvt_tk = excluded.dvt_tk, gia_tk_nh = excluded.gia_tk_nh, nk_tk = excluded.nk_tk, tnk_dv = excluded.tnk_dv, md_header = excluded.md_header,
+      luong = excluded.luong, gia_ap_dung = excluded.gia_ap_dung, gia_de_xuat = excluded.gia_de_xuat, bien_nt = excluded.bien_nt, tt_apt = excluded.tt_apt, tt_khach = excluded.tt_khach,
+      status = excluded.status, level = excluded.level, issues = excluded.issues, notes = excluded.notes, phan_hoi = excluded.phan_hoi, match_score = excluded.match_score,
+      due_at = excluded.due_at, updated_at = now(), is_test = excluded.is_test
+    returning id into v_lid;
+    if v_old.id is not null then perform app.acc_keep_manual(v_old, v_lid); end if;
+  end loop;
+  delete from public.acc_lines where truck_id = v_id and line_key <> all(v_keys);
+  insert into public.acc_events(truck_id, action, note, data) values (v_id, case when p_truck is null then 'import' else 'reimport' end, p_info->>'name', p_info->'stats');
+  if v_test then return v_id; end if;
+  for s in select sale_id, count(*) c from public.acc_lines where truck_id = v_id and status = 'blocked' and sale_id is not null group by sale_id loop
+    perform app.notify(s.sale_id, 'acc', 'Hóa đơn APT: ' || s.c || ' dòng cần bạn xử lý', coalesce(p_info->>'name','') || ' · hạn ' || h || 'h', '#/acc/mine');
+  end loop;
+  select count(*) into n_block from public.acc_lines where truck_id = v_id and status = 'blocked' and sale_id is null;
+  if n_block > 0 then perform app.notify_roles(array['ke_toan'], 'acc', n_block || ' dòng bị chặn chưa ghép được sale', p_info->>'name', '#/acc?truck=' || v_id); end if;
+  return v_id;
+end $$;
+
+-- ============ B. Xuất HĐ đầu ra ============
+-- Dòng hàng trong sổ HĐ đầu vào của kế toán (1 dòng = 1 mã hàng MISA, VD HH00036-2027-2026)
+create table if not exists public.out_items(
+  id uuid primary key default gen_random_uuid(),
+  ma_hang text not null unique, stt_so numeric, ten text not null, dvt text, vat numeric, sl_nhap numeric not null default 0, dg_nhap numeric,
+  so_hd_vao text, ky_hieu text, ngay_vao date, ncc text, stt_hd int,
+  md text, nvkd text, username text, sale_id uuid references public.profiles(id), customer_id uuid references public.customers(id) on delete set null,
+  acc_line_id uuid references public.acc_lines(id) on delete set null, gia_khach numeric, match_src text,
+  legacy jsonb, note text,
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now(), updated_by uuid default auth.uid() references public.profiles(id)
+);
+create index if not exists out_items_sale on public.out_items(sale_id);
+create index if not exists out_items_md on public.out_items(md);
+create index if not exists out_items_hd on public.out_items(so_hd_vao);
+-- Đơn vị nhận HĐ (hộ KD / công ty / cá nhân) của từng khách — lưu dùng lại
+create table if not exists public.out_buyers(
+  id uuid primary key default gen_random_uuid(),
+  customer_id uuid references public.customers(id) on delete cascade,
+  name text not null, tax_code text, address text, email text, note text,
+  created_by uuid default auth.uid() references public.profiles(id), created_at timestamptz not null default now()
+);
+create unique index if not exists out_buyers_uq on public.out_buyers(coalesce(customer_id, '00000000-0000-0000-0000-000000000000'::uuid), lower(btrim(name)), coalesce(btrim(tax_code), ''));
+create sequence if not exists public.out_invoice_seq;
+-- Phiếu xuất HĐ = 1 HĐ đầu ra cho 1 đơn vị mua
+create table if not exists public.out_invoices(
+  id uuid primary key default gen_random_uuid(),
+  code text unique not null default ('XHD' || lpad(nextval('public.out_invoice_seq')::text, 5, '0')),
+  sale_id uuid references public.profiles(id), customer_id uuid references public.customers(id) on delete set null, buyer_id uuid references public.out_buyers(id) on delete set null,
+  buyer_name text, tax_code text, address text, email text, payment text not null default 'TM/CK', buyer_info text,
+  status text not null default 'soan' check (status in ('soan','cho_nhap','da_nhap','xac_nhan_ky','da_ky','huy')),
+  so_hd text, ngay_hd date, note text, legacy boolean not null default false, sua_sau_nhap boolean not null default false,
+  created_by uuid default auth.uid() references public.profiles(id), created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(), status_at timestamptz not null default now(), status_by uuid references public.profiles(id)
+);
+create index if not exists out_invoices_sale on public.out_invoices(sale_id, status);
+create table if not exists public.out_invoice_lines(
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references public.out_invoices(id) on delete cascade,
+  item_id uuid not null references public.out_items(id) on delete restrict,
+  stt int not null default 1, sl numeric not null check (sl > 0), don_gia numeric not null check (don_gia >= 0), vat numeric
+);
+create index if not exists out_invoice_lines_item on public.out_invoice_lines(item_id);
+create index if not exists out_invoice_lines_inv on public.out_invoice_lines(invoice_id);
+create table if not exists public.out_events(
+  id bigint generated always as identity primary key,
+  invoice_id uuid references public.out_invoices(id) on delete cascade, item_id uuid references public.out_items(id) on delete cascade,
+  action text not null, note text, data jsonb, actor uuid default auth.uid() references public.profiles(id), at timestamptz not null default now()
+);
+create index if not exists out_events_inv on public.out_events(invoice_id, at);
+
+alter table public.out_items enable row level security;
+alter table public.out_buyers enable row level security;
+alter table public.out_invoices enable row level security;
+alter table public.out_invoice_lines enable row level security;
+alter table public.out_events enable row level security;
+drop policy if exists out_items_read on public.out_items;
+create policy out_items_read on public.out_items for select to authenticated
+  using (app.is_acc() or app.in_tree(sale_id) or (sale_id is null and app.has_role('sale','tn_kd','tp_kd')));
+drop policy if exists out_invoices_read on public.out_invoices;
+create policy out_invoices_read on public.out_invoices for select to authenticated using (app.is_acc() or app.in_tree(sale_id));
+drop policy if exists out_invoice_lines_read on public.out_invoice_lines;
+create policy out_invoice_lines_read on public.out_invoice_lines for select to authenticated
+  using (exists(select 1 from public.out_invoices i where i.id = invoice_id and (app.is_acc() or app.in_tree(i.sale_id))));
+drop policy if exists out_buyers_read on public.out_buyers;
+create policy out_buyers_read on public.out_buyers for select to authenticated
+  using (app.is_acc() or app.in_tree(created_by) or exists(select 1 from public.customers c where c.id = customer_id and app.in_tree(c.owner_id)));
+drop policy if exists out_events_read on public.out_events;
+create policy out_events_read on public.out_events for select to authenticated
+  using (app.is_acc() or exists(select 1 from public.out_invoices i where i.id = invoice_id and app.in_tree(i.sale_id))
+         or exists(select 1 from public.out_items t where t.id = item_id and app.in_tree(t.sale_id)));
+grant select on public.out_items, public.out_buyers, public.out_invoices, public.out_invoice_lines, public.out_events to authenticated;
+
+-- SL đã đưa vào phiếu (trừ phiếu hủy)
+create or replace function app.out_used(p_item uuid, p_except uuid default null) returns numeric language sql stable security definer set search_path = public as $$
+  select coalesce(sum(l.sl), 0) from public.out_invoice_lines l join public.out_invoices i on i.id = l.invoice_id
+   where l.item_id = p_item and i.status <> 'huy' and (p_except is null or i.id <> p_except)
+$$;
+create or replace view public.out_items_v with (security_invoker = true) as
+  select t.*, app.out_used(t.id) as sl_xuat, t.sl_nhap - app.out_used(t.id) as ton,
+    (select string_agg(distinct i.code || ':' || i.status, ',') from public.out_invoice_lines l join public.out_invoices i on i.id = l.invoice_id where l.item_id = t.id and i.status <> 'huy') as phieu
+  from public.out_items t;
+grant select on public.out_items_v to authenticated;
+
+-- Gắn ID đơn / sale / khách cho 1 dòng sổ (theo HĐ XML đã đối chiếu → MD trên file → NVKD → USER)
+create or replace function app.out_item_match(p_id uuid) returns void language plpgsql security definer set search_path = public, app as $$
+declare t public.out_items; al public.acc_lines; v_c uuid; v_owner uuid; v_src text;
+begin
+  select * into t from public.out_items where id = p_id;
+  if t.stt_hd is not null and t.so_hd_vao is not null then
+    select l.* into al from public.acc_invoice_lines il join public.acc_invoices i on i.id = il.invoice_id join public.acc_lines l on l.id = il.line_id
+     where ltrim(i.so_hd, '0') = ltrim(t.so_hd_vao, '0') and (t.ky_hieu is null or right(i.ky_hieu, 6) = right(t.ky_hieu, 6)) and il.stt = t.stt_hd limit 1;
+    if al.id is not null then v_src := 'hd_xml'; end if;
+  end if;
+  if al.id is null and t.md is not null then
+    select * into al from public.acc_lines where md = t.md and not is_test order by (sl_apt = t.sl_nhap) desc nulls last, updated_at desc limit 1;
+    if al.id is not null then v_src := 'md'; end if;
+  end if;
+  if t.username is not null then
+    select id, owner_id into v_c, v_owner from public.customers where deleted_at is null and (lower(sys_username) = lower(t.username) or upper(sys_code) = upper(t.username)) limit 1;
+  end if;
+  update public.out_items set acc_line_id = coalesce(acc_line_id, al.id),
+    md = coalesce(md, al.md), gia_khach = coalesce(gia_khach, nullif(al.gia_khach, 0), al.claim_gia),
+    sale_id = coalesce(sale_id, al.sale_id, app.match_sale(t.nvkd), v_owner),
+    customer_id = coalesce(customer_id, al.customer_id, v_c),
+    match_src = coalesce(match_src, v_src, case when t.nvkd is not null then 'nvkd' when v_owner is not null then 'user' end)
+  where id = p_id;
+end $$;
+
+-- Kế toán nạp sổ Excel (cập nhật theo mã hàng; giữ phần sale/kế toán đã xử lý). p_legacy: phiếu đã ký/đã nháp trên file cũ
+create or replace function public.out_items_import(p_rows jsonb, p_legacy jsonb default '[]') returns jsonb
+language plpgsql security definer set search_path = public, app as $$
+declare r jsonb; v_id uuid; n_new int := 0; n_upd int := 0; n_leg int := 0; g jsonb; x jsonb; v_inv uuid; v_item uuid; v_st text; k int;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for r in select * from jsonb_array_elements(p_rows) loop
+    select id into v_id from public.out_items where ma_hang = r->>'ma_hang';
+    if v_id is null then n_new := n_new + 1; else n_upd := n_upd + 1; end if;
+    insert into public.out_items as t(ma_hang, stt_so, ten, dvt, vat, sl_nhap, dg_nhap, so_hd_vao, ky_hieu, ngay_vao, ncc, stt_hd, md, nvkd, username, legacy, updated_at, updated_by)
+    values (r->>'ma_hang', (r->>'stt_so')::numeric, r->>'ten', r->>'dvt', (r->>'vat')::numeric, coalesce((r->>'sl_nhap')::numeric, 0), (r->>'dg_nhap')::numeric,
+            r->>'so_hd_vao', r->>'ky_hieu', nullif(r->>'ngay_vao','')::date, r->>'ncc', (r->>'stt_hd')::int, case when r->>'md' ~* 'md' then app.norm_md(r->>'md') else nullif(btrim(r->>'md'), '') end, nullif(btrim(r->>'nvkd'), ''), nullif(btrim(r->>'username'), ''),
+            r->'legacy', now(), auth.uid())
+    on conflict (ma_hang) do update set stt_so = excluded.stt_so, ten = excluded.ten, dvt = excluded.dvt, vat = excluded.vat, sl_nhap = excluded.sl_nhap, dg_nhap = excluded.dg_nhap,
+      so_hd_vao = excluded.so_hd_vao, ky_hieu = excluded.ky_hieu, ngay_vao = excluded.ngay_vao, ncc = excluded.ncc, stt_hd = excluded.stt_hd,
+      -- ID/NVKD/USER trên file có giá trị thì theo file; trống thì giữ phần đã gắn
+      md = coalesce(excluded.md, t.md), nvkd = coalesce(excluded.nvkd, t.nvkd), username = coalesce(excluded.username, t.username),
+      sale_id = case when excluded.nvkd is not null and app.match_sale(excluded.nvkd) is not null then app.match_sale(excluded.nvkd) else t.sale_id end,
+      legacy = excluded.legacy, updated_at = now(), updated_by = auth.uid()
+    returning id into v_id;
+    perform app.out_item_match(v_id);
+  end loop;
+  -- Phiếu cũ (đã nháp/đã ký trên file) → tạo phiếu "từ file cũ" để không phải làm lại; dòng đã có phiếu thì bỏ qua
+  for g in select * from jsonb_array_elements(coalesce(p_legacy, '[]')) loop
+    if exists(select 1 from jsonb_array_elements(g->'lines') e(v) join public.out_items t on t.ma_hang = e.v->>'ma_hang' join public.out_invoice_lines l on l.item_id = t.id) then continue; end if;
+    v_st := g->>'status';
+    insert into public.out_invoices(sale_id, customer_id, buyer_info, buyer_name, status, so_hd, ngay_hd, legacy, note, status_at)
+    select t.sale_id, t.customer_id, g->>'info', left(split_part(coalesce(g->>'info', ''), E'\n', 1), 200), v_st, g->>'so_hd', nullif(g->>'ngay','')::date, true, 'Nhập từ sổ Excel cũ', now()
+      from public.out_items t where t.ma_hang = g->'lines'->0->>'ma_hang' returning id into v_inv;
+    if v_inv is null then continue; end if;
+    k := 0;
+    for x in select * from jsonb_array_elements(g->'lines') loop
+      select id into v_item from public.out_items where ma_hang = x->>'ma_hang'; k := k + 1;
+      if v_item is not null and coalesce((x->>'sl')::numeric, 0) > 0 then
+        insert into public.out_invoice_lines(invoice_id, item_id, stt, sl, don_gia, vat) values (v_inv, v_item, k, (x->>'sl')::numeric, coalesce((x->>'gia')::numeric, 0), (x->>'vat')::numeric);
+      end if;
+    end loop;
+    if not exists(select 1 from public.out_invoice_lines where invoice_id = v_inv) then delete from public.out_invoices where id = v_inv; else n_leg := n_leg + 1; end if;
+  end loop;
+  insert into public.out_events(action, data) values ('import', jsonb_build_object('new', n_new, 'upd', n_upd, 'legacy', n_leg));
+  return jsonb_build_object('new', n_new, 'upd', n_upd, 'legacy', n_leg, 'no_sale', (select count(*) from public.out_items where sale_id is null));
+end $$;
+grant execute on function public.out_items_import(jsonb, jsonb) to authenticated;
+
+-- File danh sách đơn hàng (MD → NVKD, username) để gắn sale/khách cho dòng còn trống
+create or replace function public.out_orders_import(p_rows jsonb) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare n int := 0; r jsonb; t record;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for r in select * from jsonb_array_elements(p_rows) loop
+    for t in select id from public.out_items where md = app.norm_md(r->>'md') and (sale_id is null or username is null) loop
+      update public.out_items set nvkd = coalesce(nvkd, nullif(btrim(r->>'nvkd'), '')), username = coalesce(username, nullif(btrim(r->>'username'), '')),
+        sale_id = coalesce(sale_id, app.match_sale(r->>'nvkd')) where id = t.id;
+      perform app.out_item_match(t.id); n := n + 1;
+    end loop;
+  end loop;
+  return n;
+end $$;
+grant execute on function public.out_orders_import(jsonb) to authenticated;
+
+-- Kế toán sửa ID/sale/khách 1 dòng; sale nhận dòng chưa có sale (nhập MD)
+create or replace function public.out_item_set(p_id uuid, p_md text, p_sale uuid, p_username text default null, p_note text default null) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare t public.out_items;
+begin
+  select * into t from public.out_items where id = p_id for update; if t.id is null then raise exception 'Không tìm thấy dòng'; end if;
+  if not app.is_acc() then
+    if not app.has_role('sale','tn_kd','tp_kd') or t.sale_id is not null then raise exception 'Dòng đã có sale — báo kế toán nếu nhầm'; end if;
+    p_sale := auth.uid();
+    if app.norm_md(p_md) is null then raise exception 'Nhập mã đơn (MD)'; end if;
+  end if;
+  update public.out_items set md = coalesce(app.norm_md(p_md), md), sale_id = p_sale, username = coalesce(nullif(btrim(p_username), ''), username),
+    note = coalesce(nullif(btrim(p_note), ''), note), customer_id = case when p_username is not null then null else customer_id end, updated_at = now(), updated_by = auth.uid() where id = p_id;
+  perform app.out_item_match(p_id);
+  insert into public.out_events(item_id, action, note, data) values (p_id, case when app.is_acc() then 'item_set' else 'item_claim' end, p_note, jsonb_build_object('md', p_md, 'sale', p_sale));
+  if app.is_acc() and p_sale is not null and p_sale <> auth.uid() and p_sale is distinct from t.sale_id then
+    perform app.notify(p_sale, 'acc', 'Có dòng HĐ chờ bạn lập phiếu xuất', left(t.ten, 80), '#/out');
+  end if;
+end $$;
+grant execute on function public.out_item_set(uuid, text, uuid, text, text) to authenticated;
+
+-- Lập / sửa phiếu xuất HĐ (sale của dòng hoặc kế toán). Sửa sau khi đã xuất nháp → quay lại "Chờ xuất nháp"
+create or replace function public.out_invoice_save(p_id uuid, p_data jsonb, p_lines jsonb) returns uuid
+language plpgsql security definer set search_path = public, app as $$
+declare v public.out_invoices; v_id uuid := p_id; x jsonb; t public.out_items; k int := 0; v_buyer uuid; v_sale uuid; v_acc boolean := app.is_acc(); v_status text;
+begin
+  if p_id is not null then
+    select * into v from public.out_invoices where id = p_id for update;
+    if v.id is null then raise exception 'Không tìm thấy phiếu'; end if;
+    if not (v_acc or app.in_tree(v.sale_id)) then raise exception 'Phiếu không thuộc bạn'; end if;
+    if v.status in ('da_ky','huy') then raise exception 'Phiếu đã ký/đã hủy, không sửa được'; end if;
+    if v.status = 'xac_nhan_ky' and not v_acc then raise exception 'Đã xác nhận ký — báo kế toán nếu cần sửa'; end if;
+  end if;
+  if jsonb_array_length(coalesce(p_lines, '[]')) = 0 then raise exception 'Chọn ít nhất 1 dòng hàng'; end if;
+  if coalesce(btrim(p_data->>'buyer_name'), '') = '' then raise exception 'Nhập tên đơn vị mua hàng'; end if;
+  -- lưu đơn vị nhận HĐ để dùng lại
+  if coalesce((p_data->>'save_buyer')::boolean, true) then
+    select id into v_buyer from public.out_buyers where coalesce(customer_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(nullif(p_data->>'customer_id','')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+       and lower(btrim(name)) = lower(btrim(p_data->>'buyer_name')) and coalesce(btrim(tax_code), '') = coalesce(btrim(p_data->>'tax_code'), '');
+    if v_buyer is null then
+      insert into public.out_buyers(customer_id, name, tax_code, address, email) values (nullif(p_data->>'customer_id','')::uuid, btrim(p_data->>'buyer_name'), nullif(btrim(p_data->>'tax_code'), ''),
+        nullif(btrim(p_data->>'address'), ''), nullif(btrim(p_data->>'email'), '')) returning id into v_buyer;
+    else update public.out_buyers set address = coalesce(nullif(btrim(p_data->>'address'), ''), address), email = coalesce(nullif(btrim(p_data->>'email'), ''), email) where id = v_buyer; end if;
+  end if;
+  -- dòng hàng: phải là dòng của sale, đủ tồn
+  for x in select * from jsonb_array_elements(p_lines) loop
+    select * into t from public.out_items where id = (x->>'item_id')::uuid;
+    if t.id is null then raise exception 'Dòng hàng không tồn tại'; end if;
+    if not v_acc and not app.in_tree(t.sale_id) then raise exception 'Dòng % không phải của bạn', t.ma_hang; end if;
+    v_sale := coalesce(v_sale, t.sale_id);
+    if coalesce((x->>'sl')::numeric, 0) <= 0 then raise exception 'Số lượng dòng % phải > 0', t.ma_hang; end if;
+    if (x->>'sl')::numeric > t.sl_nhap - app.out_used(t.id, p_id) + 0.0001 then raise exception 'Dòng % chỉ còn tồn %', t.ma_hang, t.sl_nhap - app.out_used(t.id, p_id); end if;
+    if coalesce((x->>'don_gia')::numeric, -1) < 0 then raise exception 'Nhập đơn giá dòng %', t.ma_hang; end if;
+  end loop;
+  v_status := case when p_id is null then case when coalesce((p_data->>'submit')::boolean, false) then 'cho_nhap' else 'soan' end
+                   when v.status in ('da_nhap','xac_nhan_ky') then 'cho_nhap'
+                   when coalesce((p_data->>'submit')::boolean, false) and v.status = 'soan' then 'cho_nhap' else v.status end;
+  if p_id is null then
+    insert into public.out_invoices(sale_id, customer_id, buyer_id, buyer_name, tax_code, address, email, payment, note, status, status_by)
+    values (coalesce(v_sale, auth.uid()), nullif(p_data->>'customer_id','')::uuid, v_buyer, btrim(p_data->>'buyer_name'), nullif(btrim(p_data->>'tax_code'), ''), nullif(btrim(p_data->>'address'), ''),
+            nullif(btrim(p_data->>'email'), ''), coalesce(nullif(p_data->>'payment', ''), 'TM/CK'), nullif(btrim(p_data->>'note'), ''), v_status, auth.uid())
+    returning id into v_id;
+  else
+    update public.out_invoices set customer_id = nullif(p_data->>'customer_id','')::uuid, buyer_id = coalesce(v_buyer, buyer_id), buyer_name = btrim(p_data->>'buyer_name'),
+      tax_code = nullif(btrim(p_data->>'tax_code'), ''), address = nullif(btrim(p_data->>'address'), ''), email = nullif(btrim(p_data->>'email'), ''),
+      payment = coalesce(nullif(p_data->>'payment', ''), payment), note = nullif(btrim(p_data->>'note'), ''),
+      sua_sau_nhap = sua_sau_nhap or v.status in ('da_nhap','xac_nhan_ky'), status = v_status,
+      status_at = case when v_status <> v.status then now() else status_at end, updated_at = now() where id = v_id;
+    delete from public.out_invoice_lines where invoice_id = v_id;
+  end if;
+  for x in select * from jsonb_array_elements(p_lines) loop
+    k := k + 1;
+    insert into public.out_invoice_lines(invoice_id, item_id, stt, sl, don_gia, vat)
+    select v_id, oi.id, k, (x->>'sl')::numeric, (x->>'don_gia')::numeric, coalesce((x->>'vat')::numeric, oi.vat) from public.out_items oi where oi.id = (x->>'item_id')::uuid;
+  end loop;
+  insert into public.out_events(invoice_id, action, note, data) values (v_id, case when p_id is null then 'create' else 'edit' end, nullif(btrim(p_data->>'note'), ''), jsonb_build_object('status', v_status));
+  if v_status = 'cho_nhap' and (p_id is null or v.status <> 'cho_nhap') then
+    perform app.notify_roles(array['ke_toan'], 'acc', case when p_id is not null and v.status in ('da_nhap','xac_nhan_ky') then 'Sale sửa phiếu sau khi đã xuất nháp' else 'Phiếu xuất HĐ chờ xuất nháp' end,
+      (select code from public.out_invoices where id = v_id) || ' · ' || btrim(p_data->>'buyer_name'), '#/out');
+  end if;
+  return v_id;
+end $$;
+grant execute on function public.out_invoice_save(uuid, jsonb, jsonb) to authenticated;
+
+-- Chuyển trạng thái phiếu
+--  sale: soan→cho_nhap (gửi kế toán) · da_nhap→xac_nhan_ky (khách đã OK nháp) · da_nhap→cho_nhap (yêu cầu sửa) · soan/cho_nhap→huy
+--  kế toán: cho_nhap→da_nhap (đã tạo nháp) · xac_nhan_ky→da_ky (đã ký, có số HĐ) · →soan (trả lại sale) · hủy (chưa ký)
+create or replace function public.out_invoice_status(p_ids uuid[], p_status text, p_note text default null, p_so_hd text default null, p_ngay date default null) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare v public.out_invoices; n int := 0; v_acc boolean := app.is_acc(); ok boolean;
+begin
+  for v in select * from public.out_invoices where id = any(p_ids) for update loop
+    if not (v_acc or app.in_tree(v.sale_id)) then raise exception 'Phiếu % không thuộc bạn', v.code; end if;
+    ok := case p_status
+      when 'cho_nhap' then v.status in ('soan','da_nhap','xac_nhan_ky')
+      when 'xac_nhan_ky' then v.status = 'da_nhap'
+      when 'da_nhap' then v_acc and v.status in ('cho_nhap','xac_nhan_ky')
+      when 'da_ky' then v_acc and v.status in ('xac_nhan_ky','da_nhap')
+      when 'soan' then v_acc and v.status in ('cho_nhap','da_nhap','xac_nhan_ky')
+      when 'huy' then v.status <> 'da_ky' and (v_acc or v.status in ('soan','cho_nhap'))
+      else false end;
+    if not ok then raise exception 'Phiếu % đang "%", không chuyển sang "%" được', v.code, v.status, p_status; end if;
+    if p_status = 'da_ky' and coalesce(btrim(coalesce(p_so_hd, v.so_hd)), '') = '' then raise exception 'Nhập số HĐ đã ký cho phiếu %', v.code; end if;
+    if p_status in ('soan','huy') and v_acc and not app.in_tree(v.sale_id) and coalesce(btrim(p_note), '') = '' then raise exception 'Ghi lý do'; end if;
+    if p_status = 'cho_nhap' and v.status in ('da_nhap','xac_nhan_ky') and coalesce(btrim(p_note), '') = '' then raise exception 'Ghi nội dung cần sửa'; end if;
+    update public.out_invoices set status = p_status, status_at = now(), status_by = auth.uid(), updated_at = now(),
+      so_hd = case when p_status = 'da_ky' then coalesce(nullif(btrim(p_so_hd), ''), so_hd) else so_hd end,
+      ngay_hd = case when p_status = 'da_ky' then coalesce(p_ngay, ngay_hd, current_date) else ngay_hd end,
+      sua_sau_nhap = case when p_status = 'da_nhap' then false when p_status = 'cho_nhap' and v.status in ('da_nhap','xac_nhan_ky') then true else sua_sau_nhap end
+    where id = v.id;
+    insert into public.out_events(invoice_id, action, note, data) values (v.id, 'status', p_note, jsonb_build_object('from', v.status, 'to', p_status, 'so_hd', p_so_hd));
+    if p_status in ('cho_nhap','xac_nhan_ky') then
+      perform app.notify_roles(array['ke_toan'], 'acc', case p_status when 'xac_nhan_ky' then 'Sale xác nhận ký: ' else 'Phiếu chờ xuất nháp: ' end || v.code, coalesce(v.buyer_name, '') || coalesce(' — ' || p_note, ''), '#/out');
+    elsif p_status in ('da_nhap','da_ky','soan') or (p_status = 'huy' and v_acc) then
+      perform app.notify(v.sale_id, 'acc', case p_status when 'da_nhap' then 'Đã có HĐ nháp — kiểm tra, gửi khách, xác nhận ký: ' when 'da_ky' then 'Đã ký HĐ — báo khách kiểm tra email: '
+        when 'soan' then 'Kế toán trả lại phiếu: ' else 'Kế toán hủy phiếu: ' end || v.code, coalesce(v.buyer_name, '') || coalesce(' — ' || p_note, ''), '#/out');
+    end if;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+grant execute on function public.out_invoice_status(uuid[], text, text, text, date) to authenticated;
+
+-- Trao đổi trên phiếu
+create or replace function public.out_comment(p_invoice uuid, p_note text) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare v public.out_invoices;
+begin
+  select * into v from public.out_invoices where id = p_invoice;
+  if v.id is null or not (app.is_acc() or app.in_tree(v.sale_id)) then raise exception 'Không có quyền'; end if;
+  if coalesce(btrim(p_note), '') = '' then return; end if;
+  insert into public.out_events(invoice_id, action, note) values (p_invoice, 'comment', btrim(p_note));
+  if app.is_acc() then perform app.notify(v.sale_id, 'acc', 'Kế toán nhắn trên phiếu ' || v.code, left(p_note, 160), '#/out');
+  else perform app.notify_roles(array['ke_toan'], 'acc', 'Sale nhắn trên phiếu ' || v.code, left(p_note, 160), '#/out'); end if;
+end $$;
+grant execute on function public.out_comment(uuid, text) to authenticated;
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0022_v15.sql
+-- =====================================================================
+-- 0022 · Bản 15: danh sách đơn vị nhận HĐ (sheet "Thong tin KH") + tra MST khi lập phiếu; file nháp đúng mẫu MISA
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 15');
+
+create index if not exists out_buyers_mst on public.out_buyers(btrim(tax_code)) where tax_code is not null;
+
+-- Kế toán nạp danh sách đơn vị nhận HĐ (MST, tên, địa chỉ, email) — cập nhật theo MST
+create or replace function public.out_buyers_import(p_rows jsonb) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare r jsonb; n int := 0; v_id uuid; v_mst text;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for r in select * from jsonb_array_elements(p_rows) loop
+    v_mst := nullif(regexp_replace(coalesce(r->>'tax_code', ''), '\s', '', 'g'), ''); if v_mst is null or coalesce(btrim(r->>'name'), '') = '' then continue; end if;
+    select id into v_id from public.out_buyers where customer_id is null and btrim(tax_code) = v_mst limit 1;
+    if v_id is null then
+      insert into public.out_buyers(name, tax_code, address, email, note) values (btrim(r->>'name'), v_mst, nullif(btrim(r->>'address'), ''), nullif(btrim(r->>'email'), ''), 'Danh sách kế toán');
+    else
+      update public.out_buyers set name = btrim(r->>'name'), address = coalesce(nullif(btrim(r->>'address'), ''), address), email = coalesce(nullif(btrim(r->>'email'), ''), email) where id = v_id;
+    end if;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+grant execute on function public.out_buyers_import(jsonb) to authenticated;
+
+-- Sale tra 1 MST cụ thể (không xem được cả danh sách)
+create or replace function public.out_buyer_lookup(p_mst text) returns table(name text, address text, email text)
+language sql stable security definer set search_path = public as $$
+  select b.name, b.address, b.email from public.out_buyers b
+   where length(btrim(coalesce(p_mst, ''))) >= 10 and btrim(b.tax_code) = regexp_replace(p_mst, '\s', '', 'g')
+   order by (b.customer_id is null), b.created_at desc limit 1
+$$;
+grant execute on function public.out_buyer_lookup(text) to authenticated;
+
+-- File đơn hàng: dòng chưa có username thì lấy theo mã đơn, rồi gắn khách → sale (chủ khách)
+create or replace function public.out_orders_import(p_rows jsonb) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare n int := 0; r jsonb; t record; v_md text;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for r in select * from jsonb_array_elements(p_rows) loop
+    v_md := case when r->>'md' ~* 'md' then app.norm_md(r->>'md') else nullif(btrim(r->>'md'), '') end; if v_md is null then continue; end if;
+    for t in select id from public.out_items where md = v_md and (sale_id is null or username is null or customer_id is null) loop
+      update public.out_items set nvkd = coalesce(nvkd, nullif(btrim(r->>'nvkd'), '')), username = coalesce(username, nullif(btrim(r->>'username'), '')),
+        sale_id = coalesce(sale_id, app.match_sale(nullif(btrim(r->>'nvkd'), ''))) where id = t.id;
+      perform app.out_item_match(t.id); n := n + 1;
+    end loop;
+  end loop;
+  return n;
+end $$;
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0023_v16.sql
+-- =====================================================================
+-- 0023 · Bản 16: rà soát khớp nối kế toán – hóa đơn
+--  · HĐ XML / xe nạp sau → sổ HĐ đầu ra tự gắn lại ID đơn, sale, giá khách
+--  · Kế toán/sale chốt, nhận dòng, sửa MD/giá khách ở đối soát → sổ đầu ra cập nhật theo
+--  · Dòng sổ sửa tay giữ nguyên khi nạp lại; phiếu cũ (sổ cũ) tự gán sale khi dòng có sale
+--  · Nhớ khách cho dòng hàng sau khi lập phiếu; giá xuất < giá nhập phải ghi lý do
+--  · Dòng "chuyển xe sau" (không lên xe) kế toán chốt → đóng theo dõi
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 16');
+
+create or replace function public.out_items_import(p_rows jsonb, p_legacy jsonb default '[]') returns jsonb
+language plpgsql security definer set search_path = public, app as $$
+declare r jsonb; v_id uuid; n_new int := 0; n_upd int := 0; n_leg int := 0; g jsonb; x jsonb; v_inv uuid; v_item uuid; v_st text; k int;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for r in select * from jsonb_array_elements(p_rows) loop
+    select id into v_id from public.out_items where ma_hang = r->>'ma_hang';
+    if v_id is null then n_new := n_new + 1; else n_upd := n_upd + 1; end if;
+    insert into public.out_items as t(ma_hang, stt_so, ten, dvt, vat, sl_nhap, dg_nhap, so_hd_vao, ky_hieu, ngay_vao, ncc, stt_hd, md, nvkd, username, legacy, updated_at, updated_by)
+    values (r->>'ma_hang', (r->>'stt_so')::numeric, r->>'ten', r->>'dvt', (r->>'vat')::numeric, coalesce((r->>'sl_nhap')::numeric, 0), (r->>'dg_nhap')::numeric,
+            r->>'so_hd_vao', r->>'ky_hieu', nullif(r->>'ngay_vao','')::date, r->>'ncc', (r->>'stt_hd')::int, case when r->>'md' ~* 'md' then app.norm_md(r->>'md') else nullif(btrim(r->>'md'), '') end, nullif(btrim(r->>'nvkd'), ''), nullif(btrim(r->>'username'), ''),
+            r->'legacy', now(), auth.uid())
+    on conflict (ma_hang) do update set stt_so = excluded.stt_so, ten = excluded.ten, dvt = excluded.dvt, vat = excluded.vat, sl_nhap = excluded.sl_nhap, dg_nhap = excluded.dg_nhap,
+      so_hd_vao = excluded.so_hd_vao, ky_hieu = excluded.ky_hieu, ngay_vao = excluded.ngay_vao, ncc = excluded.ncc, stt_hd = excluded.stt_hd,
+      -- ID/NVKD/USER trên file có giá trị thì theo file; trống thì giữ phần đã gắn
+      md = case when coalesce(t.match_src, '') = 'tay' then t.md else coalesce(excluded.md, t.md) end, nvkd = coalesce(excluded.nvkd, t.nvkd),
+      username = case when coalesce(t.match_src, '') = 'tay' then t.username else coalesce(excluded.username, t.username) end,
+      sale_id = case when coalesce(t.match_src, '') <> 'tay' and excluded.nvkd is not null and app.match_sale(excluded.nvkd) is not null then app.match_sale(excluded.nvkd) else t.sale_id end,
+      legacy = excluded.legacy, updated_at = now(), updated_by = auth.uid()
+    returning id into v_id;
+    perform app.out_item_match(v_id);
+  end loop;
+  -- Phiếu cũ (đã nháp/đã ký trên file) → tạo phiếu "từ file cũ" để không phải làm lại; dòng đã có phiếu thì bỏ qua
+  for g in select * from jsonb_array_elements(coalesce(p_legacy, '[]')) loop
+    if exists(select 1 from jsonb_array_elements(g->'lines') e(v) join public.out_items t on t.ma_hang = e.v->>'ma_hang' join public.out_invoice_lines l on l.item_id = t.id) then continue; end if;
+    v_st := g->>'status';
+    insert into public.out_invoices(sale_id, customer_id, buyer_info, buyer_name, tax_code, address, email, status, so_hd, ngay_hd, legacy, note, status_at)
+    select t.sale_id, t.customer_id, g->>'info', coalesce(nullif(btrim(g->>'buyer_name'), ''), left(split_part(coalesce(g->>'info', ''), E'\n', 1), 200)),
+      nullif(btrim(g->>'tax_code'), ''), nullif(btrim(g->>'address'), ''), nullif(btrim(g->>'email'), ''), v_st, g->>'so_hd', nullif(g->>'ngay','')::date, true, 'Nhập từ sổ Excel cũ', now()
+      from public.out_items t where t.ma_hang = g->'lines'->0->>'ma_hang' returning id into v_inv;
+    if v_inv is null then continue; end if;
+    -- đơn vị trên sổ cũ có MST → thêm vào danh sách tra MST
+    if nullif(btrim(g->>'tax_code'), '') is not null and nullif(btrim(g->>'buyer_name'), '') is not null
+       and not exists(select 1 from public.out_buyers where btrim(tax_code) = btrim(g->>'tax_code')) then
+      insert into public.out_buyers(name, tax_code, address, email, note) values (btrim(g->>'buyer_name'), btrim(g->>'tax_code'), nullif(btrim(g->>'address'), ''), nullif(btrim(g->>'email'), ''), 'Từ sổ cũ');
+    end if;
+    k := 0;
+    for x in select * from jsonb_array_elements(g->'lines') loop
+      select id into v_item from public.out_items where ma_hang = x->>'ma_hang'; k := k + 1;
+      if v_item is not null and coalesce((x->>'sl')::numeric, 0) > 0 then
+        insert into public.out_invoice_lines(invoice_id, item_id, stt, sl, don_gia, vat) values (v_inv, v_item, k, (x->>'sl')::numeric, coalesce((x->>'gia')::numeric, 0), (x->>'vat')::numeric);
+      end if;
+    end loop;
+    if not exists(select 1 from public.out_invoice_lines where invoice_id = v_inv) then delete from public.out_invoices where id = v_inv; else n_leg := n_leg + 1; end if;
+  end loop;
+  insert into public.out_events(action, data) values ('import', jsonb_build_object('new', n_new, 'upd', n_upd, 'legacy', n_leg));
+  return jsonb_build_object('new', n_new, 'upd', n_upd, 'legacy', n_leg, 'no_sale', (select count(*) from public.out_items where sale_id is null));
+end $$;
+
+create or replace function public.out_item_set(p_id uuid, p_md text, p_sale uuid, p_username text default null, p_note text default null) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare t public.out_items;
+begin
+  select * into t from public.out_items where id = p_id for update; if t.id is null then raise exception 'Không tìm thấy dòng'; end if;
+  if not app.is_acc() then
+    if not app.has_role('sale','tn_kd','tp_kd') or t.sale_id is not null then raise exception 'Dòng đã có sale — báo kế toán nếu nhầm'; end if;
+    p_sale := auth.uid();
+    if app.norm_md(p_md) is null then raise exception 'Nhập mã đơn (MD)'; end if;
+  end if;
+  update public.out_items set md = coalesce(app.norm_md(p_md), md), sale_id = p_sale, username = coalesce(nullif(btrim(p_username), ''), username),
+    note = coalesce(nullif(btrim(p_note), ''), note), customer_id = case when p_username is not null then null else customer_id end, match_src = 'tay', updated_at = now(), updated_by = auth.uid() where id = p_id;
+  perform app.out_item_match(p_id);
+  insert into public.out_events(item_id, action, note, data) values (p_id, case when app.is_acc() then 'item_set' else 'item_claim' end, p_note, jsonb_build_object('md', p_md, 'sale', p_sale));
+  if app.is_acc() and p_sale is not null and p_sale <> auth.uid() and p_sale is distinct from t.sale_id then
+    perform app.notify(p_sale, 'acc', 'Có dòng HĐ chờ bạn lập phiếu xuất', left(t.ten, 80), '#/out');
+  end if;
+end $$;
+
+create or replace function public.out_invoice_save(p_id uuid, p_data jsonb, p_lines jsonb) returns uuid
+language plpgsql security definer set search_path = public, app as $$
+declare v public.out_invoices; v_id uuid := p_id; x jsonb; t public.out_items; k int := 0; v_buyer uuid; v_sale uuid; v_acc boolean := app.is_acc(); v_status text;
+begin
+  if p_id is not null then
+    select * into v from public.out_invoices where id = p_id for update;
+    if v.id is null then raise exception 'Không tìm thấy phiếu'; end if;
+    if not (v_acc or app.in_tree(v.sale_id)) then raise exception 'Phiếu không thuộc bạn'; end if;
+    if v.status in ('da_ky','huy') then raise exception 'Phiếu đã ký/đã hủy, không sửa được'; end if;
+    if v.status = 'xac_nhan_ky' and not v_acc then raise exception 'Đã xác nhận ký — báo kế toán nếu cần sửa'; end if;
+  end if;
+  if jsonb_array_length(coalesce(p_lines, '[]')) = 0 then raise exception 'Chọn ít nhất 1 dòng hàng'; end if;
+  if coalesce(btrim(p_data->>'buyer_name'), '') = '' then raise exception 'Nhập tên đơn vị mua hàng'; end if;
+  -- lưu đơn vị nhận HĐ để dùng lại
+  if coalesce((p_data->>'save_buyer')::boolean, true) then
+    select id into v_buyer from public.out_buyers where coalesce(customer_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(nullif(p_data->>'customer_id','')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+       and lower(btrim(name)) = lower(btrim(p_data->>'buyer_name')) and coalesce(btrim(tax_code), '') = coalesce(btrim(p_data->>'tax_code'), '');
+    if v_buyer is null then
+      insert into public.out_buyers(customer_id, name, tax_code, address, email) values (nullif(p_data->>'customer_id','')::uuid, btrim(p_data->>'buyer_name'), nullif(btrim(p_data->>'tax_code'), ''),
+        nullif(btrim(p_data->>'address'), ''), nullif(btrim(p_data->>'email'), '')) returning id into v_buyer;
+    else update public.out_buyers set address = coalesce(nullif(btrim(p_data->>'address'), ''), address), email = coalesce(nullif(btrim(p_data->>'email'), ''), email) where id = v_buyer; end if;
+  end if;
+  -- dòng hàng: phải là dòng của sale, đủ tồn
+  for x in select * from jsonb_array_elements(p_lines) loop
+    select * into t from public.out_items where id = (x->>'item_id')::uuid;
+    if t.id is null then raise exception 'Dòng hàng không tồn tại'; end if;
+    if not v_acc and not app.in_tree(t.sale_id) then raise exception 'Dòng % không phải của bạn', t.ma_hang; end if;
+    v_sale := coalesce(v_sale, t.sale_id);
+    if coalesce((x->>'sl')::numeric, 0) <= 0 then raise exception 'Số lượng dòng % phải > 0', t.ma_hang; end if;
+    if (x->>'sl')::numeric > t.sl_nhap - app.out_used(t.id, p_id) + 0.0001 then raise exception 'Dòng % chỉ còn tồn %', t.ma_hang, t.sl_nhap - app.out_used(t.id, p_id); end if;
+    if coalesce((x->>'don_gia')::numeric, -1) < 0 then raise exception 'Nhập đơn giá dòng %', t.ma_hang; end if;
+    if (x->>'don_gia')::numeric < coalesce(t.dg_nhap, 0) and coalesce(btrim(p_data->>'note'), '') = '' then
+      raise exception 'Dòng % xuất giá % thấp hơn giá nhập % — ghi lý do vào Ghi chú cho kế toán', t.ma_hang, (x->>'don_gia')::numeric, t.dg_nhap; end if;
+  end loop;
+  v_status := case when p_id is null then case when coalesce((p_data->>'submit')::boolean, false) then 'cho_nhap' else 'soan' end
+                   when v.status in ('da_nhap','xac_nhan_ky') then 'cho_nhap'
+                   when coalesce((p_data->>'submit')::boolean, false) and v.status = 'soan' then 'cho_nhap' else v.status end;
+  if p_id is null then
+    insert into public.out_invoices(sale_id, customer_id, buyer_id, buyer_name, tax_code, address, email, payment, note, status, status_by)
+    values (coalesce(v_sale, auth.uid()), nullif(p_data->>'customer_id','')::uuid, v_buyer, btrim(p_data->>'buyer_name'), nullif(btrim(p_data->>'tax_code'), ''), nullif(btrim(p_data->>'address'), ''),
+            nullif(btrim(p_data->>'email'), ''), coalesce(nullif(p_data->>'payment', ''), 'TM/CK'), nullif(btrim(p_data->>'note'), ''), v_status, auth.uid())
+    returning id into v_id;
+  else
+    update public.out_invoices set customer_id = nullif(p_data->>'customer_id','')::uuid, buyer_id = coalesce(v_buyer, buyer_id), buyer_name = btrim(p_data->>'buyer_name'),
+      tax_code = nullif(btrim(p_data->>'tax_code'), ''), address = nullif(btrim(p_data->>'address'), ''), email = nullif(btrim(p_data->>'email'), ''),
+      payment = coalesce(nullif(p_data->>'payment', ''), payment), note = nullif(btrim(p_data->>'note'), ''),
+      sua_sau_nhap = sua_sau_nhap or v.status in ('da_nhap','xac_nhan_ky'), status = v_status,
+      status_at = case when v_status <> v.status then now() else status_at end, updated_at = now() where id = v_id;
+    delete from public.out_invoice_lines where invoice_id = v_id;
+  end if;
+  for x in select * from jsonb_array_elements(p_lines) loop
+    k := k + 1;
+    insert into public.out_invoice_lines(invoice_id, item_id, stt, sl, don_gia, vat)
+    select v_id, oi.id, k, (x->>'sl')::numeric, (x->>'don_gia')::numeric, coalesce((x->>'vat')::numeric, oi.vat) from public.out_items oi where oi.id = (x->>'item_id')::uuid;
+  end loop;
+  -- nhớ khách cho các dòng hàng (lần sau mở phiếu tự chọn khách)
+  update public.out_items oi set customer_id = nullif(p_data->>'customer_id','')::uuid
+   where oi.customer_id is null and nullif(p_data->>'customer_id','') is not null and oi.id in (select item_id from public.out_invoice_lines where invoice_id = v_id);
+  insert into public.out_events(invoice_id, action, note, data) values (v_id, case when p_id is null then 'create' else 'edit' end, nullif(btrim(p_data->>'note'), ''), jsonb_build_object('status', v_status));
+  if v_status = 'cho_nhap' and (p_id is null or v.status <> 'cho_nhap') then
+    perform app.notify_roles(array['ke_toan'], 'acc', case when p_id is not null and v.status in ('da_nhap','xac_nhan_ky') then 'Sale sửa phiếu sau khi đã xuất nháp' else 'Phiếu xuất HĐ chờ xuất nháp' end,
+      (select code from public.out_invoices where id = v_id) || ' · ' || btrim(p_data->>'buyer_name'), '#/out');
+  end if;
+  return v_id;
+end $$;
+
+create or replace function public.acc_line_set(p_id uuid, p_status text, p_note text default null, p_gia_khach numeric default null, p_md text default null)
+returns void language plpgsql security definer set search_path = public, app as $$
+declare l public.acc_lines; c jsonb := coalesce(app.setting('accounting'), '{}'); v_gk numeric; v_md text; v_ga numeric; v_b numeric; v_de numeric; v_ph text;
+        tgt numeric := coalesce((c->>'bien_muc_tieu')::numeric, 0.03); hi numeric := coalesce((c->>'bien_nt_max')::numeric, 0.04);
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  if p_status not in ('ok','blocked') then raise exception 'Trạng thái không hợp lệ'; end if;
+  select * into l from public.acc_lines where id = p_id for update;
+  if p_status = 'blocked' then
+    update public.acc_lines set status = 'blocked', due_at = now() + interval '24 hours', phan_hoi = case when apt_stt is not null then 'CHỜ SALE — chưa xuất' end, updated_at = now() where id = p_id;
+    insert into public.acc_events(line_id, truck_id, action, note) values (p_id, l.truck_id, 'set_blocked', p_note);
+    perform app.notify(l.sale_id, 'acc', 'Kế toán trả lại dòng HĐ: ' || coalesce(l.md, ''), p_note, '#/acc/mine');
+    return;
+  end if;
+  if l.reply = 'chuyen_xe_sau' and l.apt_stt is null then
+    update public.acc_lines set status = 'info', due_at = null, issues = '{}', phan_hoi = null,
+      notes = array_prepend('Chuyển xe sau — kế toán xác nhận' || coalesce(': ' || nullif(btrim(p_note), ''), '') || '.', notes), updated_at = now() where id = p_id;
+    insert into public.acc_events(line_id, truck_id, action, note) values (p_id, l.truck_id, 'set_chuyen_xe_sau', p_note);
+    return;
+  end if;
+  if l.reply = 'dong_thua' then
+    update public.acc_lines set status = 'info', due_at = null, issues = '{}', phan_hoi = null,
+      notes = array_prepend(case when l.reply_sub = 'khong_khai' then 'Không khai qua APT (đi đường khác)' else 'Dòng thừa trên hệ thống' end || ' — sale chốt, kế toán xác nhận' || coalesce(': ' || nullif(btrim(p_note), ''), '') || '.', notes),
+      updated_at = now() where id = p_id;
+    insert into public.acc_events(line_id, truck_id, action, note) values (p_id, l.truck_id, 'set_dong_thua', p_note);
+    return;
+  end if;
+  v_gk := coalesce(nullif(p_gia_khach, 0), nullif(l.gia_khach, 0), l.claim_gia);
+  v_md := coalesce(app.norm_md(p_md), case when l.reply = 'nham' then l.claim_md end, l.md, l.claim_md);
+  if l.luong in ('A','B') and coalesce(v_gk, 0) <= 0 then raise exception 'Nhập giá khách để chốt'; end if;
+  v_ga := coalesce(l.gia_note, l.gia_nhap); v_b := case when v_gk > 0 and v_ga > 0 then v_gk / v_ga - 1 end;
+  if l.reply = 'de_xuat_gia' and l.reply_price > 0 then v_de := l.reply_price;
+  elsif v_b is not null and v_b > hi + 0.001 then v_de := round(v_gk / (1 + tgt)); end if;
+  v_ph := case when l.apt_stt is null then null when l.luong = 'C' then 'XUẤT THẲNG'
+               when v_de is not null then 'XUẤT GIÁ ' || round(v_de)::bigint::text
+               when l.gia_note is not null and abs(l.gia_note - coalesce(l.gia_nhap, 0)) > 0.5 then 'XUẤT GIÁ ' || round(l.gia_note)::bigint::text else 'CHỐT' end;
+  update public.acc_lines set status = 'ok', due_at = null, gia_khach = v_gk, md = v_md, ma_dong = case when md is distinct from v_md then v_md else coalesce(ma_dong, v_md) end,
+    gia_de_xuat = coalesce(v_de, gia_de_xuat), gia_ap_dung = coalesce(v_de, gia_note, gia_nhap),
+    bien_nt = case when v_gk > 0 and coalesce(v_de, v_ga) > 0 then v_gk / coalesce(v_de, v_ga) - 1 end,
+    tt_khach = case when v_gk > 0 then round(v_gk * coalesce(sl_tk, sl_apt, sl_ht, 0)) end, tt_apt = round(coalesce(v_de, v_ga, 0) * coalesce(sl_tk, sl_apt, sl_ht, 0)),
+    phan_hoi = v_ph, issues = '{}', notes = array_prepend('Kế toán chốt' || coalesce(': ' || nullif(btrim(p_note), ''), '') || '.', notes), updated_at = now() where id = p_id;
+  insert into public.acc_events(line_id, truck_id, action, note, data) values (p_id, l.truck_id, 'set_ok', p_note, jsonb_build_object('gia_khach', v_gk, 'md', v_md));
+  if l.inv_id is not null then perform app.acc_line_inv_refresh(p_id); end if;
+end $$;
+
+-- Dòng HĐ XML được ghép (nạp XML, xe nạp sau, ghép tay) → dòng sổ đầu ra cùng số HĐ + STT gắn lại
+create or replace function app.trg_acc_invline_out() returns trigger language plpgsql security definer set search_path = public, app as $$
+declare t record;
+begin
+  if new.line_id is null then return null; end if;
+  for t in select oi.id from public.out_items oi join public.acc_invoices i on i.id = new.invoice_id
+            where oi.stt_hd = new.stt and ltrim(oi.so_hd_vao, '0') = ltrim(i.so_hd, '0') and (oi.acc_line_id is null or oi.acc_line_id <> new.line_id) and coalesce(oi.match_src, '') <> 'tay' loop
+    update public.out_items set acc_line_id = null, match_src = null where id = t.id;
+    perform app.out_item_match(t.id);
+  end loop;
+  return null;
+end $$;
+drop trigger if exists acc_invline_out on public.acc_invoice_lines;
+create trigger acc_invline_out after insert or update of line_id on public.acc_invoice_lines for each row execute function app.trg_acc_invline_out();
+
+-- Dòng đối soát đổi MD / sale / giá khách / khách → dòng sổ đầu ra lấy theo (trừ dòng kế toán sửa tay)
+create or replace function app.trg_acc_line_out() returns trigger language plpgsql security definer set search_path = public, app as $$
+declare t record;
+begin
+  if new.is_test then return null; end if;
+  update public.out_items set md = coalesce(new.md, md), sale_id = coalesce(new.sale_id, sale_id), gia_khach = coalesce(nullif(new.gia_khach, 0), gia_khach),
+         customer_id = coalesce(new.customer_id, customer_id), updated_at = now()
+   where acc_line_id = new.id and coalesce(match_src, '') <> 'tay'
+     and (md is distinct from coalesce(new.md, md) or sale_id is distinct from coalesce(new.sale_id, sale_id) or gia_khach is distinct from coalesce(nullif(new.gia_khach, 0), gia_khach) or customer_id is distinct from coalesce(new.customer_id, customer_id));
+  if new.md is not null then
+    for t in select id from public.out_items where acc_line_id is null and md = new.md loop perform app.out_item_match(t.id); end loop;
+  end if;
+  return null;
+end $$;
+drop trigger if exists acc_line_out on public.acc_lines;
+create trigger acc_line_out after insert or update of md, sale_id, gia_khach, customer_id on public.acc_lines for each row execute function app.trg_acc_line_out();
+
+-- Dòng sổ có sale → phiếu cũ (sổ cũ) chưa có sale được gán theo
+create or replace function app.trg_out_item_sale() returns trigger language plpgsql security definer set search_path = public, app as $$
+begin
+  if new.sale_id is not null and new.sale_id is distinct from old.sale_id then
+    update public.out_invoices set sale_id = new.sale_id where sale_id is null and id in (select invoice_id from public.out_invoice_lines where item_id = new.id);
+  end if;
+  return null;
+end $$;
+drop trigger if exists out_item_sale on public.out_items;
+create trigger out_item_sale after update of sale_id on public.out_items for each row execute function app.trg_out_item_sale();
+
+-- Phiếu sổ cũ đã tạo trước bản này: tách MST / email từ thông tin tự do
+update public.out_invoices set tax_code = coalesce(tax_code, substring(buyer_info from '(?:MST|Mã số thuế|mã số thuế|Tax code)[^0-9]*([0-9]{12}|[0-9]{10}(?:-[0-9]{3})?)')),
+  email = coalesce(email, substring(buyer_info from '([A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)'))
+ where legacy and buyer_info is not null;
+
+-- Ghép lại 1 lần cho dữ liệu đã có
+do $$ declare t record; begin
+  for t in select id from public.out_items where acc_line_id is null and coalesce(match_src, '') <> 'tay' loop perform app.out_item_match(t.id); end loop;
+  update public.out_invoices v set sale_id = (select oi.sale_id from public.out_invoice_lines l join public.out_items oi on oi.id = l.item_id where l.invoice_id = v.id and oi.sale_id is not null limit 1) where v.sale_id is null;
+end $$;
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0024_v17.sql
+-- =====================================================================
+-- 0024 · Bản 17: Xuất HĐ đầu ra
+--  · 1 mã hàng chia nhiều dòng trên sổ (nhiều khách) → tách thành nhiều phần, không gộp
+--  · Sổ cũ: chỉ dòng "Đã ký" mới hết tồn (vào phiếu Đã ký của sale); nháp vẫn còn tồn
+--  · Giá xuất khách: lấy theo đối soát, không có thì theo sổ (cột Đơn giá xuất)
+--  · Lưu file đơn hàng (mã đơn → khách, sale) để dùng mãi; MD đã biết sale/khách ở dòng khác thì dùng chung
+--  · HĐ vào ↔ xe (tự theo XML, kế toán sửa được); xem nhanh hơn
+--  · Sale nhận dòng: nhập MD (+ username, giá xuất khách nếu hệ thống chưa có)
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 17');
+
+-- ---------- Bảng / cột mới ----------
+alter table public.out_items add column if not exists part int not null default 1;
+alter table public.out_items add column if not exists gia_so numeric;
+alter table public.out_items drop constraint if exists out_items_ma_hang_key;
+create unique index if not exists out_items_ma_part on public.out_items(ma_hang, part);
+
+create table if not exists public.out_orders(
+  md text primary key, username text, nvkd text, updated_at timestamptz not null default now()
+);
+alter table public.out_orders enable row level security;
+drop policy if exists out_orders_read on public.out_orders;
+create policy out_orders_read on public.out_orders for select to authenticated using (true);
+grant select on public.out_orders to authenticated;
+
+create table if not exists public.out_hd_xe(
+  so_hd text primary key, xe text not null, tu_dong boolean not null default false, updated_at timestamptz not null default now(), updated_by uuid default auth.uid()
+);
+alter table public.out_hd_xe enable row level security;
+drop policy if exists out_hd_xe_read on public.out_hd_xe;
+create policy out_hd_xe_read on public.out_hd_xe for select to authenticated using (true);
+grant select on public.out_hd_xe to authenticated;
+
+-- ---------- Gắn đơn / sale / khách / giá ----------
+create or replace function app.out_item_match(p_id uuid) returns void language plpgsql security definer set search_path = public, app as $$
+declare t public.out_items; al public.acc_lines; v_c uuid; v_owner uuid; v_src text; o public.out_orders; s_sale uuid; s_user text;
+begin
+  select * into t from public.out_items where id = p_id;
+  if t.stt_hd is not null and t.so_hd_vao is not null then
+    select l.* into al from public.acc_invoice_lines il join public.acc_invoices i on i.id = il.invoice_id join public.acc_lines l on l.id = il.line_id
+     where ltrim(i.so_hd, '0') = ltrim(t.so_hd_vao, '0') and (t.ky_hieu is null or right(i.ky_hieu, 6) = right(t.ky_hieu, 6)) and il.stt = t.stt_hd limit 1;
+    if al.id is not null then v_src := 'hd_xml'; end if;
+  end if;
+  if al.id is null and t.md is not null then
+    select * into al from public.acc_lines where md = t.md and not is_test order by (sl_apt = t.sl_nhap) desc nulls last, updated_at desc limit 1;
+    if al.id is not null then v_src := 'md'; end if;
+  end if;
+  if t.md is not null then select * into o from public.out_orders where md = t.md; end if;
+  -- cùng mã đơn ở dòng khác của sổ đã biết sale / khách → dùng chung
+  if t.md is not null and (t.sale_id is null or t.username is null) then
+    select sale_id, username into s_sale, s_user from public.out_items where md = t.md and id <> t.id and (sale_id is not null or username is not null)
+     order by (sale_id is not null) desc, (username is not null) desc limit 1;
+  end if;
+  t.username := coalesce(t.username, o.username, s_user);
+  if t.username is not null then
+    select id, owner_id into v_c, v_owner from public.customers where deleted_at is null
+      and (lower(btrim(sys_username)) = lower(btrim(t.username)) or upper(btrim(sys_code)) = upper(btrim(t.username))) limit 1;
+  end if;
+  update public.out_items set acc_line_id = coalesce(acc_line_id, al.id),
+    md = coalesce(md, al.md), username = t.username, nvkd = coalesce(nvkd, o.nvkd),
+    gia_khach = coalesce(nullif(al.gia_khach, 0), al.claim_gia, gia_khach, gia_so),
+    sale_id = coalesce(sale_id, al.sale_id, app.match_sale(t.nvkd), app.match_sale(o.nvkd), s_sale, v_owner),
+    customer_id = coalesce(customer_id, al.customer_id, v_c),
+    match_src = coalesce(match_src, v_src, case when t.nvkd is not null then 'nvkd' when o.md is not null then 'don_hang' when v_owner is not null then 'user' end)
+  where id = p_id;
+end $$;
+
+-- ---------- Nạp sổ ----------
+drop function if exists public.out_items_import(jsonb, jsonb);
+create or replace function public.out_items_import(p_rows jsonb) returns jsonb
+language plpgsql security definer set search_path = public, app as $$
+declare r jsonb; v_id uuid; n_new int := 0; n_upd int := 0; v_ids uuid[] := '{}';
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for r in select * from jsonb_array_elements(p_rows) loop
+    select id into v_id from public.out_items where ma_hang = r->>'ma_hang' and part = coalesce((r->>'part')::int, 1);
+    if v_id is null then n_new := n_new + 1; else n_upd := n_upd + 1; end if;
+    insert into public.out_items as t(ma_hang, part, stt_so, ten, dvt, vat, sl_nhap, dg_nhap, so_hd_vao, ky_hieu, ngay_vao, ncc, stt_hd, md, nvkd, username, gia_so, legacy, updated_at, updated_by)
+    values (r->>'ma_hang', coalesce((r->>'part')::int, 1), (r->>'stt_so')::numeric, r->>'ten', r->>'dvt', (r->>'vat')::numeric, coalesce((r->>'sl_nhap')::numeric, 0), (r->>'dg_nhap')::numeric,
+            r->>'so_hd_vao', r->>'ky_hieu', nullif(r->>'ngay_vao','')::date, r->>'ncc', (r->>'stt_hd')::int,
+            case when r->>'md' ~* 'md' then app.norm_md(r->>'md') else nullif(btrim(r->>'md'), '') end, nullif(btrim(r->>'nvkd'), ''), nullif(btrim(r->>'username'), ''),
+            nullif((r->>'gia_so')::numeric, 0), r->'legacy', now(), auth.uid())
+    on conflict (ma_hang, part) do update set stt_so = excluded.stt_so, ten = excluded.ten, dvt = excluded.dvt, vat = excluded.vat, sl_nhap = excluded.sl_nhap, dg_nhap = excluded.dg_nhap,
+      so_hd_vao = excluded.so_hd_vao, ky_hieu = excluded.ky_hieu, ngay_vao = excluded.ngay_vao, ncc = excluded.ncc, stt_hd = excluded.stt_hd,
+      md = case when coalesce(t.match_src, '') = 'tay' then t.md else coalesce(excluded.md, t.md) end, nvkd = coalesce(excluded.nvkd, t.nvkd),
+      username = case when coalesce(t.match_src, '') = 'tay' then t.username else coalesce(excluded.username, t.username) end,
+      sale_id = case when coalesce(t.match_src, '') <> 'tay' and excluded.nvkd is not null and app.match_sale(excluded.nvkd) is not null then app.match_sale(excluded.nvkd) else t.sale_id end,
+      gia_so = coalesce(excluded.gia_so, t.gia_so), legacy = excluded.legacy, updated_at = now(), updated_by = auth.uid()
+    returning id into v_id;
+    perform app.out_item_match(v_id); v_ids := v_ids || v_id;
+  end loop;
+  -- lượt 2: dòng cùng mã đơn nằm sau trong file đã có sale/khách → dùng chung
+  for v_id in select id from public.out_items where id = any(v_ids) and md is not null and (sale_id is null or username is null) loop perform app.out_item_match(v_id); end loop;
+  insert into public.out_events(action, data) values ('import', jsonb_build_object('new', n_new, 'upd', n_upd));
+  return jsonb_build_object('new', n_new, 'upd', n_upd);
+end $$;
+grant execute on function public.out_items_import(jsonb) to authenticated;
+
+-- Dòng đã ký trên sổ cũ → phiếu "Đã ký" của sale, hết tồn. Gọi theo từng nhóm nhỏ.
+create or replace function public.out_legacy_import(p_legacy jsonb) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare g jsonb; x jsonb; v_inv uuid; t public.out_items; k int; n int := 0;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for g in select * from jsonb_array_elements(coalesce(p_legacy, '[]')) loop
+    if g->>'status' <> 'da_ky' then continue; end if;
+    if exists(select 1 from jsonb_array_elements(g->'lines') e(v) join public.out_items oi on oi.ma_hang = e.v->>'ma_hang' and oi.part = coalesce((e.v->>'part')::int, 1)
+              join public.out_invoice_lines l on l.item_id = oi.id) then continue; end if;
+    select * into t from public.out_items where ma_hang = g->'lines'->0->>'ma_hang' and part = coalesce((g->'lines'->0->>'part')::int, 1);
+    if t.id is null then continue; end if;
+    insert into public.out_invoices(sale_id, customer_id, buyer_info, buyer_name, tax_code, address, email, status, so_hd, ngay_hd, legacy, note, status_at)
+    values (t.sale_id, t.customer_id, g->>'info', coalesce(nullif(btrim(g->>'buyer_name'), ''), left(split_part(coalesce(g->>'info', ''), E'\n', 1), 200)),
+      nullif(btrim(g->>'tax_code'), ''), nullif(btrim(g->>'address'), ''), nullif(btrim(g->>'email'), ''), 'da_ky', nullif(g->>'so_hd', ''), nullif(g->>'ngay','')::date, true, 'Nhập từ sổ Excel cũ', now())
+    returning id into v_inv;
+    if nullif(btrim(g->>'tax_code'), '') is not null and nullif(btrim(g->>'buyer_name'), '') is not null
+       and not exists(select 1 from public.out_buyers where btrim(tax_code) = btrim(g->>'tax_code')) then
+      insert into public.out_buyers(name, tax_code, address, email, note) values (btrim(g->>'buyer_name'), btrim(g->>'tax_code'), nullif(btrim(g->>'address'), ''), nullif(btrim(g->>'email'), ''), 'Từ sổ cũ');
+    end if;
+    k := 0;
+    for x in select * from jsonb_array_elements(g->'lines') loop
+      select * into t from public.out_items where ma_hang = x->>'ma_hang' and part = coalesce((x->>'part')::int, 1); k := k + 1;
+      -- đã ký = xuất hết phần của dòng đó
+      if t.id is not null and t.sl_nhap > 0 then
+        insert into public.out_invoice_lines(invoice_id, item_id, stt, sl, don_gia, vat) values (v_inv, t.id, k, t.sl_nhap, coalesce(nullif((x->>'gia')::numeric, 0), t.gia_khach, 0), coalesce((x->>'vat')::numeric, t.vat));
+      end if;
+    end loop;
+    if not exists(select 1 from public.out_invoice_lines where invoice_id = v_inv) then delete from public.out_invoices where id = v_inv; else n := n + 1; end if;
+  end loop;
+  return n;
+end $$;
+grant execute on function public.out_legacy_import(jsonb) to authenticated;
+
+-- File đơn hàng: lưu lại (mã đơn → khách, sale) rồi gắn cho các dòng
+drop function if exists public.out_orders_import(jsonb);
+create or replace function public.out_orders_import(p_rows jsonb) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare n int := 0; r jsonb; t record; v_md text;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for r in select * from jsonb_array_elements(p_rows) loop
+    v_md := case when r->>'md' ~* 'md' then app.norm_md(r->>'md') else nullif(btrim(r->>'md'), '') end; if v_md is null then continue; end if;
+    insert into public.out_orders(md, username, nvkd) values (v_md, nullif(btrim(r->>'username'), ''), nullif(btrim(r->>'nvkd'), ''))
+    on conflict (md) do update set username = coalesce(excluded.username, out_orders.username), nvkd = coalesce(excluded.nvkd, out_orders.nvkd), updated_at = now();
+    for t in select id from public.out_items where md = v_md and (sale_id is null or username is null or customer_id is null) loop
+      perform app.out_item_match(t.id); n := n + 1;
+    end loop;
+  end loop;
+  return n;
+end $$;
+grant execute on function public.out_orders_import(jsonb) to authenticated;
+
+-- Gắn lại toàn bộ dòng còn thiếu (sau khi ghép tên sale, thêm username khách…)
+create or replace function public.out_rematch() returns int
+language plpgsql security definer set search_path = public, app as $$
+declare t record; n int := 0;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for t in select id, nvkd from public.out_items where (sale_id is null or customer_id is null or gia_khach is null) and coalesce(match_src, '') <> 'tay' loop
+    update public.out_items set sale_id = coalesce(sale_id, app.match_sale(t.nvkd)) where id = t.id;
+    perform app.out_item_match(t.id); n := n + 1;
+  end loop;
+  return n;
+end $$;
+grant execute on function public.out_rematch() to authenticated;
+
+-- Mã đơn sale gõ: "md 2943", "2943" → MD2943 nếu đơn đó có trong hệ thống; ID dạng số (Lanchi) giữ nguyên
+create or replace function app.out_md_norm(p text) returns text language sql stable security definer set search_path = public, app as $$
+  select case when coalesce(btrim(p), '') = '' then null
+              when p ~* 'md' then app.norm_md(p)
+              when btrim(p) ~ '^\d+$' and (exists(select 1 from public.out_orders where md = app.norm_md(p)) or exists(select 1 from public.out_items where md = app.norm_md(p))
+                                          or exists(select 1 from public.acc_lines where md = app.norm_md(p))) then app.norm_md(p)
+              else btrim(p) end
+$$;
+
+-- ---------- Sale tra mã đơn / nhận dòng ----------
+create or replace function public.out_md_lookup(p_md text) returns jsonb
+language plpgsql stable security definer set search_path = public, app as $$
+declare v_md text := app.out_md_norm(p_md); v_user text; v_gk numeric; v_kh text;
+begin
+  if v_md is null then return null; end if;
+  select coalesce((select username from public.out_items where md = v_md and username is not null limit 1), (select username from public.out_orders where md = v_md)) into v_user;
+  select coalesce((select nullif(gia_khach, 0) from public.acc_lines where md = v_md and not is_test order by updated_at desc limit 1),
+                  (select gia_khach from public.out_items where md = v_md and gia_khach is not null limit 1)) into v_gk;
+  if v_user is not null then select coalesce(company_name, contact_name) into v_kh from public.customers where deleted_at is null and lower(btrim(sys_username)) = lower(btrim(v_user)) limit 1; end if;
+  return jsonb_build_object('md', v_md, 'username', v_user, 'khach', v_kh, 'gia_khach', v_gk);
+end $$;
+grant execute on function public.out_md_lookup(text) to authenticated;
+
+-- Sale nhận dòng (và các dòng chưa có sale cùng mã đơn); kế toán gán cho sale
+drop function if exists public.out_item_claim(uuid, text, text, numeric);
+create or replace function public.out_item_claim(p_id uuid, p_md text, p_username text default null, p_gia numeric default null) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare t public.out_items; v_md text := app.out_md_norm(p_md); n int := 0; x record;
+begin
+  if not app.has_role('sale','tn_kd','tp_kd') and not app.is_acc() then raise exception 'Chỉ sale được nhận dòng'; end if;
+  select * into t from public.out_items where id = p_id for update; if t.id is null then raise exception 'Không tìm thấy dòng'; end if;
+  if t.sale_id is not null and not app.is_acc() then raise exception 'Dòng đã có sale — báo kế toán nếu nhầm'; end if;
+  if v_md is null then raise exception 'Nhập mã đơn (MD)'; end if;
+  for x in select id from public.out_items where id = p_id or (md = v_md and sale_id is null) loop
+    update public.out_items set md = v_md, sale_id = auth.uid(), username = coalesce(nullif(btrim(p_username), ''), username),
+      gia_khach = coalesce(nullif(p_gia, 0), gia_khach), match_src = 'tay', updated_at = now(), updated_by = auth.uid() where id = x.id;
+    perform app.out_item_match(x.id);
+    insert into public.out_events(item_id, action, data) values (x.id, 'item_claim', jsonb_build_object('md', v_md, 'username', p_username, 'gia', p_gia));
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+grant execute on function public.out_item_claim(uuid, text, text, numeric) to authenticated;
+
+-- ---------- HĐ vào ↔ xe ----------
+create or replace function public.out_hd_xe_set(p_rows jsonb) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare r jsonb; n int := 0;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for r in select * from jsonb_array_elements(p_rows) loop
+    if coalesce(btrim(r->>'so_hd'), '') = '' then continue; end if;
+    if coalesce(btrim(r->>'xe'), '') = '' then delete from public.out_hd_xe where so_hd = ltrim(btrim(r->>'so_hd'), '0');
+    else insert into public.out_hd_xe(so_hd, xe, tu_dong) values (ltrim(btrim(r->>'so_hd'), '0'), btrim(r->>'xe'), false)
+      on conflict (so_hd) do update set xe = excluded.xe, tu_dong = false, updated_at = now(), updated_by = auth.uid(); end if;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+grant execute on function public.out_hd_xe_set(jsonb) to authenticated;
+
+-- Tự gắn xe khi dòng HĐ XML ghép được vào dòng đối soát (kế toán đã sửa tay thì giữ)
+create or replace function app.trg_acc_invline_xe() returns trigger language plpgsql security definer set search_path = public, app as $$
+begin
+  if new.line_id is null then return null; end if;
+  insert into public.out_hd_xe(so_hd, xe, tu_dong)
+  select ltrim(i.so_hd, '0'), tr.name, true from public.acc_invoices i, public.acc_lines l join public.acc_trucks tr on tr.id = l.truck_id
+   where i.id = new.invoice_id and l.id = new.line_id and not tr.is_test
+  on conflict (so_hd) do nothing;
+  return null;
+end $$;
+drop trigger if exists acc_invline_xe on public.acc_invoice_lines;
+create trigger acc_invline_xe after insert or update of line_id on public.acc_invoice_lines for each row execute function app.trg_acc_invline_xe();
+insert into public.out_hd_xe(so_hd, xe, tu_dong)
+select distinct on (ltrim(i.so_hd, '0')) ltrim(i.so_hd, '0'), tr.name, true
+  from public.acc_invoice_lines il join public.acc_invoices i on i.id = il.invoice_id join public.acc_lines l on l.id = il.line_id join public.acc_trucks tr on tr.id = l.truck_id
+ where not tr.is_test order by ltrim(i.so_hd, '0'), tr.created_at
+on conflict (so_hd) do nothing;
+
+-- ---------- View nhanh (1 lần gộp, không gọi hàm từng dòng) ----------
+drop view if exists public.out_items_v;
+create view public.out_items_v with (security_invoker = true) as
+  select t.*, coalesce(u.sl, 0) as sl_xuat, t.sl_nhap - coalesce(u.sl, 0) as ton, u.phieu,
+    coalesce(c.company_name, c.contact_name) as khach, x.xe
+  from public.out_items t
+  left join (select l.item_id, sum(l.sl) sl, string_agg(i.code || ':' || i.status, ',' order by i.code) phieu
+               from public.out_invoice_lines l join public.out_invoices i on i.id = l.invoice_id where i.status <> 'huy' group by l.item_id) u on u.item_id = t.id
+  left join public.customers c on c.id = t.customer_id
+  left join public.out_hd_xe x on x.so_hd = ltrim(t.so_hd_vao, '0');
+grant select on public.out_items_v to authenticated;
+
+-- ---------- Dọn dữ liệu đã nạp ----------
+-- Phiếu sổ cũ: chỉ giữ phiếu Đã ký, dòng đã ký trừ hết tồn
+delete from public.out_invoices where legacy and status <> 'da_ky';
+update public.out_invoice_lines l set sl = oi.sl_nhap from public.out_items oi, public.out_invoices i
+ where oi.id = l.item_id and i.id = l.invoice_id and i.legacy and l.sl <> oi.sl_nhap;
+-- Giá xuất theo sổ cho dòng đã nạp
+update public.out_items set gia_so = nullif((legacy->>'dg_xuat')::numeric, 0) where gia_so is null and legacy ? 'dg_xuat';
+update public.out_items set gia_khach = coalesce(gia_khach, gia_so) where gia_khach is null and gia_so is not null;
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0025_v18.sql
+-- =====================================================================
+-- 0025 · Bản 18: tối ưu tốc độ + dung lượng
+--  · Danh sách Xuất HĐ đầu ra tải theo trang (lọc/tìm/đếm trên máy chủ), mặc định "còn tồn" / "chờ xuất nháp"
+--  · "Đã ký không sale" tách riêng, không tính vào "Chưa gắn sale"
+--  · Đổi tên xe (đối soát + cột Xe)
+--  · Sao lưu tự động giữ 3 bản gần nhất, không chép nhật ký hệ thống
+-- =====================================================================
+set search_path = public, app, extensions;
+
+-- ---------- Sao lưu gọn ----------
+create or replace function public.backup_create(p_note text default null) returns text
+language plpgsql security definer set search_path = public, app as $$
+declare s text := 'bk_' || to_char(clock_timestamp() at time zone 'Asia/Ho_Chi_Minh', 'YYYYMMDD_HH24MISS'); t record; old record;
+begin
+  if auth.uid() is not null and not app.is_admin() then raise exception 'Chỉ Admin được tạo bản sao lưu'; end if;
+  while exists(select 1 from pg_namespace where nspname = s) loop
+    perform pg_sleep(1); s := 'bk_' || to_char(clock_timestamp() at time zone 'Asia/Ho_Chi_Minh', 'YYYYMMDD_HH24MISS');
+  end loop;
+  execute format('create schema %I', s);
+  execute format('revoke all on schema %I from public, anon, authenticated', s);
+  for t in select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public' and c.relkind = 'r' and c.relname not in ('audit_logs', 'notifications') loop
+    execute format('create table %I.%I as table public.%I', s, t.relname, t.relname);
+  end loop;
+  execute format('comment on schema %I is %L', s, coalesce(p_note, 'Sao lưu') || ' · ' || to_char(now() at time zone 'Asia/Ho_Chi_Minh', 'HH24:MI DD/MM/YYYY'));
+  -- giữ 3 bản gần nhất (bản đầy đủ hằng ngày đã lưu trên Google Drive)
+  for old in select nspname from pg_namespace where nspname ~ '^bk_[0-9]{8}_[0-9]{6}$' order by nspname desc offset 3 loop
+    execute format('drop schema %I cascade', old.nspname);
+  end loop;
+  insert into public.audit_logs(action, table_name, diff) values ('BACKUP', s, jsonb_build_object('note', p_note));
+  return s;
+end $$;
+select public.backup_create('Trước khi cập nhật bản 18');
+
+-- Nhật ký hệ thống: giữ 180 ngày
+delete from public.audit_logs where at < now() - interval '180 days';
+
+-- ---------- Đổi tên xe ----------
+create or replace function public.acc_truck_rename(p_id uuid, p_name text) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare v_old text;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  if coalesce(btrim(p_name), '') = '' then raise exception 'Nhập tên xe'; end if;
+  select name into v_old from public.acc_trucks where id = p_id;
+  update public.acc_trucks set name = btrim(p_name), updated_at = now() where id = p_id;
+  update public.out_hd_xe set xe = btrim(p_name), updated_at = now() where xe = v_old;
+  insert into public.acc_events(truck_id, action, note) values (p_id, 'rename', coalesce(v_old, '') || ' → ' || btrim(p_name));
+end $$;
+grant execute on function public.acc_truck_rename(uuid, text) to authenticated;
+
+create or replace function public.out_xe_rename(p_old text, p_new text) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare n int;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  if coalesce(btrim(p_new), '') = '' then raise exception 'Nhập tên xe mới'; end if;
+  update public.out_hd_xe set xe = btrim(p_new), tu_dong = false, updated_at = now(), updated_by = auth.uid() where xe = p_old;
+  get diagnostics n = row_count;
+  update public.acc_trucks set name = btrim(p_new), updated_at = now() where name = p_old;
+  return n;
+end $$;
+grant execute on function public.out_xe_rename(text, text) to authenticated;
+
+-- ---------- Dòng sổ: trang + bộ lọc + thống kê (theo quyền người xem) ----------
+create index if not exists out_items_stt on public.out_items(stt_so desc nulls last);
+
+create or replace function public.out_items_page(p jsonb) returns jsonb
+language plpgsql stable security invoker set search_path = public, app as $$
+declare v_mode text := coalesce(p->>'mode', 'acc'); v_f text := nullif(p->>'f', ''); v_q text := nullif(btrim(p->>'q'), '');
+        v_hd text := nullif(p->>'hd', ''); v_xe text := nullif(p->>'xe', ''); v_sale text := nullif(p->>'sale', '');
+        v_off int := coalesce((p->>'offset')::int, 0); v_lim int := least(coalesce((p->>'limit')::int, 20), 500); r jsonb; n bigint;
+begin
+  with base as (
+    select * from public.out_items_v t
+     where (v_mode <> 'mine' or (t.sale_id is not null and app.in_tree(t.sale_id)))
+       and (v_mode <> 'free' or t.sale_id is null)
+       and (v_mode = 'acc' or t.ton > 0.0001)
+       and (v_f is null or (v_f = 'ton' and t.ton > 0.0001) or (v_f = 'het' and t.ton <= 0.0001)
+            or (v_f = 'nosale' and t.sale_id is null and t.ton > 0.0001) or (v_f = 'daky_nosale' and t.sale_id is null and t.ton <= 0.0001)
+            or (v_f = 'nomd' and t.md is null) or (v_f = 'nogia' and t.gia_khach is null and t.ton > 0.0001))
+       and (v_hd is null or t.so_hd_vao = v_hd) and (v_xe is null or coalesce(t.xe, '—') = v_xe)
+       and (v_sale is null or coalesce(t.sale_id::text, '—') = v_sale)
+       and (v_q is null or concat_ws(' ', t.ma_hang, t.ten, t.md, t.nvkd, t.username, t.khach, t.so_hd_vao, t.xe) ilike '%' || v_q || '%'))
+  select count(*), coalesce(jsonb_agg(to_jsonb(x) - 'legacy' || jsonb_build_object('legacy', x.legacy) order by x.stt_so desc nulls last, x.ma_hang, x.part)
+           filter (where x.rn > v_off and x.rn <= v_off + v_lim), '[]')
+    into n, r
+    from (select b.*, row_number() over (order by b.stt_so desc nulls last, b.ma_hang, b.part) rn from base b) x;
+  return jsonb_build_object('total', n, 'rows', r);
+end $$;
+grant execute on function public.out_items_page(jsonb) to authenticated;
+
+create or replace function public.out_items_stats(p_mode text) returns jsonb
+language sql stable security invoker set search_path = public, app as $$
+  select jsonb_build_object(
+    'all', count(*), 'ton', count(*) filter (where ton > 0.0001), 'het', count(*) filter (where ton <= 0.0001),
+    'nosale', count(*) filter (where sale_id is null and ton > 0.0001), 'daky_nosale', count(*) filter (where sale_id is null and ton <= 0.0001),
+    'nomd', count(*) filter (where md is null), 'nogia', count(*) filter (where gia_khach is null and ton > 0.0001),
+    'gia_tri', coalesce(sum(ton * coalesce(gia_khach, dg_nhap, 0)) filter (where ton > 0.0001), 0),
+    'hd', (select coalesce(jsonb_agg(distinct so_hd_vao), '[]') from public.out_items_v v where (p_mode <> 'mine' or (v.sale_id is not null and app.in_tree(v.sale_id))) and (p_mode <> 'free' or (v.sale_id is null and v.ton > 0.0001))),
+    'xe', (select coalesce(jsonb_agg(distinct coalesce(xe, '—')), '[]') from public.out_items_v v where (p_mode <> 'mine' or (v.sale_id is not null and app.in_tree(v.sale_id))) and (p_mode <> 'free' or (v.sale_id is null and v.ton > 0.0001))),
+    'sale', (select coalesce(jsonb_agg(distinct coalesce(sale_id::text, '—')), '[]') from public.out_items v where p_mode = 'acc'))
+  from public.out_items_v t
+  where (p_mode <> 'mine' or (t.sale_id is not null and app.in_tree(t.sale_id))) and (p_mode <> 'free' or t.sale_id is null)
+$$;
+grant execute on function public.out_items_stats(text) to authenticated;
+
+-- ---------- Phiếu: view có sẵn tổng tiền + trang ----------
+drop view if exists public.out_invoices_v;
+create view public.out_invoices_v with (security_invoker = true) as
+  select i.*, coalesce(a.n, 0) as so_dong, coalesce(a.tt, 0) as tien_hang, coalesce(a.thue, 0) as tien_thue, coalesce(a.duoi_gia, false) as duoi_gia, a.tim
+  from public.out_invoices i
+  left join (select l.invoice_id, count(*) n, sum(round(l.sl * l.don_gia)) tt, sum(round(round(l.sl * l.don_gia) * coalesce(l.vat, t.vat, 0))) thue,
+                    bool_or(t.dg_nhap is not null and l.don_gia < t.dg_nhap) duoi_gia, string_agg(t.ma_hang || ' ' || coalesce(t.md, ''), ' ') tim
+               from public.out_invoice_lines l join public.out_items t on t.id = l.item_id group by l.invoice_id) a on a.invoice_id = i.id;
+grant select on public.out_invoices_v to authenticated;
+
+create or replace function public.out_invoices_page(p jsonb) returns jsonb
+language plpgsql stable security invoker set search_path = public, app as $$
+declare v_st text := nullif(p->>'status', ''); v_q text := nullif(btrim(p->>'q'), ''); v_sale uuid := nullif(p->>'sale', '')::uuid;
+        v_off int := coalesce((p->>'offset')::int, 0); v_lim int := least(coalesce((p->>'limit')::int, 20), 500); r jsonb; n bigint; c jsonb;
+begin
+  select coalesce(jsonb_object_agg(status, k), '{}') into c from (select status, count(*) k from public.out_invoices_v where v_sale is null or sale_id = v_sale group by status) z;
+  with base as (select * from public.out_invoices_v v
+     where (v_st is null and v.status <> 'huy' or v.status = v_st) and (v_sale is null or v.sale_id = v_sale)
+       and (v_q is null or concat_ws(' ', v.code, v.buyer_name, v.tax_code, v.so_hd, v.buyer_info, v.tim) ilike '%' || v_q || '%'))
+  select count(*), coalesce(jsonb_agg(to_jsonb(x) - 'tim' order by x.status_at desc) filter (where x.rn > v_off and x.rn <= v_off + v_lim), '[]') into n, r
+    from (select b.*, row_number() over (order by b.status_at desc) rn from base b) x;
+  return jsonb_build_object('total', n, 'rows', r, 'counts', c);
+end $$;
+grant execute on function public.out_invoices_page(jsonb) to authenticated;
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0026_v19.sql
+-- =====================================================================
+-- 0026 · Bản 19: tăng tốc cho tài khoản sale / quản lý sale
+--  · app.in_tree: tính cây nhân sự 1 lần mỗi lượt gọi (trước đây tính lại cho TỪNG dòng → rất chậm với sale)
+--  · Trang Xuất HĐ đầu ra: hàm đọc riêng, gom 1 lần, lọc theo quyền ngay từ đầu
+--  · Lọc theo khách / chưa gắn khách / chưa gắn đơn / chưa có giá xuất; danh sách sale theo nhóm
+--  · Sổ cũ "Đã xuất nháp" → phiếu "Đã xuất nháp – chờ sale" của từng sale
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 19');
+
+-- ---------- Cây nhân sự: nhớ trong 1 lượt gọi ----------
+create or replace function app.in_tree(p_id uuid) returns boolean
+language plpgsql stable security definer set search_path = public, app as $$
+declare k text := coalesce(auth.uid()::text, '-'); c text := current_setting('nt.tree', true); t uuid[];
+begin
+  if p_id is null then return false; end if;
+  if c is not null and c <> '' and split_part(c, '|', 1) = k then t := split_part(c, '|', 2)::uuid[];
+  else t := app.my_tree(); perform set_config('nt.tree', k || '|' || t::text, true); end if;
+  return p_id = any(t);
+end $$;
+
+-- ---------- Dòng sổ (đọc nhanh, đúng quyền) ----------
+create index if not exists out_invoice_lines_item_inv on public.out_invoice_lines(item_id, invoice_id);
+
+create or replace function app.out_items_scope(p_mode text) returns setof public.out_items
+language plpgsql stable security definer set search_path = public, app as $$
+declare v_acc boolean := app.is_acc(); v_tree uuid[] := app.my_tree(); v_sale boolean := app.has_role('sale','tn_kd','tp_kd');
+begin
+  if p_mode = 'acc' then
+    if not v_acc then return; end if;
+    return query select * from public.out_items;
+  elsif p_mode = 'free' then
+    if not (v_acc or v_sale) then return; end if;
+    return query select * from public.out_items where sale_id is null;
+  else
+    return query select * from public.out_items where sale_id = any(v_tree);
+  end if;
+end $$;
+
+drop function if exists public.out_items_page(jsonb);
+create or replace function public.out_items_page(p jsonb) returns jsonb
+language plpgsql stable security definer set search_path = public, app as $$
+declare v_mode text := coalesce(p->>'mode', 'acc'); v_f text := nullif(p->>'f', ''); v_q text := nullif(btrim(p->>'q'), '');
+        v_hd text := nullif(p->>'hd', ''); v_xe text := nullif(p->>'xe', ''); v_sale text := nullif(p->>'sale', ''); v_kh text := nullif(p->>'kh', '');
+        v_off int := coalesce((p->>'offset')::int, 0); v_lim int := least(coalesce((p->>'limit')::int, 20), 500); r jsonb; n bigint;
+begin
+  with s as (select * from app.out_items_scope(v_mode)),
+  a as (select l.item_id, sum(l.sl) sl, string_agg(i.code || ':' || i.status, ',' order by i.code) phieu
+          from public.out_invoice_lines l join public.out_invoices i on i.id = l.invoice_id
+         where i.status <> 'huy' and l.item_id in (select id from s) group by l.item_id),
+  b as (select s.*, coalesce(a.sl, 0) sl_xuat, s.sl_nhap - coalesce(a.sl, 0) ton, a.phieu, coalesce(c.company_name, c.contact_name) khach, x.xe
+          from s left join a on a.item_id = s.id left join public.customers c on c.id = s.customer_id left join public.out_hd_xe x on x.so_hd = ltrim(s.so_hd_vao, '0')),
+  f as (select * from b t
+     where (v_mode = 'acc' or t.ton > 0.0001)
+       and (v_f is null or (v_f = 'ton' and t.ton > 0.0001) or (v_f = 'het' and t.ton <= 0.0001)
+            or (v_f = 'nosale' and t.sale_id is null and t.ton > 0.0001) or (v_f = 'daky_nosale' and t.sale_id is null and t.ton <= 0.0001)
+            or (v_f = 'nomd' and t.md is null) or (v_f = 'nogia' and t.gia_khach is null and t.ton > 0.0001)
+            or (v_f = 'nokhach' and t.customer_id is null and t.username is null))
+       and (v_hd is null or t.so_hd_vao = v_hd) and (v_xe is null or coalesce(t.xe, '—') = v_xe)
+       and (v_sale is null or coalesce(t.sale_id::text, '—') = v_sale)
+       and (v_kh is null or coalesce(t.customer_id::text, t.username, '—') = v_kh)
+       and (v_q is null or concat_ws(' ', t.ma_hang, t.ten, t.md, t.nvkd, t.username, t.khach, t.so_hd_vao, t.xe) ilike '%' || v_q || '%')),
+  o as (select f.*, row_number() over (order by f.stt_so desc nulls last, f.ma_hang, f.part) rn, count(*) over () tot from f)
+  select max(tot), coalesce(jsonb_agg(to_jsonb(o) - 'rn' - 'tot' order by rn) filter (where rn > v_off and rn <= v_off + v_lim), '[]') into n, r from o;
+  return jsonb_build_object('total', coalesce(n, 0), 'rows', r);
+end $$;
+grant execute on function public.out_items_page(jsonb) to authenticated;
+
+drop function if exists public.out_items_stats(text);
+create or replace function public.out_items_stats(p_mode text) returns jsonb
+language plpgsql stable security definer set search_path = public, app as $$
+declare r jsonb;
+begin
+  with s as (select * from app.out_items_scope(p_mode)),
+  a as (select l.item_id, sum(l.sl) sl from public.out_invoice_lines l join public.out_invoices i on i.id = l.invoice_id
+         where i.status <> 'huy' and l.item_id in (select id from s) group by l.item_id),
+  b as (select s.id, s.sale_id, s.md, s.customer_id, s.username, s.gia_khach, s.dg_nhap, s.so_hd_vao, s.sl_nhap - coalesce(a.sl, 0) ton,
+               x.xe, coalesce(c.company_name, c.contact_name) khach
+          from s left join a on a.item_id = s.id left join public.out_hd_xe x on x.so_hd = ltrim(s.so_hd_vao, '0') left join public.customers c on c.id = s.customer_id),
+  v as (select * from b where p_mode = 'acc' or ton > 0.0001)
+  select jsonb_build_object(
+    'all', count(*), 'ton', count(*) filter (where ton > 0.0001), 'het', count(*) filter (where ton <= 0.0001),
+    'nosale', count(*) filter (where sale_id is null and ton > 0.0001), 'daky_nosale', count(*) filter (where sale_id is null and ton <= 0.0001),
+    'nomd', count(*) filter (where md is null), 'nogia', count(*) filter (where gia_khach is null and ton > 0.0001),
+    'nokhach', count(*) filter (where customer_id is null and username is null),
+    'gia_tri', coalesce(sum(ton * coalesce(gia_khach, dg_nhap, 0)) filter (where ton > 0.0001), 0),
+    'hd', coalesce((select jsonb_agg(distinct so_hd_vao) from v where so_hd_vao is not null), '[]'),
+    'xe', coalesce((select jsonb_agg(distinct coalesce(xe, '—')) from v), '[]'),
+    'kh', coalesce((select jsonb_agg(jsonb_build_array(k, t) order by t) from (select distinct coalesce(customer_id::text, username) k, coalesce(khach, username) t from v where coalesce(customer_id::text, username) is not null) z), '[]'),
+    'sale', coalesce((select jsonb_agg(distinct coalesce(sale_id::text, '—')) from v), '[]'))
+  into r from v;
+  return r;
+end $$;
+grant execute on function public.out_items_stats(text) to authenticated;
+
+-- Danh sách sale được xem: kế toán/admin = mọi sale; quản lý = cả nhóm; sale = chính mình
+create or replace function public.out_sale_opts() returns table(id uuid, full_name text)
+language sql stable security definer set search_path = public, app as $$
+  select p.id, p.full_name from public.profiles p
+   where p.status = 'active' and p.roles && array['sale','tn_kd','tp_kd']
+     and (app.is_acc() or p.id = any(app.my_tree()))
+   order by p.full_name
+$$;
+grant execute on function public.out_sale_opts() to authenticated;
+
+-- ---------- Phiếu (đọc nhanh, đúng quyền) ----------
+drop function if exists public.out_invoices_page(jsonb);
+create or replace function public.out_invoices_page(p jsonb) returns jsonb
+language plpgsql stable security definer set search_path = public, app as $$
+declare v_st text := nullif(p->>'status', ''); v_q text := nullif(btrim(p->>'q'), ''); v_sale uuid := nullif(p->>'sale', '')::uuid;
+        v_off int := coalesce((p->>'offset')::int, 0); v_lim int := least(coalesce((p->>'limit')::int, 20), 500); r jsonb; n bigint; c jsonb;
+        v_acc boolean := app.is_acc(); v_tree uuid[] := app.my_tree();
+begin
+  select coalesce(jsonb_object_agg(status, k), '{}') into c
+    from (select status, count(*) k from public.out_invoices i where (v_acc or i.sale_id = any(v_tree)) and (v_sale is null or i.sale_id = v_sale) group by status) z;
+  if v_lim = 0 then return jsonb_build_object('total', 0, 'rows', '[]'::jsonb, 'counts', c); end if;
+  with base as materialized (select * from public.out_invoices v where (v_acc or v.sale_id = any(v_tree)) and (v_sale is null or v.sale_id = v_sale)
+                               and (v_st is null and v.status <> 'huy' or v.status = v_st)),
+  a as (select l.invoice_id, count(*) n, sum(round(l.sl * l.don_gia)) tt, sum(round(round(l.sl * l.don_gia) * coalesce(l.vat, t.vat, 0))) thue,
+               bool_or(t.dg_nhap is not null and l.don_gia < t.dg_nhap) duoi_gia, string_agg(t.ma_hang || ' ' || coalesce(t.md, ''), ' ') tim
+          from public.out_invoice_lines l join public.out_items t on t.id = l.item_id where l.invoice_id in (select id from base) group by l.invoice_id),
+  f as (select b.*, coalesce(a.n, 0) so_dong, coalesce(a.tt, 0) tien_hang, coalesce(a.thue, 0) tien_thue, coalesce(a.duoi_gia, false) duoi_gia
+          from base b left join a on a.invoice_id = b.id
+         where v_q is null or concat_ws(' ', b.code, b.buyer_name, b.tax_code, b.so_hd, b.buyer_info, a.tim) ilike '%' || v_q || '%'),
+  o as (select f.*, row_number() over (order by f.status_at desc) rn, count(*) over () tot from f)
+  select max(tot), coalesce(jsonb_agg(to_jsonb(o) - 'rn' - 'tot' order by rn) filter (where rn > v_off and rn <= v_off + v_lim), '[]') into n, r from o;
+  return jsonb_build_object('total', coalesce(n, 0), 'rows', r, 'counts', c);
+end $$;
+grant execute on function public.out_invoices_page(jsonb) to authenticated;
+
+-- ---------- Sổ cũ: dòng đã xuất nháp → phiếu "Đã xuất nháp – chờ sale" ----------
+create or replace function public.out_legacy_import(p_legacy jsonb) returns int
+language plpgsql security definer set search_path = public, app as $$
+declare g jsonb; x jsonb; v_inv uuid; t public.out_items; k int; n int := 0; v_st text;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for g in select * from jsonb_array_elements(coalesce(p_legacy, '[]')) loop
+    v_st := g->>'status'; if v_st not in ('da_ky','da_nhap','xac_nhan_ky') then continue; end if;
+    if exists(select 1 from jsonb_array_elements(g->'lines') e(v) join public.out_items oi on oi.ma_hang = e.v->>'ma_hang' and oi.part = coalesce((e.v->>'part')::int, 1)
+              join public.out_invoice_lines l on l.item_id = oi.id) then continue; end if;
+    select * into t from public.out_items where ma_hang = g->'lines'->0->>'ma_hang' and part = coalesce((g->'lines'->0->>'part')::int, 1);
+    if t.id is null then continue; end if;
+    insert into public.out_invoices(sale_id, customer_id, buyer_info, buyer_name, tax_code, address, email, status, so_hd, ngay_hd, legacy, note, status_at)
+    values (t.sale_id, t.customer_id, g->>'info', coalesce(nullif(btrim(g->>'buyer_name'), ''), left(split_part(coalesce(g->>'info', ''), E'\n', 1), 200)),
+      nullif(btrim(g->>'tax_code'), ''), nullif(btrim(g->>'address'), ''), nullif(btrim(g->>'email'), ''), v_st,
+      case when v_st = 'da_ky' then nullif(g->>'so_hd', '') end, case when v_st = 'da_ky' then nullif(g->>'ngay','')::date end, true,
+      case when v_st = 'da_ky' then 'Nhập từ sổ Excel cũ' else 'Sổ cũ: đã xuất nháp — sale kiểm tra, xác nhận ký' end, now())
+    returning id into v_inv;
+    if nullif(btrim(g->>'tax_code'), '') is not null and nullif(btrim(g->>'buyer_name'), '') is not null
+       and not exists(select 1 from public.out_buyers where btrim(tax_code) = btrim(g->>'tax_code')) then
+      insert into public.out_buyers(name, tax_code, address, email, note) values (btrim(g->>'buyer_name'), btrim(g->>'tax_code'), nullif(btrim(g->>'address'), ''), nullif(btrim(g->>'email'), ''), 'Từ sổ cũ');
+    end if;
+    k := 0;
+    for x in select * from jsonb_array_elements(g->'lines') loop
+      select * into t from public.out_items where ma_hang = x->>'ma_hang' and part = coalesce((x->>'part')::int, 1); k := k + 1;
+      if t.id is not null and t.sl_nhap > 0 then
+        insert into public.out_invoice_lines(invoice_id, item_id, stt, sl, don_gia, vat) values (v_inv, t.id, k, t.sl_nhap, coalesce(nullif((x->>'gia')::numeric, 0), t.gia_khach, 0), coalesce((x->>'vat')::numeric, t.vat));
+      end if;
+    end loop;
+    if not exists(select 1 from public.out_invoice_lines where invoice_id = v_inv) then delete from public.out_invoices where id = v_inv; else n := n + 1; end if;
+  end loop;
+  return n;
+end $$;
+
+-- Chuyển dữ liệu đã nạp: dòng sổ cũ "đã xuất nháp / KD xác nhận ký" chưa có phiếu → tạo phiếu theo nhóm thông tin xuất HĐ
+do $$
+declare g record; v_inv uuid; k int; t record; v_name text;
+begin
+  for g in select legacy->>'status' st, coalesce(legacy->>'info', '') info, coalesce(legacy->>'so_hd_ra', '') sohd,
+                  array_agg(id order by stt_so, ma_hang, part) ids
+             from public.out_items oi
+            where legacy->>'status' in ('da_nhap', 'xac_nhan_ky') and not exists(select 1 from public.out_invoice_lines l where l.item_id = oi.id)
+            group by 1, 2, 3 loop
+    select ln into v_name from unnest(string_to_array(g.info, E'\n')) ln
+     where ln ~* '(CÔNG TY|CTY|HỘ KINH DOANH|HKD|DOANH NGHIỆP|CHI NHÁNH)' and ln !~* 'xuất giá' limit 1;
+    insert into public.out_invoices(sale_id, customer_id, buyer_info, buyer_name, tax_code, email, status, legacy, note, status_at)
+    select oi.sale_id, oi.customer_id, nullif(g.info, ''), coalesce(nullif(btrim(regexp_replace(regexp_replace(v_name, '^[^:]*:\s*', ''), '["“”]', '', 'g')), ''), left(split_part(g.info, E'\n', 1), 200)),
+           substring(g.info from '(?:MST|Mã số thuế|mã số thuế|Tax code)[^0-9]*([0-9]{12}|[0-9]{10}(?:-[0-9]{3})?)'),
+           substring(g.info from '([A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)'),
+           g.st, true, 'Sổ cũ: đã xuất nháp — sale kiểm tra, xác nhận ký', now()
+      from public.out_items oi where oi.id = g.ids[1] returning id into v_inv;
+    k := 0;
+    for t in select * from public.out_items where id = any(g.ids) order by stt_so, ma_hang, part loop
+      k := k + 1;
+      if t.sl_nhap > 0 then
+        insert into public.out_invoice_lines(invoice_id, item_id, stt, sl, don_gia, vat)
+        values (v_inv, t.id, k, t.sl_nhap, coalesce(nullif((t.legacy->>'dg_xuat')::numeric, 0), t.gia_khach, 0), t.vat);
+      end if;
+    end loop;
+    if not exists(select 1 from public.out_invoice_lines where invoice_id = v_inv) then delete from public.out_invoices where id = v_inv; end if;
+  end loop;
+end $$;
+
+reset search_path;
+
+
+-- >>>>> supabase/migrations/0027_v20.sql
+-- =====================================================================
+-- 0027 · Bản 20: File PDF hóa đơn (nháp / đã ký) lưu trên Google Drive
+--  · Kế toán / anh tải PDF hàng loạt → ghép phiếu xuất HĐ theo MST + tổng tiền (+ số HĐ khi đã ký)
+--  · File nằm kín trên Drive (không chia sẻ). Supabase chỉ giữ mã file.
+--  · Xem file bằng VÉ dùng 1 lần, hết hạn nhanh, gắn đúng file + người xin; Apps Script hỏi lại Supabase rồi mới trả file
+--  · Tải file lên Drive cũng bằng vé → bỏ khóa tải lên cố định (upload_key) trong Cấu hình
+--  · Nháp v1, v2…: bản mới → sale được báo, xác nhận "khách OK" của bản cũ tự hủy; bản đã ký → phiếu "Đã ký", điền số HĐ
+-- =====================================================================
+set search_path = public, app, extensions;
+select public.backup_create('Trước khi cập nhật bản 20');
+
+-- ---------- Bảng file ----------
+create table if not exists public.out_invoice_files(
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references public.out_invoices(id) on delete cascade,
+  kind text not null check (kind in ('nhap','ky')),
+  version int not null,
+  drive_id text not null,
+  file_name text, size_kb int, tong numeric, mst text, so_hd text, ky_hieu text, ngay date,
+  note text,
+  uploaded_by uuid default auth.uid() references public.profiles(id), uploaded_at timestamptz not null default now(),
+  sent_at timestamptz, sent_by uuid references public.profiles(id),
+  unique (invoice_id, kind, version)
+);
+create index if not exists out_invoice_files_inv on public.out_invoice_files(invoice_id, kind, version desc);
+alter table public.out_invoice_files enable row level security;
+-- Không cấp quyền đọc bảng trực tiếp: mọi truy cập qua hàm bên dưới (mã file Drive không lộ ra trình duyệt)
+revoke all on public.out_invoice_files from anon, authenticated;
+
+-- ---------- Vé truy cập Drive ----------
+create table if not exists app.drive_tickets(
+  token_hash text primary key,
+  kind text not null check (kind in ('view','upload')),
+  file_id uuid, folder text, user_id uuid,
+  created_at timestamptz not null default now(), expires_at timestamptz not null, used_at timestamptz
+);
+create index if not exists drive_tickets_exp on app.drive_tickets(expires_at);
+revoke all on app.drive_tickets from anon, authenticated;
+
+create or replace function app.drive_new_ticket(p_kind text, p_file uuid, p_folder text, p_ttl interval) returns text
+language plpgsql security definer set search_path = public, app, extensions as $$
+declare v_tok text := encode(gen_random_bytes(24), 'hex');
+begin
+  delete from app.drive_tickets where expires_at < now() - interval '1 day';
+  insert into app.drive_tickets(token_hash, kind, file_id, folder, user_id, expires_at)
+  values (encode(digest(v_tok, 'sha256'), 'hex'), p_kind, p_file, p_folder, auth.uid(), now() + p_ttl);
+  return v_tok;
+end $$;
+
+-- Tổng tiền thanh toán của phiếu (tiền hàng + thuế, làm tròn từng dòng như mẫu MISA)
+create or replace function app.out_inv_total(p_id uuid) returns numeric language sql stable security definer set search_path = public as $$
+  select coalesce(sum(round(l.sl * l.don_gia) + round(round(l.sl * l.don_gia) * coalesce(l.vat, t.vat, 0))), 0)
+    from public.out_invoice_lines l join public.out_items t on t.id = l.item_id where l.invoice_id = p_id
+$$;
+
+-- Vé tải lên (Kế toán / Admin / BGĐ). 1 vé cho 1 file, theo đúng thư mục xin
+create or replace function public.drive_upload_tickets(p_folders text[]) returns text[]
+language plpgsql security definer set search_path = public, app as $$
+declare f text; r text[] := '{}';
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán / Admin được lưu file lên Drive'; end if;
+  if coalesce(array_length(p_folders, 1), 0) = 0 or array_length(p_folders, 1) > 300 then raise exception 'Số file không hợp lệ'; end if;
+  foreach f in array p_folders loop
+    f := regexp_replace(coalesce(f, 'Khac'), '\.\.+', '', 'g');
+    r := r || app.drive_new_ticket('upload', null, left(f, 200), interval '30 minutes');
+  end loop;
+  return r;
+end $$;
+grant execute on function public.drive_upload_tickets(text[]) to authenticated;
+
+-- Vé xem 1 file: chỉ người có quyền với phiếu (sale của phiếu, cấp trên theo cây nhân sự, Kế toán / Admin)
+create or replace function public.out_file_ticket(p_file uuid) returns text
+language plpgsql security definer set search_path = public, app as $$
+declare v_sale uuid; v_ok boolean;
+begin
+  select i.sale_id, true into v_sale, v_ok from public.out_invoice_files f join public.out_invoices i on i.id = f.invoice_id where f.id = p_file;
+  if v_ok is null or not (app.is_acc() or app.in_tree(v_sale)) then raise exception 'Không có quyền xem file này'; end if;
+  return app.drive_new_ticket('view', p_file, null, interval '2 minutes');
+end $$;
+grant execute on function public.out_file_ticket(uuid) to authenticated;
+
+-- Apps Script đổi vé (kèm mã bí mật của Apps Script). Vé dùng 1 lần.
+create or replace function public.drive_redeem(p_token text, p_ticket text) returns jsonb
+language plpgsql security definer set search_path = public, app, extensions as $$
+declare t app.drive_tickets; v_drive text;
+begin
+  perform app.backup_check(p_token);
+  update app.drive_tickets set used_at = now()
+   where token_hash = encode(digest(coalesce(p_ticket, ''), 'sha256'), 'hex') and used_at is null and expires_at > now()
+  returning * into t;
+  if t.token_hash is null then raise exception 'Vé không hợp lệ hoặc đã hết hạn'; end if;
+  if t.kind = 'upload' then return jsonb_build_object('kind', 'upload', 'folder', t.folder); end if;
+  select drive_id into v_drive from public.out_invoice_files where id = t.file_id;
+  if v_drive is null then raise exception 'File không còn'; end if;
+  insert into public.audit_logs(actor_id, action, table_name, record_id) values (t.user_id, 'VIEW_HD_FILE', 'out_invoice_files', t.file_id::text);
+  return jsonb_build_object('kind', 'view', 'drive_id', v_drive);
+end $$;
+revoke all on function public.drive_redeem(text, text) from public;
+grant execute on function public.drive_redeem(text, text) to anon, authenticated;
+
+-- ---------- Khóa tải lên cố định: bỏ ----------
+update public.settings set value = value - 'upload_key' where key = 'drive';
+create or replace function public.set_drive(p_value jsonb) returns void
+language plpgsql security definer set search_path = public, app as $$
+begin
+  if not app.is_admin() then raise exception 'Chỉ Admin/BGĐ'; end if;
+  insert into public.settings(key, value, updated_by) values ('drive', coalesce(p_value, '{}') - 'upload_key', auth.uid())
+    on conflict (key) do update set value = (public.settings.value || excluded.value) - 'upload_key', updated_at = now(), updated_by = auth.uid();
+end $$;
+grant execute on function public.set_drive(jsonb) to authenticated;
+
+-- ---------- Ghép file với phiếu ----------
+-- p_rows: [{i, kind:'nhap'|'ky', mst, tong, so_hd, ky_hieu, name}]
+create or replace function public.out_file_match(p_rows jsonb) returns jsonb
+language plpgsql stable security definer set search_path = public, app as $$
+declare r jsonb; out jsonb := '[]'; v_mst text; v_tong numeric; v_kind text; v_so text; cands jsonb; v_auto uuid; v_dup boolean; n_ok int;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán'; end if;
+  for r in select * from jsonb_array_elements(coalesce(p_rows, '[]')) loop
+    v_kind := r->>'kind'; v_mst := regexp_replace(coalesce(r->>'mst', ''), '\D', '', 'g'); v_tong := nullif(r->>'tong', '')::numeric;
+    v_so := nullif(ltrim(regexp_replace(coalesce(r->>'so_hd', ''), '\D', '', 'g'), '0'), '');
+    with inv as (
+      select v.id, v.code, v.status, coalesce(v.buyer_name, left(v.buyer_info, 120)) buyer_name, v.sale_id, v.so_hd,
+             app.out_inv_total(v.id) tong,
+             (select f.tong from public.out_invoice_files f where f.invoice_id = v.id and f.kind = 'nhap' order by f.version desc limit 1) nhap_tong,
+             (select f.file_name from public.out_invoice_files f where f.invoice_id = v.id and f.kind = 'nhap' order by f.version desc limit 1) nhap_name,
+             (select max(f.version) from public.out_invoice_files f where f.invoice_id = v.id and f.kind = 'nhap') nhap_v,
+             (select f.so_hd from public.out_invoice_files f where f.invoice_id = v.id and f.kind = 'ky' order by f.version desc limit 1) ky_so
+        from public.out_invoices v
+       where v.status <> 'huy' and (
+             (v_mst <> '' and (regexp_replace(coalesce(v.tax_code, ''), '\D', '', 'g') = v_mst or v.buyer_info like '%' || v_mst || '%'))
+          or (v_kind = 'ky' and v_so is not null and ltrim(v.so_hd, '0') = v_so))
+    ), sc as (
+      select inv.*,
+        case when v_kind = 'nhap' then inv.status in ('cho_nhap','da_nhap','xac_nhan_ky')
+             else inv.status in ('da_nhap','xac_nhan_ky') or (inv.status = 'da_ky' and (inv.so_hd is null or ltrim(inv.so_hd, '0') = v_so)) end ok,
+        coalesce(v_tong is not null and (abs(inv.tong - v_tong) <= 100 or inv.nhap_tong = v_tong), false) tien_khop,
+        coalesce(v_kind = 'ky' and v_so is not null and ltrim(coalesce(inv.so_hd, inv.ky_so, ''), '0') = v_so, false) so_khop
+      from inv
+    )
+    select coalesce(jsonb_agg(jsonb_build_object('id', id, 'code', code, 'status', status, 'buyer_name', buyer_name, 'sale_id', sale_id, 'tong', tong,
+             'nhap_tong', nhap_tong, 'nhap_v', nhap_v, 'ky_so', ky_so, 'so_hd', so_hd, 'ok', ok, 'khop', so_khop or tien_khop,
+             'dup', case when v_kind = 'nhap' then nhap_name is not null and nhap_name = r->>'name' else ky_so is not null and ltrim(ky_so, '0') = v_so end)
+             order by so_khop desc, (ok and tien_khop) desc, ok desc, abs(tong - coalesce(v_tong, tong))), '[]'),
+           count(*) filter (where ok and (so_khop or tien_khop))
+      into cands, n_ok from sc;
+    v_auto := null; v_dup := false;
+    if n_ok = 1 then
+      select (e->>'id')::uuid, (e->>'dup')::boolean into v_auto, v_dup from jsonb_array_elements(cands) e where (e->>'ok')::boolean and (e->>'khop')::boolean limit 1;
+    elsif n_ok > 1 and v_kind = 'ky' then  -- nhiều phiếu cùng MST + tiền: ưu tiên phiếu đúng số HĐ
+      select (e->>'id')::uuid, (e->>'dup')::boolean into v_auto, v_dup from jsonb_array_elements(cands) e
+       where (e->>'ok')::boolean and v_so is not null and ltrim(coalesce(e->>'so_hd', e->>'ky_so', ''), '0') = v_so limit 1;
+    end if;
+    out := out || jsonb_build_object('i', r->'i', 'auto', v_auto, 'dup', v_dup, 'n_khop', n_ok, 'cands', (select coalesce(jsonb_agg(x), '[]') from (select x from jsonb_array_elements(cands) x limit 8) z));
+  end loop;
+  return out;
+end $$;
+grant execute on function public.out_file_match(jsonb) to authenticated;
+
+-- Gắn 1 file đã lưu Drive vào phiếu
+create or replace function public.out_file_attach(p_invoice uuid, p_kind text, p_drive_id text, p_name text, p_size_kb int, p_tong numeric,
+  p_mst text, p_so_hd text default null, p_ky_hieu text default null, p_ngay date default null) returns jsonb
+language plpgsql security definer set search_path = public, app as $$
+declare v public.out_invoices; v_ver int; v_note text; v_so text := nullif(btrim(p_so_hd), ''); v_new text;
+begin
+  if not app.is_acc() then raise exception 'Chỉ Kế toán / Admin'; end if;
+  if p_kind not in ('nhap','ky') or coalesce(btrim(p_drive_id), '') = '' then raise exception 'Thiếu thông tin file'; end if;
+  select * into v from public.out_invoices where id = p_invoice for update;
+  if v.id is null then raise exception 'Không có phiếu'; end if;
+  if p_kind = 'nhap' and v.status not in ('cho_nhap','da_nhap','xac_nhan_ky') then
+    raise exception 'Phiếu % đang "%" — không gắn bản nháp được', v.code, v.status; end if;
+  if p_kind = 'ky' then
+    if v_so is null then raise exception 'Thiếu số HĐ đã ký cho phiếu %', v.code; end if;
+    if v.status not in ('da_nhap','xac_nhan_ky','da_ky') then raise exception 'Phiếu % đang "%" — không gắn bản đã ký được', v.code, v.status; end if;
+    if v.status = 'da_ky' and v.so_hd is not null and ltrim(v.so_hd, '0') <> ltrim(v_so, '0') then
+      raise exception 'Phiếu % đã ký số HĐ %, file là số %', v.code, v.so_hd, v_so; end if;
+  end if;
+  select coalesce(max(version), 0) + 1 into v_ver from public.out_invoice_files where invoice_id = v.id and kind = p_kind;
+  insert into public.out_invoice_files(invoice_id, kind, version, drive_id, file_name, size_kb, tong, mst, so_hd, ky_hieu, ngay)
+  values (v.id, p_kind, v_ver, btrim(p_drive_id), left(p_name, 200), p_size_kb, p_tong, nullif(btrim(p_mst), ''), v_so, nullif(btrim(p_ky_hieu), ''), p_ngay);
+
+  if p_kind = 'nhap' then
+    v_new := case when v.status = 'cho_nhap' then 'da_nhap' when v.status = 'xac_nhan_ky' then 'da_nhap' else v.status end;
+    v_note := 'Tải HĐ nháp v' || v_ver || case when v.status = 'xac_nhan_ky' then ' — bản mới, xác nhận ký của bản cũ đã hủy' else '' end;
+    update public.out_invoices set status = v_new, sua_sau_nhap = false, updated_at = now(),
+      status_at = case when v_new <> v.status then now() else status_at end, status_by = case when v_new <> v.status then auth.uid() else status_by end
+     where id = v.id;
+    insert into public.out_events(invoice_id, action, note, data) values (v.id, 'file', v_note, jsonb_build_object('kind', 'nhap', 'version', v_ver, 'from', v.status, 'to', v_new));
+    perform app.notify(v.sale_id, 'acc',
+      case when v_ver = 1 then 'Đã có HĐ nháp — xem, gửi khách: ' else 'HĐ nháp mới v' || v_ver || ' — gửi lại khách: ' end || v.code,
+      coalesce(v.buyer_name, '') || case when v.status = 'xac_nhan_ky' then ' — khách cần xác nhận lại bản mới' else '' end, '#/out?inv=' || v.id);
+  else
+    update public.out_invoices set status = 'da_ky', so_hd = coalesce(so_hd, v_so), ngay_hd = coalesce(ngay_hd, p_ngay, current_date), updated_at = now(),
+      status_at = case when v.status <> 'da_ky' then now() else status_at end, status_by = case when v.status <> 'da_ky' then auth.uid() else status_by end
+     where id = v.id;
+    insert into public.out_events(invoice_id, action, note, data) values (v.id, 'file', 'Tải HĐ đã ký số ' || v_so || case when v_ver > 1 then ' (bản ' || v_ver || ')' else '' end,
+      jsonb_build_object('kind', 'ky', 'version', v_ver, 'from', v.status, 'to', 'da_ky', 'so_hd', v_so));
+    perform app.notify(v.sale_id, 'acc', 'HĐ đã ký số ' || v_so || ' — in làm hợp đồng, báo khách: ' || v.code, coalesce(v.buyer_name, ''), '#/out?inv=' || v.id);
+  end if;
+  return jsonb_build_object('version', v_ver, 'status', case when p_kind = 'ky' then 'da_ky' else v_new end);
+end $$;
+grant execute on function public.out_file_attach(uuid, text, text, text, int, numeric, text, text, text, date) to authenticated;
+
+-- Danh sách file của phiếu (không trả mã Drive)
+create or replace function public.out_files_list(p_invoice uuid) returns jsonb
+language plpgsql stable security definer set search_path = public, app as $$
+declare v_sale uuid; v_ok boolean;
+begin
+  select sale_id, true into v_sale, v_ok from public.out_invoices where id = p_invoice;
+  if v_ok is null or not (app.is_acc() or app.in_tree(v_sale)) then raise exception 'Không có quyền'; end if;
+  return (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'kind', f.kind, 'version', f.version, 'file_name', f.file_name, 'size_kb', f.size_kb, 'tong', f.tong,
+      'so_hd', f.so_hd, 'ky_hieu', f.ky_hieu, 'ngay', f.ngay, 'uploaded_at', f.uploaded_at, 'uploaded_by', f.uploaded_by, 'sent_at', f.sent_at, 'sent_by', f.sent_by,
+      'latest', f.version = (select max(x.version) from public.out_invoice_files x where x.invoice_id = f.invoice_id and x.kind = f.kind))
+      order by (f.kind = 'ky') desc, f.version desc), '[]')
+    from public.out_invoice_files f where f.invoice_id = p_invoice);
+end $$;
+grant execute on function public.out_files_list(uuid) to authenticated;
+
+-- Sale đánh dấu đã gửi khách bản nháp mới nhất
+create or replace function public.out_file_sent(p_file uuid) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare f public.out_invoice_files; v public.out_invoices;
+begin
+  select * into f from public.out_invoice_files where id = p_file;
+  select * into v from public.out_invoices where id = f.invoice_id;
+  if v.id is null or not (app.is_acc() or app.in_tree(v.sale_id)) then raise exception 'Không có quyền'; end if;
+  if f.sent_at is not null then return; end if;
+  update public.out_invoice_files set sent_at = now(), sent_by = auth.uid() where id = p_file;
+  insert into public.out_events(invoice_id, action, note, data) values (v.id, 'sent', 'Đã gửi khách ' || case f.kind when 'ky' then 'HĐ đã ký' else 'bản nháp v' || f.version end, jsonb_build_object('kind', f.kind, 'version', f.version));
+end $$;
+grant execute on function public.out_file_sent(uuid) to authenticated;
+
+-- ---------- Danh sách phiếu: thêm trạng thái file ----------
+create or replace function public.out_invoices_page(p jsonb) returns jsonb
+language plpgsql stable security definer set search_path = public, app as $$
+declare v_st text := nullif(p->>'status', ''); v_q text := nullif(btrim(p->>'q'), ''); v_sale uuid := nullif(p->>'sale', '')::uuid;
+        v_off int := coalesce((p->>'offset')::int, 0); v_lim int := least(coalesce((p->>'limit')::int, 20), 500); r jsonb; n bigint; c jsonb; v_cg int;
+        v_acc boolean := app.is_acc(); v_tree uuid[] := app.my_tree();
+begin
+  select coalesce(jsonb_object_agg(status, k), '{}') into c
+    from (select status, count(*) k from public.out_invoices i where (v_acc or i.sale_id = any(v_tree)) and (v_sale is null or i.sale_id = v_sale) group by status) z;
+  -- nháp mới nhất chưa gửi khách
+  select count(*) into v_cg from public.out_invoices i
+   where i.status = 'da_nhap' and (v_acc or i.sale_id = any(v_tree)) and (v_sale is null or i.sale_id = v_sale)
+     and exists(select 1 from public.out_invoice_files f where f.invoice_id = i.id and f.kind = 'nhap' and f.sent_at is null
+                  and f.version = (select max(x.version) from public.out_invoice_files x where x.invoice_id = i.id and x.kind = 'nhap'));
+  if v_lim = 0 then return jsonb_build_object('total', 0, 'rows', '[]'::jsonb, 'counts', c, 'chua_gui', v_cg); end if;
+  with base as materialized (select * from public.out_invoices v where (v_acc or v.sale_id = any(v_tree)) and (v_sale is null or v.sale_id = v_sale)
+                               and (v_st is null and v.status <> 'huy' or v.status = v_st)),
+  a as (select l.invoice_id, count(*) n, sum(round(l.sl * l.don_gia)) tt, sum(round(round(l.sl * l.don_gia) * coalesce(l.vat, t.vat, 0))) thue,
+               bool_or(t.dg_nhap is not null and l.don_gia < t.dg_nhap) duoi_gia, string_agg(t.ma_hang || ' ' || coalesce(t.md, ''), ' ') tim
+          from public.out_invoice_lines l join public.out_items t on t.id = l.item_id where l.invoice_id in (select id from base) group by l.invoice_id),
+  fl as (select distinct on (invoice_id, kind) invoice_id, kind, version, sent_at from public.out_invoice_files
+          where invoice_id in (select id from base) order by invoice_id, kind, version desc),
+  f as (select b.*, coalesce(a.n, 0) so_dong, coalesce(a.tt, 0) tien_hang, coalesce(a.thue, 0) tien_thue, coalesce(a.duoi_gia, false) duoi_gia,
+               fn.version nhap_v, fn.sent_at is not null nhap_sent, fk.version ky_v
+          from base b left join a on a.invoice_id = b.id
+          left join fl fn on fn.invoice_id = b.id and fn.kind = 'nhap' left join fl fk on fk.invoice_id = b.id and fk.kind = 'ky'
+         where v_q is null or concat_ws(' ', b.code, b.buyer_name, b.tax_code, b.so_hd, b.buyer_info, a.tim) ilike '%' || v_q || '%'),
+  o as (select f.*, row_number() over (order by f.status_at desc) rn, count(*) over () tot from f)
+  select max(tot), coalesce(jsonb_agg(to_jsonb(o) - 'rn' - 'tot' order by rn) filter (where rn > v_off and rn <= v_off + v_lim), '[]') into n, r from o;
+  return jsonb_build_object('total', coalesce(n, 0), 'rows', r, 'counts', c, 'chua_gui', v_cg);
+end $$;
+grant execute on function public.out_invoices_page(jsonb) to authenticated;
+
+-- Sale xác nhận ký: ghi lại bản nháp khách đã OK
+create or replace function public.out_confirm_sign(p_invoice uuid, p_version int) returns void
+language plpgsql security definer set search_path = public, app as $$
+declare v public.out_invoices; v_max int;
+begin
+  select * into v from public.out_invoices where id = p_invoice;
+  if v.id is null or not (app.is_acc() or app.in_tree(v.sale_id)) then raise exception 'Không có quyền'; end if;
+  select max(version) into v_max from public.out_invoice_files where invoice_id = v.id and kind = 'nhap';
+  if v_max is not null and coalesce(p_version, 0) <> v_max then raise exception 'Đã có bản nháp mới v% — mở bản mới, gửi khách rồi xác nhận lại', v_max; end if;
+  perform public.out_invoice_status(array[v.id], 'xac_nhan_ky', case when v_max is not null then 'Khách OK bản nháp v' || v_max end);
+end $$;
+grant execute on function public.out_confirm_sign(uuid, int) to authenticated;
+
+reset search_path;
