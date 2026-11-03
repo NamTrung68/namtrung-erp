@@ -52,15 +52,21 @@ export function AccMine() {
     : mine.filter(l => !hd || (hd === 'co' ? !!l.inv_no : hd === 'mot' ? l.inv_result === 'mot_phan' : !l.inv_no))).filter(match);
   const pg = usePager('acc_mine', [tab, st, hd, q]);
   const copyAll = () => { const t = ['Nam Trung đề nghị APT xuất giá các dòng sau:', ...price.slice().sort((x, y) => (x.apt_stt || 0) - (y.apt_stt || 0)).map(l => `• ${l.acc_trucks?.name || ''} | STT ${l.apt_stt} | ${l.hh || ''} | ${String(lineName(l)).slice(0, 60)} | giá nháp ${Math.round(l.gia_nhap)} → Đề nghị APT xuất giá ${Math.round(l.gia_de_xuat)}`), `(${price.length} dòng)`].join('\n'); if (!price.length) return toast.info('Không có dòng'); navigator.clipboard.writeText(t).then(() => toast.ok('Đã sao chép — dán vào Zalo gửi APT')); };
-  // Excel đề xuất giá gửi APT: cột cuối CHỈ có giá đề nghị, số liền (định dạng 0 — không dấu chấm / phẩy) để dán thẳng
+  // Excel gửi APT (bản 27b): dòng đề xuất giá + dòng sale / kế toán xác nhận APT xuất thẳng.
+  // Cột A = Mã HH (khóa VLOOKUP sang file APT), B = Phản hồi APT, C = Giá đề nghị (số liền, định dạng 0 — không dấu chấm / phẩy)
+  const xtSet = (l: any) => l.luong === 'C' && l.apt_stt && !l.inv_no && (l.reply === 'xuat_thang' || (l.notes || []).some((x: string) => x.startsWith('Kế toán đánh dấu APT xuất thẳng')));
+  const xt = mine.filter(xtSet);
   const exportPrice = () => {
-    if (!price.length) return toast.info('Không có dòng');
-    const rows = price.slice().sort((x, y) => String(x.acc_trucks?.name || '').localeCompare(String(y.acc_trucks?.name || '')) || (x.apt_stt || 0) - (y.apt_stt || 0));
-    writeXlsx(`de-xuat-gia-APT_${new Date().toISOString().slice(0, 10)}`, [
-      ['Xe', 'STT APT', 'Mã HH', 'MD', 'Tên hàng', 'SL', 'ĐVT', 'Giá nháp APT', 'Giá khách', 'Biên NT hiện tại', 'Sale', 'Giá đề nghị APT xuất'],
-      ...rows.map(l => [l.acc_trucks?.name || '', l.apt_stt ?? '', l.hh || '', l.ma_dong || l.md || '', String(lineName(l)), Number(l.sl_apt ?? l.sl_ht) || '', l.dvt_apt || l.dvt_ht || '',
-        Math.round(Number(l.gia_nhap) || 0), Math.round(Number(l.gia_khach) || 0), l.bien_nt === null || l.bien_nt === undefined ? '' : Number(l.bien_nt), a.personName(l.sale_id), Math.round(Number(l.gia_de_xuat))]),
-    ], 'De xuat gia APT', true, { fmt: { 7: 'int', 8: 'int', 9: 'pct', 11: 'plain' } });
+    const rows = [...price.map(l => ({ l, xt: false })), ...xt.map(l => ({ l, xt: true }))]
+      .sort((x, y) => String(x.l.acc_trucks?.name || '').localeCompare(String(y.l.acc_trucks?.name || '')) || (x.l.apt_stt || 0) - (y.l.apt_stt || 0));
+    if (!rows.length) return toast.info('Không có dòng');
+    writeXlsx(`gui-APT_${new Date().toISOString().slice(0, 10)}`, [
+      ['Mã HH', 'Phản hồi APT', 'Giá đề nghị APT xuất', 'Xe', 'STT APT', 'MD', 'Tên hàng', 'SL', 'ĐVT', 'Giá nháp APT', 'Giá khách', 'Biên NT hiện tại', 'Sale', 'Ai xác nhận'],
+      ...rows.map(({ l, xt: isXt }) => [l.hh || '', isXt ? 'XUẤT THẲNG' : `XUẤT GIÁ ${Math.round(Number(l.gia_de_xuat))}`, isXt ? '' : Math.round(Number(l.gia_de_xuat)),
+        l.acc_trucks?.name || '', l.apt_stt ?? '', l.ma_dong || l.md || '', String(lineName(l)), Number(l.sl_apt ?? l.sl_ht) || '', l.dvt_apt || l.dvt_ht || '',
+        Math.round(Number(l.gia_nhap) || 0), Math.round(Number(l.gia_khach) || 0), l.bien_nt === null || l.bien_nt === undefined ? '' : Number(l.bien_nt), a.personName(l.sale_id),
+        isXt ? (l.reply === 'xuat_thang' ? 'Sale xác nhận xuất thẳng' : 'Kế toán đánh dấu xuất thẳng') : l.reply === 'da_gui_gia' ? 'Sale đã gửi giá' : 'Hệ thống đề xuất']),
+    ], 'Gui APT', true, { fmt: { 2: 'plain', 9: 'int', 10: 'int', 11: 'pct' } });
   };
   return <Layout title="Việc HĐ của tôi">
     <Tabs value={tab} onChange={v => go2(v as MTab)} tabs={[['todo', <>Cần xử lý {todo.length > 0 && <Badge color="red">{todo.length}</Badge>}</>], ['all', `Tất cả dòng của tôi (${mine.length})`],
@@ -70,8 +76,8 @@ export function AccMine() {
     {tab === 'todo' && <><p className="mb-3 text-sm text-ink-600">Dòng hàng trên HĐ APT <b>chưa đủ điều kiện tự chốt</b>. Chọn 1 cách xử lý trong {cfg.han_sale_gio}h. Sửa trên NamtrungLog trước rồi mới bấm “Đã sửa hệ thống”.</p>
       <StatusChips value={st} onChange={setSt} items={[['', 'Tất cả', todo.length, 'dark'], ['blocked', ST.blocked[0], c('blocked'), 'red'], ['replied', ST.replied[0], c('replied'), 'amber'], ['pending_approval', ST.pending_approval[0], c('pending_approval'), 'purple']]} /></>}
     {tab === 'free' && <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Hàng đã lên xe nhưng <b>không tìm thấy đơn / sale trên hệ thống</b>. Nếu là hàng khách của bạn: tạo đơn trên NamtrungLog → bấm “Nhận dòng này”, nhập MD + giá khách. Kế toán kiểm rồi chốt.</p>}
-    {tab === 'price' && price.length > 0 && <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm">Biên NT ngoài khung — hệ thống tính giá để biên NT về {pctTxt(cfg.bien_muc_tieu)}. Copy gửi APT, gửi xong bấm xác nhận.
-      <Button size="sm" variant="primary" onClick={copyAll}>📋 Copy tất cả gửi APT</Button><Button size="sm" onClick={exportPrice}>⬇ Xuất Excel</Button><Button size="sm" variant="success" loading={busy} onClick={sentAll}>✓ Đã gửi APT tất cả</Button></div>}
+    {tab === 'price' && (price.length > 0 || xt.length > 0) && <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm">Biên NT ngoài khung — hệ thống tính giá để biên NT về {pctTxt(cfg.bien_muc_tieu)}. Copy gửi APT, gửi xong bấm xác nhận.
+      <Button size="sm" variant="primary" onClick={copyAll}>📋 Copy tất cả gửi APT</Button><Button size="sm" onClick={exportPrice}>⬇ Xuất Excel{xt.length ? ` (+${xt.length} xuất thẳng)` : ''}</Button><Button size="sm" variant="success" loading={busy} onClick={sentAll}>✓ Đã gửi APT tất cả</Button></div>}
     <div className="mb-3 flex flex-wrap items-center gap-2"><Input className="max-w-xs" placeholder="🔎 MD, mã HH, tên hàng, số HĐ, xe…" value={q} onChange={e => setQ(e.target.value)} />
       {tab === 'all' && <Select className="w-48" placeholder="HĐ đầu vào: tất cả" options={[['co', 'Đã có HĐ'], ['chua', 'Chưa có HĐ'], ['mot', 'Mới xuất một phần']]} value={hd} onChange={setHd} />}</div>
     {loading ? <Loading /> : !view.length ? <Card><Empty>{tab === 'todo' ? '🎉 Không có dòng nào cần bạn xử lý' : 'Không có dòng'}</Empty></Card> :
