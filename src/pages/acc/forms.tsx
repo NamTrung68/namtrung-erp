@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Button, cx, Field, Input, Modal, Select, Textarea, toast, useAction, useLoad } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { money } from '../../lib/format';
-import { REPLY, REPLY_SUB } from './common';
+import { REPLY, REPLY_SUB, useAccCfg } from './common';
 
 const numIn = (v: string) => v.replace(/[^\d]/g, '');
 const MdGia = ({ md, setMd, gk, setGk, needMd, needGk }: { md: string; setMd: (v: string) => void; gk: string; setGk: (v: string) => void; needMd: boolean; needGk: boolean }) =>
@@ -15,14 +15,20 @@ const MdGia = ({ md, setMd, gk, setGk, needMd, needGk }: { md: string; setMd: (v
 /** Lựa chọn hợp với từng loại dòng */
 export function replyOptions(l: any): string[] {
   if (l.luong === 'E') return ['chuyen_xe_sau', 'dong_thua', 'nham', 'da_sua_ht', 'xin_duyet'];
-  if (l.gia_de_xuat && !l.gia_note) return ['da_gui_gia', 'de_xuat_gia', 'nham', 'xin_duyet', 'xuat_thang'];
-  return ['da_sua_ht', 'de_xuat_gia', 'chuyen_xe_sau', 'xin_duyet', 'nham', 'xuat_thang'];
+  // Bản 27: dòng có giá khách + giá APT → sale sửa được giá khách ngay tại đây (biên mới trong khung → chốt luôn)
+  const canGia = ['A', 'B'].includes(l.luong) && Number(l.gia_khach) > 0 && Number(l.gia_note || l.gia_nhap) > 0;
+  if (l.gia_de_xuat && !l.gia_note) return ['da_gui_gia', ...(canGia ? ['sua_gia_khach'] : []), 'de_xuat_gia', 'nham', 'xin_duyet', 'xuat_thang'];
+  return ['da_sua_ht', ...(canGia ? ['sua_gia_khach'] : []), 'de_xuat_gia', 'chuyen_xe_sau', 'xin_duyet', 'nham', 'xuat_thang'];
 }
 const SUBS: Record<string, string[]> = { nham: ['khong_phai', 'sai_md'], dong_thua: ['thua', 'khong_khai'] };
 
 /** Sale trả lời dòng của mình */
 export function ReplyForm({ line: l, onDone }: { line: any; onDone: () => void }) {
-  const opts = replyOptions(l);
+  const opts = replyOptions(l); const cfg = useAccCfg();
+  const [gkNew, setGkNew] = useState(l.gia_khach ? String(Math.round(Number(l.gia_khach))) : '');
+  const giaApt = Number(l.gia_note || l.gia_nhap || 0); const bienMoi = Number(gkNew) > 0 && giaApt > 0 ? Number(gkNew) / giaApt - 1 : null;
+  const chan = Math.max(cfg.bien_nt_max, cfg.bien_chan_max ?? 0.07);
+  const bienOk = bienMoi !== null && bienMoi >= cfg.bien_nt_min - 0.001 && bienMoi <= chan + 0.001;
   const [r, setR] = useState(opts.includes(l.reply) ? l.reply : ''); const [sub, setSub] = useState(l.reply_sub || '');
   const [price, setPrice] = useState<string>(l.reply_price ? String(Math.round(l.reply_price)) : l.gia_de_xuat ? String(Math.round(l.gia_de_xuat)) : '');
   const [note, setNote] = useState(l.reply_note || ''); const { busy, run } = useAction();
@@ -33,6 +39,7 @@ export function ReplyForm({ line: l, onDone }: { line: any; onDone: () => void }
   const hint: Record<string, string> = { da_sua_ht: 'Đã tạo/sửa đơn trên NamtrungLog. Kế toán nạp lại file là dòng tự chốt.', de_xuat_gia: 'Muốn APT xuất giá khác — ghi giá.', chuyen_xe_sau: 'Hàng chưa đi xe này.',
     xin_duyet: 'Ngoại lệ, cần người duyệt.', xuat_thang: 'APT xuất HĐ thẳng cho khách — dòng chuyển luồng C ngay.',
     da_gui_gia: `Đã gửi APT đề nghị xuất giá ${Math.round(l.gia_de_xuat || 0)}. Giá nháp APT đổi theo giá này, dòng chốt ngay. HĐ chính thức lệch giá sẽ báo đỏ.`,
+    sua_gia_khach: `Giá khách trên dòng này sai so với hệ thống (đã sửa trên NamtrungLog) → nhập giá đúng. Biên mới trong khung ${(cfg.bien_nt_min * 100).toFixed(1)}%–${(Math.max(cfg.bien_nt_max, cfg.bien_chan_max ?? 0.07) * 100).toFixed(1)}% thì dòng chốt luôn, không cần duyệt.`,
     nham: 'Không phải hàng của bạn → dòng chuyển về “Dòng chưa có chủ”. Đúng hàng nhưng sai mã đơn → ghi MD đúng.',
     dong_thua: 'Sale chốt, kế toán đối soát và chốt lại một lần nữa.' };
   return <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50/50 p-3">
@@ -46,12 +53,16 @@ export function ReplyForm({ line: l, onDone }: { line: any; onDone: () => void }
     {SUBS[r] && <div className="mt-2 flex flex-wrap gap-2">{SUBS[r].map(k => <label key={k} className={cx('flex cursor-pointer items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm', sub === k ? 'border-brand-600 bg-brand-50 font-semibold' : 'border-ink-200 bg-white')}>
       <input type="radio" checked={sub === k} onChange={() => setSub(k)} /> {REPLY_SUB[k]}</label>)}</div>}
     <MdGia md={md} setMd={setMd} gk={gk} setGk={setGk} needMd={needMd} needGk={needGk} />
+    {r === 'sua_gia_khach' && <div className="mt-2 grid gap-2 sm:grid-cols-2">
+      <Field label="Giá khách đúng (đ/đv) *" hint={`Hiện tại ${money(Number(l.gia_khach) || 0)} · giá APT ${money(giaApt)}`}><Input inputMode="numeric" value={gkNew} onChange={e => setGkNew(numIn(e.target.value))} /></Field>
+      <div className={cx('self-end rounded-lg px-3 py-2 text-sm', bienMoi === null ? 'bg-ink-50 text-ink-500' : bienOk ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700')}>
+        {bienMoi === null ? 'Nhập giá để tính biên' : <>Biên NT mới <b>{(bienMoi * 100).toFixed(2)}%</b> — {bienOk ? 'trong khung, bấm Gửi là chốt luôn' : 'vẫn ngoài khung, chọn cách khác (gửi APT giá đề xuất / xin duyệt)'}</>}</div></div>}
     {r === 'de_xuat_gia' && <Field className="mt-2" label="Giá muốn APT xuất (đ/đv)"><Input inputMode="numeric" value={price} onChange={e => setPrice(numIn(e.target.value))} /></Field>}
     <Field className="mt-2" label={r === 'xin_duyet' ? 'Lý do xin duyệt *' : 'Ghi chú'}><Textarea rows={2} value={note} onChange={e => setNote(e.target.value)}
       placeholder={r === 'da_sua_ht' ? 'VD: đã tạo đơn, đã nhập giá khách' : r === 'chuyen_xe_sau' ? 'VD: hàng chưa bốc, đi xe 01/11' : r === 'nham' ? 'VD: hàng của chị Trang' : ''} /></Field>
-    <div className="mt-2 flex justify-end"><Button variant="primary" loading={busy} disabled={!r || needSub || (needMd && !md) || (needGk && !gk)} onClick={() => run(async () => {
-      await db.rpc('acc_line_reply', { p_id: l.id, p_reply: r, p_price: r === 'de_xuat_gia' && price ? Number(price) : null, p_note: note || null, p_md: needMd ? md : null, p_gia_khach: needGk ? Number(gk) : null, p_sub: SUBS[r] ? sub : null }); onDone();
-    }, r === 'xin_duyet' ? 'Đã gửi xin duyệt' : r === 'xuat_thang' ? 'Đã chuyển sang APT xuất thẳng' : r === 'da_gui_gia' ? 'Đã chốt theo giá đề xuất' : r === 'nham' && sub === 'khong_phai' ? 'Đã trả dòng về “Dòng chưa có chủ”' : 'Đã gửi kế toán')}>Gửi</Button></div>
+    <div className="mt-2 flex justify-end"><Button variant="primary" loading={busy} disabled={!r || needSub || (needMd && !md) || (needGk && !gk) || (r === 'sua_gia_khach' && !bienOk)} onClick={() => run(async () => {
+      await db.rpc('acc_line_reply', { p_id: l.id, p_reply: r, p_price: r === 'de_xuat_gia' && price ? Number(price) : null, p_note: note || null, p_md: needMd ? md : null, p_gia_khach: needGk ? Number(gk) : r === 'sua_gia_khach' ? Number(gkNew) : null, p_sub: SUBS[r] ? sub : null }); onDone();
+    }, r === 'sua_gia_khach' ? 'Đã sửa giá khách — dòng đã chốt' : r === 'xin_duyet' ? 'Đã gửi xin duyệt' : r === 'xuat_thang' ? 'Đã chuyển sang APT xuất thẳng' : r === 'da_gui_gia' ? 'Đã chốt theo giá đề xuất' : r === 'nham' && sub === 'khong_phai' ? 'Đã trả dòng về “Dòng chưa có chủ”' : 'Đã gửi kế toán')}>Gửi</Button></div>
   </div>;
 }
 

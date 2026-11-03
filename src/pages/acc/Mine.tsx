@@ -10,6 +10,7 @@ import { bienTone, deXuat, dueTxt, GiaApt, lineName, LuongBadge, Money, pctTxt, 
 import { LineModal } from './Acc';
 import { ClaimForm, ReplyForm } from './forms';
 import { aptPriceMsg, INV_RESULT, InvResult } from '../../lib/doisoat';
+import { writeXlsx } from '../../lib/xlsx';
 
 const SEL = 'id,reply_sub,gia_nhap_goc,released_from,customer_id,ma_kh,claim_md,claim_gia,claimed_by,claimed_at,inv_qty,tt_khach,sl_tk,gia_von,bien_apt,apt_stt,truck_id,line_key,ma_dong,md,sale_id,sale_name,hh,dh,ten_apt,ten_ht,ten_tk,sl_apt,sl_ht,dvt_apt,dvt_ht,gia_khach,gia_nhap,gia_note,gia_de_xuat,gia_ap_dung,bien_nt,nk_ht,nk_tk,luong,status,issues,notes,phan_hoi,due_at,reply,reply_price,reply_note,replied_by,replied_at,approved_by,approved_at,approve_note,inv_no,inv_result,acc_trucks(name)';
 
@@ -22,7 +23,7 @@ function LineCard({ l, children, onOpen }: { l: any; children?: React.ReactNode;
       <div className="flex shrink-0 flex-col items-end gap-1"><StatusBadge s={l.status} />{dt && <span className={cx('text-xs', dc)}>{dt}</span>}</div>
     </div>
     <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm"><span>SL <b>{num(l.sl_apt ?? l.sl_ht, 0)}</b> {l.dvt_apt || l.dvt_ht}</span><span>Giá khách <b><Money v={l.gia_khach} /></b></span>
-      <span>Giá APT <b><Money v={l.gia_nhap} /></b>{l.gia_note && Math.abs(l.gia_note - (l.gia_nhap || 0)) > 0.5 ? <> · NOTE <Money v={l.gia_note} /></> : ''}</span>{l.bien_nt !== null && <span>Biên NT <b className={bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max)}>{pctTxt(l.bien_nt)}</b></span>}<LuongBadge l={l.luong} /></div>
+      <span>Giá APT <b><Money v={l.gia_nhap} /></b>{l.gia_note && Math.abs(l.gia_note - (l.gia_nhap || 0)) > 0.5 ? <> · NOTE <Money v={l.gia_note} /></> : ''}</span>{l.bien_nt !== null && <span>Biên NT <b className={bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max, cfg.bien_chan_max)}>{pctTxt(l.bien_nt)}</b></span>}<LuongBadge l={l.luong} /></div>
     {(l.issues || []).map((x: string, i: number) => <div key={i} className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">⚠ {x}</div>)}
     {l.reply && <div className="mt-2 text-sm text-ink-600">Đã trả lời: <b>{REPLY[l.reply]}</b>{l.claim_md ? ` — ${l.claim_md}` : ''}{l.claim_gia ? ` — giá khách ${money(l.claim_gia)}` : ''}{l.reply_price ? ` — ${Math.round(l.reply_price)}` : ''}{l.reply_note ? ` — “${l.reply_note}”` : ''} <span className="text-xs text-ink-400">({fmtDateTime(l.replied_at)})</span></div>}
     {l.approve_note && <div className="mt-1 text-sm text-ink-600">{l.status === 'approved' ? 'Đã duyệt' : 'Người duyệt'}: “{l.approve_note}” <span className="text-xs text-ink-400">— {a.personName(l.approved_by)}</span></div>}
@@ -51,6 +52,16 @@ export function AccMine() {
     : mine.filter(l => !hd || (hd === 'co' ? !!l.inv_no : hd === 'mot' ? l.inv_result === 'mot_phan' : !l.inv_no))).filter(match);
   const pg = usePager('acc_mine', [tab, st, hd, q]);
   const copyAll = () => { const t = ['Nam Trung đề nghị APT xuất giá các dòng sau:', ...price.slice().sort((x, y) => (x.apt_stt || 0) - (y.apt_stt || 0)).map(l => `• ${l.acc_trucks?.name || ''} | STT ${l.apt_stt} | ${l.hh || ''} | ${String(lineName(l)).slice(0, 60)} | giá nháp ${Math.round(l.gia_nhap)} → Đề nghị APT xuất giá ${Math.round(l.gia_de_xuat)}`), `(${price.length} dòng)`].join('\n'); if (!price.length) return toast.info('Không có dòng'); navigator.clipboard.writeText(t).then(() => toast.ok('Đã sao chép — dán vào Zalo gửi APT')); };
+  // Excel đề xuất giá gửi APT: cột cuối CHỈ có giá đề nghị, số liền (định dạng 0 — không dấu chấm / phẩy) để dán thẳng
+  const exportPrice = () => {
+    if (!price.length) return toast.info('Không có dòng');
+    const rows = price.slice().sort((x, y) => String(x.acc_trucks?.name || '').localeCompare(String(y.acc_trucks?.name || '')) || (x.apt_stt || 0) - (y.apt_stt || 0));
+    writeXlsx(`de-xuat-gia-APT_${new Date().toISOString().slice(0, 10)}`, [
+      ['Xe', 'STT APT', 'Mã HH', 'MD', 'Tên hàng', 'SL', 'ĐVT', 'Giá nháp APT', 'Giá khách', 'Biên NT hiện tại', 'Sale', 'Giá đề nghị APT xuất'],
+      ...rows.map(l => [l.acc_trucks?.name || '', l.apt_stt ?? '', l.hh || '', l.ma_dong || l.md || '', String(lineName(l)), Number(l.sl_apt ?? l.sl_ht) || '', l.dvt_apt || l.dvt_ht || '',
+        Math.round(Number(l.gia_nhap) || 0), Math.round(Number(l.gia_khach) || 0), l.bien_nt === null || l.bien_nt === undefined ? '' : Number(l.bien_nt), a.personName(l.sale_id), Math.round(Number(l.gia_de_xuat))]),
+    ], 'De xuat gia APT', true, { fmt: { 7: 'int', 8: 'int', 9: 'pct', 11: 'plain' } });
+  };
   return <Layout title="Việc HĐ của tôi">
     <Tabs value={tab} onChange={v => go2(v as MTab)} tabs={[['todo', <>Cần xử lý {todo.length > 0 && <Badge color="red">{todo.length}</Badge>}</>], ['all', `Tất cả dòng của tôi (${mine.length})`],
       ['price', <>Đề xuất giá gửi APT {price.length > 0 && <Badge color="purple">{price.length}</Badge>}</>], ['free', <>Dòng chưa có chủ {free.length > 0 && <Badge color="amber">{free.length}</Badge>}</>]]} />
@@ -60,7 +71,7 @@ export function AccMine() {
       <StatusChips value={st} onChange={setSt} items={[['', 'Tất cả', todo.length, 'dark'], ['blocked', ST.blocked[0], c('blocked'), 'red'], ['replied', ST.replied[0], c('replied'), 'amber'], ['pending_approval', ST.pending_approval[0], c('pending_approval'), 'purple']]} /></>}
     {tab === 'free' && <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Hàng đã lên xe nhưng <b>không tìm thấy đơn / sale trên hệ thống</b>. Nếu là hàng khách của bạn: tạo đơn trên NamtrungLog → bấm “Nhận dòng này”, nhập MD + giá khách. Kế toán kiểm rồi chốt.</p>}
     {tab === 'price' && price.length > 0 && <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm">Biên NT ngoài khung — hệ thống tính giá để biên NT về {pctTxt(cfg.bien_muc_tieu)}. Copy gửi APT, gửi xong bấm xác nhận.
-      <Button size="sm" variant="primary" onClick={copyAll}>📋 Copy tất cả gửi APT</Button><Button size="sm" variant="success" loading={busy} onClick={sentAll}>✓ Đã gửi APT tất cả</Button></div>}
+      <Button size="sm" variant="primary" onClick={copyAll}>📋 Copy tất cả gửi APT</Button><Button size="sm" onClick={exportPrice}>⬇ Xuất Excel</Button><Button size="sm" variant="success" loading={busy} onClick={sentAll}>✓ Đã gửi APT tất cả</Button></div>}
     <div className="mb-3 flex flex-wrap items-center gap-2"><Input className="max-w-xs" placeholder="🔎 MD, mã HH, tên hàng, số HĐ, xe…" value={q} onChange={e => setQ(e.target.value)} />
       {tab === 'all' && <Select className="w-48" placeholder="HĐ đầu vào: tất cả" options={[['co', 'Đã có HĐ'], ['chua', 'Chưa có HĐ'], ['mot', 'Mới xuất một phần']]} value={hd} onChange={setHd} />}</div>
     {loading ? <Loading /> : !view.length ? <Card><Empty>{tab === 'todo' ? '🎉 Không có dòng nào cần bạn xử lý' : 'Không có dòng'}</Empty></Card> :
@@ -68,7 +79,7 @@ export function AccMine() {
         <tr key={l.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setSel(l)}><Td className="whitespace-nowrap text-xs">{l.acc_trucks?.name}<div className="text-ink-400">{l.hh}</div></Td>
           <Td className="whitespace-nowrap text-xs">{l.ma_dong || l.md}{a.isLead && l.sale_id !== a.me.id && <div className="text-ink-400">{a.personName(l.sale_id)}</div>}</Td>
           <Td className="min-w-[200px] text-xs">{lineName(l).slice(0, 90)}</Td><Td className="text-right">{num(l.sl_apt ?? l.sl_ht, 0)} <span className="text-[11px] text-ink-400">{l.dvt_apt || l.dvt_ht}</span></Td>
-          <Td className="text-right"><GiaApt l={l} /></Td><Td className="text-right"><Money v={l.gia_khach} /></Td><Td className={cx('text-right', bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max))}>{pctTxt(l.bien_nt)}</Td>
+          <Td className="text-right"><GiaApt l={l} /></Td><Td className="text-right"><Money v={l.gia_khach} /></Td><Td className={cx('text-right', bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max, cfg.bien_chan_max))}>{pctTxt(l.bien_nt)}</Td>
           <Td><StatusBadge s={l.status} /><div className="mt-0.5"><LuongBadge l={l.luong} /></div></Td>
           <Td className="whitespace-nowrap text-xs">{l.inv_no ? <>{l.inv_no}<div><Badge color={INV_RESULT[l.inv_result as InvResult]?.[1]}>{INV_RESULT[l.inv_result as InvResult]?.[0].slice(0, 18)}</Badge></div></> : <span className="text-ink-400">Chưa có</span>}</Td></tr>)}</Table></Card> :
       <div className="space-y-3">{pg.slice(view).map(l => <LineCard key={l.id} l={l} onOpen={() => setSel(l)}>

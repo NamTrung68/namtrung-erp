@@ -144,7 +144,7 @@ export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: 
       <div className="max-h-[40vh] overflow-auto rounded-xl border border-ink-200"><Table head={['STT', 'Sale', 'MD', 'Tên hàng', 'Giá TK → APT', 'Biên APT', 'Biên NT', 'Luồng', 'Trạng thái', 'Vấn đề']}>
         {res.lines.filter((l: any) => l.status !== 'ok' || l.gia_de_xuat).map((l: any) => <tr key={l.line_key}><Td>{l.apt_stt}</Td><Td className="whitespace-nowrap">{sm.find(l.sale_name)?.name || l.sale_name}</Td><Td>{l.md}</Td>
           <Td className="min-w-[200px] text-xs">{lineName(l).slice(0, 80)}</Td><Td className="whitespace-nowrap text-right text-xs"><Money v={l.gia_von} /> → <Money v={l.gia_ap_dung} /></Td>
-          <Td className="text-right text-xs">{pctTxt(l.bien_apt)}</Td><Td className={cx('text-right text-xs', bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max))}>{pctTxt(l.bien_nt)}</Td><Td><LuongBadge l={l.luong} /></Td><Td><StatusBadge s={l.status} /></Td><Td className="min-w-[260px] text-xs text-red-700">{l.issues.join(' · ') || <span className="text-ink-500">{l.notes[0]}</span>}</Td></tr>)}</Table></div>
+          <Td className="text-right text-xs">{pctTxt(l.bien_apt)}</Td><Td className={cx('text-right text-xs', bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max, cfg.bien_chan_max))}>{pctTxt(l.bien_nt)}</Td><Td><LuongBadge l={l.luong} /></Td><Td><StatusBadge s={l.status} /></Td><Td className="min-w-[260px] text-xs text-red-700">{l.issues.join(' · ') || <span className="text-ink-500">{l.notes[0]}</span>}</Td></tr>)}</Table></div>
     </div>}
   </Modal>;
 }
@@ -223,7 +223,7 @@ function TruckDetail({ id }: { id: string }) {
               <td className="text-right"><GiaApt l={l} /></td>
               <td className="text-right tabular-nums text-ink-600">{pctTxt(l.bien_apt)}</td>
               <td className="text-right"><Money v={l.gia_khach} />{!Number(l.gia_khach) && l.claim_gia && <div className="text-[11px] text-amber-700">sale nhập <Money v={l.claim_gia} /></div>}</td>
-              <td className={cx('text-right tabular-nums', bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max))}>{pctTxt(l.bien_nt)}</td>
+              <td className={cx('text-right tabular-nums', bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max, cfg.bien_chan_max))}>{pctTxt(l.bien_nt)}</td>
               <td className="whitespace-nowrap text-xs font-semibold">{l.phan_hoi}</td>
               <td className="whitespace-nowrap"><StatusBadge s={l.status} />{dt && <div className={cx('text-[11px]', dc)}>{dt}</div>}{l.reply && <div className="text-[11px] text-ink-500">{REPLY[l.reply]}</div>}</td>
               <td className="min-w-[240px] max-w-[380px] text-xs">{(l.issues || []).map((x: string, i: number) => <div key={i} className="text-red-700">• {x}</div>)}{!(l.issues || []).length && (l.notes || []).slice(0, 2).map((x: string, i: number) => <div key={i} className="text-ink-500">• {x}</div>)}</td>
@@ -262,7 +262,7 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
       <div><div className="mb-1 text-xs font-bold uppercase text-ink-400">APT · tờ khai</div>
         <R k="Mã HH · DH" v={`${l.hh || '—'} · ${l.dh || '—'}`} /><R k="Sale ghi trên APT" v={l.sale_apt || '—'} /><R k="SL APT · tờ khai" v={`${num(l.sl_apt, 2)} · ${num(l.sl_tk, 2)} ${l.dvt_apt || ''}`} />
         <R k="Giá nháp APT" v={<><Money v={l.gia_nhap} />{l.gia_nhap_goc && <span className="ml-1 text-xs text-ink-400 line-through"><Money v={l.gia_nhap_goc} /></span>}</>} />{l.gia_note && <R k="Giá sale ghi NOTE" v={<Money v={l.gia_note} />} />}{l.gia_de_xuat && <R k="Giá đề xuất (biên 3%)" v={<Money v={l.gia_de_xuat} />} tone="text-brand-700 font-semibold" />}
-        <R k="Biên NT" v={pctTxt(l.bien_nt)} tone={bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max)} /><R k="Thuế NK tờ khai" v={pctTxt(l.nk_tk)} />
+        <R k="Biên NT" v={pctTxt(l.bien_nt)} tone={bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max, cfg.bien_chan_max)} /><R k="Thuế NK tờ khai" v={pctTxt(l.nk_tk)} />
         <R k="Giá vốn tờ khai (giá NH + NK/đv)" v={<Money v={l.gia_von} />} /><R k="Biên APT" v={pctTxt(l.bien_apt)} /></div>
     </div>
     <div className="mt-3 text-xs text-ink-500">Tên trên file APT: {l.ten_apt || '—'}</div>

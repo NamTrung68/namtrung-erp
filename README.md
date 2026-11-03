@@ -82,3 +82,20 @@ npm run build            # → dist/
 - Mục mới: *Kế toán – Hóa đơn → Hướng dẫn quy trình* (`#/hd/guide`), *Vận hành → Hướng dẫn tổng quan* (`#/guide`). Nội dung sửa trong `src/pages/Guide.tsx`.
 - Phân quyền: *Nhân sự & phân quyền*, *Dữ liệu · Nhật ký* chỉ Admin / BGĐ (chặn cả gõ thẳng URL); `invite_user` + bảng `invites` chỉ Admin / BGĐ. *Duyệt đơn* mở cho mọi người ở chế độ chỉ xem; chỉ người có quyền duyệt mới tạo được ủy quyền (`del_ins`).
 - Nâng cấp DB: chạy `supabase/migrations/0033_v26.sql` trong SQL Editor (tự sao lưu trước khi đổi). Kiểm thử: `supabase/tests/99h_v26.sql`.
+
+## Bản 26 (03/11/2026)
+
+- Menu trái dạng nhóm thu gọn (accordion): nhóm của trang đang mở luôn mở, chuyển nhóm khác thì mở nhóm đó; trạng thái + vị trí cuộn giữ nguyên khi chuyển trang.
+- Trang Hôm nay: nút **Chấm công vào / ra** (desktop trên thanh tiêu đề, điện thoại nút lớn đầu trang).
+- Mục mới: *Kế toán – Hóa đơn → Hướng dẫn quy trình* (`#/hd/guide`), *Vận hành → Hướng dẫn tổng quan* (`#/guide`). Nội dung sửa trong `src/pages/Guide.tsx`.
+- Phân quyền: *Nhân sự & phân quyền*, *Dữ liệu · Nhật ký* chỉ Admin / BGĐ (chặn cả gõ thẳng URL); `invite_user` + bảng `invites` chỉ Admin / BGĐ. *Duyệt đơn* mở cho mọi người ở chế độ chỉ xem; chỉ người có quyền duyệt mới tạo được ủy quyền (`del_ins`).
+- Nâng cấp DB: chạy `supabase/migrations/0033_v26.sql` trong SQL Editor (tự sao lưu trước khi đổi). Kiểm thử: `supabase/tests/99h_v26.sql`.
+
+## Bản 27 (03/11/2026)
+
+- Bảng công: sửa lỗi tháng có đơn **vắng theo giờ** không hiện bảng công (`malformed array literal: "G"` trong `app.day_info`). Trang hiện rõ lỗi thay vì "Chưa có dữ liệu".
+- Đối soát xe: biên NT **dưới tối thiểu (kể cả âm) hoặc trên mức chặn** (`accounting.bien_chan_max`, mặc định 7%) → chặn, vào "Cần xử lý" của sale; giữa tối đa và mức chặn chỉ cảnh báo. Migration chấm lại các dòng đang "Tự chốt" ngoài khung và báo sale.
+- Sale có lựa chọn **Sửa giá khách (chốt luôn)**: biên mới trong khung → dòng chốt ngay, không cần duyệt.
+- Tab "Đề xuất giá gửi APT": nút **Xuất Excel**, cột cuối chỉ có giá đề nghị (định dạng số `0`, không dấu phân cách).
+- Ẩn menu "Tra cứu yêu cầu · bảng gốc" (trang `#/out` vẫn mở từ nút trong Bàn làm việc kế toán).
+- Nâng cấp DB: chạy `supabase/migrations/0034_v27.sql` (tự sao lưu trước). Kiểm thử: `supabase/tests/99i_v27.sql`.

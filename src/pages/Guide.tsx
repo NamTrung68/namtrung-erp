@@ -141,16 +141,24 @@ Mỗi xe hàng nhập qua APT đi qua **3 chu kỳ**. Hệ thống NamtrungLog (
 4. **Không ghép theo tên hàng** ở chu kỳ này. Đơn vị tính (PCE / Cái) không so.
 
 ### Kiểm biên Nam Trung (theo từng mã khai báo)
-| Biên | Hệ thống làm gì | Sale làm gì |
-| Dưới 2,5% | Cảnh báo | Kiểm lại giá khách / giá APT |
-| 2,5% – 4% | Đạt | Không cần làm gì |
-| Trên 4% | Đề xuất giá APT mới = **giá khách ÷ 1,03** (biên 3%) | Copy giá đề xuất → dán Google Sheet APT → bấm **Đã gửi APT** |
+Các mức lấy theo **Cấu hình → Kế toán – Hóa đơn** (mặc định: tối thiểu 2,5% · tối đa 4% · mức chặn 7%).
 
-> Giá đề xuất hiện **số liền, không dấu chấm phẩy** để dán thẳng. Có nút **📋 Copy tất cả gửi APT** và **Copy STT + giá**.
-!> Đề xuất hạ giá chỉ hợp lệ khi vẫn **≥ giá vốn tờ khai**. Biên ngoài khung không tự duyệt: dòng bị chặn tới khi sale gửi giá cho APT và xác nhận trên ERP.
+| Biên | Hệ thống làm gì | Sale làm gì |
+| Dưới tối thiểu (kể cả **biên âm**) | **Chặn** — vào tab **Cần xử lý** của sale | Sửa giá khách nếu sai, hoặc gửi APT giá đề xuất, hoặc xin duyệt |
+| Tối thiểu – tối đa | Tự chốt | Không cần làm gì |
+| Tối đa – 7% | Tự chốt + cảnh báo, có giá đề xuất | Nên gửi APT giá đề xuất (tab **Đề xuất giá gửi APT**) |
+| Trên 7% | **Chặn** — vào tab **Cần xử lý** | Như dòng dưới tối thiểu |
+
+### Cách xử lý dòng bị chặn vì biên
+- **Sửa giá khách (chốt luôn)**: giá khách trên dòng sai so với hệ thống (đã sửa trên NamtrungLog) → nhập giá đúng. Hệ thống tính lại biên ngay; biên mới **trong khung tối thiểu – 7%** thì dòng **chốt luôn, không cần kế toán / admin duyệt**. Ngoài khung thì không gửi được.
+- **Đã gửi APT giá đề xuất**: giá đề xuất = **giá khách ÷ (1 + mục tiêu)**. Copy gửi APT, bấm xác nhận là chốt.
+- **Xin duyệt ngoại lệ**: trường hợp đặc biệt, ghi lý do.
+
+> Giá đề xuất hiện **số liền, không dấu chấm phẩy** để dán thẳng. Tab **Đề xuất giá gửi APT** có nút **📋 Copy tất cả gửi APT** và **⬇ Xuất Excel** — cột cuối file Excel chỉ có giá đề nghị, số liền.
+!> Đề xuất hạ giá chỉ hợp lệ khi vẫn **≥ giá vốn tờ khai**. Dòng bị chặn chưa xử lý thì quá hạn sẽ bị nhắc.
 
 ### Sale làm — [Đối soát xe của tôi](#/acc/mine)
-- Tab dòng **cần xử lý giá**: copy giá đề xuất gửi APT, bấm xác nhận đã gửi.
+- Tab **Cần xử lý**: dòng bị chặn (biên ngoài khung, thiếu đơn, thiếu giá…). Biên sai do giá khách sai → **Sửa giá khách**; còn lại copy giá đề xuất gửi APT rồi bấm xác nhận.
 - Tab **Dòng chưa có chủ**: hàng của khách mình mà chưa có đơn → tạo đơn trên NamtrungLog → bấm **Nhận dòng này**, nhập MD + giá khách. Kế toán kiểm rồi chốt.
 - Hàng **"không khai"** (đi đường khác, không xuất HĐ qua APT): sale đóng dòng, kế toán xác nhận thêm 1 lần.
 

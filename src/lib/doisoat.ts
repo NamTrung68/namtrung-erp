@@ -3,10 +3,12 @@
 
 export interface AccCfg {
   bien_muc_tieu: number; bien_nt_min: number; bien_nt_max: number; dung_sai_bien: number; tien_bo_qua: number; nguong_ghep: number;
+  /** Bản 27: biên NT trên mức này → CHẶN, đưa vào “Cần xử lý” của sale (dưới bien_nt_min cũng chặn) */
+  bien_chan_max?: number;
   sale_lanchi: string[]; md_xuat_thang: string[]; kh_xuat_thang?: string[]; hs_hop_quy_chuong: string[]; han_sale_gio: number; han_hd_ngay?: number;
 }
 export const DEFAULT_ACC_CFG: AccCfg = {
-  bien_muc_tieu: 0.03, bien_nt_min: 0.025, bien_nt_max: 0.04, dung_sai_bien: 0.001, tien_bo_qua: 50000, nguong_ghep: 0.65,
+  bien_muc_tieu: 0.03, bien_nt_min: 0.025, bien_nt_max: 0.04, bien_chan_max: 0.07, dung_sai_bien: 0.001, tien_bo_qua: 50000, nguong_ghep: 0.65,
   sale_lanchi: ['huyennk29', 'yenttt', 'Yentth'], md_xuat_thang: [], han_hd_ngay: 15,
   hs_hop_quy_chuong: ['50', '51', '52', '53', '54', '55', '56', '57', '58', '59', '60', '61', '62', '63'], han_sale_gio: 24,
 };
@@ -249,6 +251,7 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
   }
   const lanchi = new Set(cfg.sale_lanchi.map(norm)); const thang = new Set(cfg.md_xuat_thang.map(normMd)); const khThang = new Set((cfg.kh_xuat_thang || []).map(norm));
   const hq = cfg.hs_hop_quy_chuong; const { bien_nt_min: lo, bien_nt_max: hi, dung_sai_bien: tol, bien_muc_tieu: tgt } = cfg;
+  const chan = Math.max(hi, cfg.bien_chan_max ?? 0.07);
   const lines: AccLine[] = []; const usedSys = new Set<number>();
 
   const build = (s: SysRow | null, a: AptRow | null, t: TkRow | null, kind: MatchKind | null): AccLine => {
@@ -277,13 +280,16 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
       else if (!s) add(1, 'Có trên file APT nhưng KHÔNG có đơn trên file xe → không có giá khách; nếu APT xuất HĐ, Nam Trung nhận hàng vào sổ mà không xuất được đầu ra. Sale nhập đơn lên hệ thống.');
       else if (!gk) add(1, 'Giá khách trên hệ thống = 0 → không xuất được HĐ đầu ra. Sale nhập giá khách đã chốt.');
       else if (ga && bien !== null) {
-        // Bản 23: nháp đã chốt với APT qua Google Sheet → biên ngoài khung chỉ CẢNH BÁO + giá đề xuất (= giá khách ÷ 1,03, số liền) để sale copy, không chặn
+        // Bản 27: biên dưới mức tối thiểu (kể cả âm) hoặc trên mức chặn → CHẶN (Cần xử lý của sale);
+        // giữa mức tối đa và mức chặn → chỉ cảnh báo + giá đề xuất (= giá khách ÷ (1 + mục tiêu), số liền) để sale copy gửi APT
         const de = Math.round(gk / (1 + tgt)); const gvon0 = t && t.nh ? t.nh + (t.sl ? t.tnk / t.sl : 0) : null;
-        if (bien > hi + tol) { gde = de; add(2, `Biên NT ${(bien * 100).toFixed(2)}% > ${pc(hi)}% → đề xuất APT xuất giá ${de}.`); }
+        const fix = 'Sale: sửa giá khách (nếu sai) hoặc gửi APT giá đề xuất.';
+        if (bien > chan + tol) { gde = de; add(1, `Biên NT ${(bien * 100).toFixed(2)}% > ${pc(chan)}% → đề xuất APT xuất giá ${de}. ${fix}`); }
+        else if (bien > hi + tol) { gde = de; add(2, `Biên NT ${(bien * 100).toFixed(2)}% > ${pc(hi)}% → đề xuất APT xuất giá ${de}.`); }
         else if (bien < lo - tol) {
           gde = de;
-          if (gvon0 && de < gvon0) add(2, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}%; giá ${de} thấp hơn giá vốn tờ khai ${Math.round(gvon0)} → APT khó hạ, sale cân nhắc giá khách.`);
-          else add(2, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}% → đề xuất APT xuất giá ${de}.`);
+          if (gvon0 && de < gvon0) add(1, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}%; giá ${de} thấp hơn giá vốn tờ khai ${Math.round(gvon0)} → APT khó hạ, sale sửa giá khách hoặc xin duyệt.`);
+          else add(1, `Biên NT ${(bien * 100).toFixed(2)}% < ${pc(lo)}% → đề xuất APT xuất giá ${de}. ${fix}`);
         }
         void ttApt;
       }

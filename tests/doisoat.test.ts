@@ -84,12 +84,23 @@ test('bản 23: ghép mã khai báo → mã đơn + SL, biên đúng 3%', () => 
   assert.equal(r.lines.find(l => l.ma_kb_apt === 'MD2525-1')!.gia_khach, 118000);
 });
 
-test('bản 23: biên ngoài khung → cảnh báo + giá đề xuất = giá khách ÷ 1,03 (số liền)', () => {
+test('bản 27: biên > 7% → CHẶN (cần xử lý) + giá đề xuất = giá khách ÷ 1,03 (số liền)', () => {
   const rows = APT.map(r => r.slice()); (rows[4] as any[])[18] = 1600; (rows[4] as any[])[23] = 1600; // Giá đỡ: APT 1600, khách 1800 → 12,5%
   const r = reconcile(parseApt(rows).rows, parseKhaiBao(KB), []);
   const l = r.lines.find(x => x.ma_kb_apt === 'MD2415-2')!;
-  assert.equal(l.gia_de_xuat, 1748); assert.equal(l.status, 'ok'); assert.equal(l.level, 2);
+  assert.equal(l.gia_de_xuat, 1748); assert.equal(l.status, 'blocked'); assert.equal(l.level, 1);
   assert.equal(aptPriceList(r.lines), '52\t1748');
+});
+
+test('bản 27: biên 4–7% chỉ cảnh báo (tự chốt); biên âm / dưới 2,5% → chặn', () => {
+  const at = (gia: number) => { const rows = APT.map(r => r.slice()); (rows[4] as any[])[18] = gia; (rows[4] as any[])[23] = gia;
+    return reconcile(parseApt(rows).rows, parseKhaiBao(KB), []).lines.find(x => x.ma_kb_apt === 'MD2415-2')!; };
+  const mid = at(1700); // 1800/1700 − 1 = 5,88%
+  assert.equal(mid.status, 'ok'); assert.equal(mid.level, 2); assert.ok(mid.gia_de_xuat);
+  const neg = at(1900); // âm
+  assert.equal(neg.status, 'blocked'); assert.ok(neg.bien_nt! < 0);
+  const low = at(1770); // 1,69%
+  assert.equal(low.status, 'blocked');
 });
 
 test('bản 23: mã đúng mà lệch SL → ghép + cảnh báo sai số', () => {

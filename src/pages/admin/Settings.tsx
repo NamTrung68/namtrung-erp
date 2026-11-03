@@ -358,8 +358,8 @@ function AccCfg() {
   const L = ({ k, l, hint }: { k: string; l: string; hint?: string }) => <Field label={l} hint={hint}><Input value={(v[k] || []).join(', ')} onChange={e => s.set(k)(e.target.value.split(/[,\s]+/).filter(Boolean))} /></Field>;
   return <div className="space-y-4">
     <Card title="Quy tắc tự chấm dòng hàng (bước B1)">
-      <div className="grid gap-3 sm:grid-cols-3"><P k="bien_nt_min" l="Biên NT tối thiểu %" /><P k="bien_muc_tieu" l="Biên NT mục tiêu %" /><P k="bien_nt_max" l="Biên NT tối đa %" /></div>
-      <p className="mt-1 text-xs text-ink-500">Biên NT = giá khách ÷ giá HĐ APT − 1. Ngoài khung → dòng bị chặn, hệ thống tính giá đề nghị APT = giá khách ÷ (1 + mục tiêu); sale gửi APT rồi bấm “Đã gửi APT giá đề xuất” là chốt. Biên thấp mà giá đề nghị dưới giá vốn tờ khai → sale sửa giá khách hoặc xin duyệt.</p>
+      <div className="grid gap-3 sm:grid-cols-4"><P k="bien_nt_min" l="Biên NT tối thiểu % (dưới → chặn)" /><P k="bien_muc_tieu" l="Biên NT mục tiêu %" /><P k="bien_nt_max" l="Biên NT tối đa % (trên → cảnh báo)" /><P k="bien_chan_max" l="Biên NT trên mức này → chặn %" /></div>
+      <p className="mt-1 text-xs text-ink-500">Biên NT = giá khách ÷ giá HĐ APT − 1. <b>Dưới tối thiểu (kể cả âm) hoặc trên mức chặn</b> → dòng bị chặn, vào “Cần xử lý” của sale. <b>Giữa tối đa và mức chặn</b> → vẫn tự chốt, chỉ cảnh báo + giá đề nghị. Giá đề nghị APT = giá khách ÷ (1 + mục tiêu). Sale xử lý: “Đã gửi APT giá đề xuất”, hoặc “Sửa giá khách” (biên mới trong khung → chốt luôn, không cần duyệt), hoặc xin duyệt.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-3"><Field label="Bỏ qua khi tiền chênh dưới (đ)"><NumInput value={v.tien_bo_qua} onChange={s.set('tien_bo_qua')} /></Field>
         <Field label="Hạn sale xử lý (giờ)"><NumInput value={v.han_sale_gio} onChange={s.set('han_sale_gio')} /></Field>
         <Field label="HĐ APT về muộn sau (ngày)" hint="Tính từ ngày xe"><NumInput value={v.han_hd_ngay ?? 15} onChange={s.set('han_hd_ngay')} /></Field></div>

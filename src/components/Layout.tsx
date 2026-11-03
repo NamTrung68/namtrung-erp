@@ -70,7 +70,7 @@ export function useNav() {
       { to: '/hd/ql', label: 'Duyệt giá & tồn HĐ', icon: '✅', show: a.isLead || a.has('ke_toan', 'bgd') },
       { to: '/acc/mine', label: 'Đối soát xe của tôi', icon: '🚚', show: a.isSales },
       { to: '/acc', label: 'Danh sách xe đối soát', icon: '🚚', show: a.isAdmin || a.has('ke_toan') },
-      { to: '/out', label: 'Tra cứu yêu cầu · bảng gốc', icon: '🔎', show: a.isSales || a.isAdmin || a.has('ke_toan') },
+      // Bản 27: ẩn khỏi menu 'Tra cứu yêu cầu · bảng gốc' (#/out) — trùng với Bàn làm việc kế toán / Hóa đơn của tôi; đường dẫn vẫn mở được từ các nút trong trang
       { to: '/acc/approve', label: 'Duyệt mở chặn HĐ', icon: '🔓', show: a.isAdmin || (a.settings.accounting?.approver_ids || []).includes(a.me.id) },
       { to: '/hd/guide', label: 'Hướng dẫn quy trình', icon: '📘', show: a.isSales || a.isLead || a.isAdmin || a.has('ke_toan', 'hcns') },
     ]],

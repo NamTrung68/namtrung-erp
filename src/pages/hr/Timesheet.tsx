@@ -23,7 +23,7 @@ export default function Timesheet() {
 
 function Sheet() {
   const a = useApp(); const [month, setMonth] = useState(today().slice(0, 7)); const [unit, setUnit] = useState('');
-  const { data, loading } = useLoad(() => db.rpc<any[]>('timesheet', { p_month: month + '-01' }), [month]);
+  const { data, loading, error } = useLoad(() => db.rpc<any[]>('timesheet', { p_month: month + '-01' }), [month]);
   const rows = ((data as any[]) || []).filter(r => !unit || r.org_unit_id === unit);
   const nd = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
   const days = Array.from({ length: nd }, (_, i) => String(i + 1).padStart(2, '0'));
@@ -39,7 +39,7 @@ function Sheet() {
         <Button onClick={exp}>Xuất Excel (CSV)</Button>
       </div>
       <Card bodyClass="p-0">
-        {loading ? <Loading /> : !rows.length ? <Empty /> : <div className="overflow-x-auto"><table className="text-xs">
+        {loading ? <Loading /> : error ? <div className="p-6 text-center text-sm text-red-700">Không tải được bảng công: {error}</div> : !rows.length ? <Empty /> : <div className="overflow-x-auto"><table className="text-xs">
           <thead><tr className="border-b border-ink-200 bg-ink-50 text-ink-500">
             <th className="sticky left-0 z-10 min-w-[150px] bg-ink-50 px-3 py-2 text-left font-semibold">Nhân sự</th>
             {days.map(d => <th key={d} className={cx('w-8 px-0.5 py-2 text-center font-semibold', wd(d) === 0 && 'text-ink-300', wd(d) === 6 && 'text-brand-600')}>{d}<div className="text-[9px] font-normal">{['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][wd(d)]}</div></th>)}

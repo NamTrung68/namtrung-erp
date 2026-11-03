@@ -9,13 +9,13 @@ export const ST: Record<string, [string, string]> = {
   approved: ['Đã duyệt mở chặn', 'teal'], info: ['Theo dõi', 'slate'],
 };
 export const REPLY: Record<string, string> = { da_sua_ht: 'Đã sửa hệ thống', de_xuat_gia: 'Đề xuất giá khác', chuyen_xe_sau: 'Chuyển xe sau', xin_duyet: 'Xin duyệt ngoại lệ', xuat_thang: 'Đơn APT xuất thẳng',
-  da_gui_gia: 'Đã gửi APT giá đề xuất', nham: 'Nhầm sale / nhầm đơn', dong_thua: 'Dòng thừa / Không khai' };
+  da_gui_gia: 'Đã gửi APT giá đề xuất', sua_gia_khach: 'Sửa giá khách (chốt luôn)', nham: 'Nhầm sale / nhầm đơn', dong_thua: 'Dòng thừa / Không khai' };
 export const REPLY_SUB: Record<string, string> = { khong_phai: 'Không phải hàng của tôi', sai_md: 'Hàng của tôi nhưng sai MD', thua: 'Dòng thừa trên hệ thống', khong_khai: 'Đi đường khác, không xuất HĐ qua APT' };
 export const LUONG_TONE: Record<string, string> = { A: 'blue', B: 'amber', C: 'slate', D: 'indigo', E: 'orange' };
 export const StatusBadge = ({ s }: { s: string }) => <Badge color={ST[s]?.[1] || 'gray'}>{ST[s]?.[0] || s}</Badge>;
 export const LuongBadge = ({ l }: { l: string }) => <Badge color={LUONG_TONE[l] || 'gray'}>{l}. {(LUONG as any)[l]}</Badge>;
 export const pctTxt = (v: any) => (v === null || v === undefined || v === '' ? '' : (Number(v) * 100).toFixed(2).replace('.', ',') + '%');
-export const bienTone = (v: any, lo = 0.025, hi = 0.04) => (v === null || v === undefined ? '' : Number(v) < lo - 0.001 ? 'text-red-600 font-semibold' : Number(v) > hi + 0.001 ? 'text-amber-700' : 'text-emerald-700');
+export const bienTone = (v: any, lo = 0.025, hi = 0.04, chan = 0.07) => (v === null || v === undefined ? '' : Number(v) < lo - 0.001 || Number(v) > chan + 0.001 ? 'text-red-600 font-semibold' : Number(v) > hi + 0.001 ? 'text-amber-700' : 'text-emerald-700');
 /** Thời gian còn lại đến hạn */
 export function dueTxt(due: string | null): [string, string] {
   if (!due) return ['', ''];
