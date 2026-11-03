@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, NumInput, Select, Table, Td, Tabs, Textarea, toast, useAction, useLoad } from '../../components/ui';
 import { db, storage } from '../../lib/sb';
@@ -71,7 +72,48 @@ function MyAttendance() {
   );
 }
 
-function Consent() {
+/** Nút chấm công nhanh (trang Hôm nay): tự biết cần Chấm vào hay Chấm ra, mở camera ngay — không phải vào mục Chấm công */
+export function QuickCheckin({ block = false }: { block?: boolean }) {
+  const a = useApp(); const cfg = a.settings.attendance || {};
+  const office = a.me.work_schedule === 'office';
+  const { data: ev, reload } = useLoad(() => office ? db.from('attendance_events').select('id,kind,at').eq('profile_id', a.me.id).eq('work_date', today()).order('at') : Promise.resolve([]), [office]);
+  const { data: ip } = useLoad(() => office ? db.rpc('my_ip') : Promise.resolve(null), [office]);
+  const [cam, setCam] = useState<'in' | 'out' | null>(null); const [consent, setConsent] = useState(false); const [warn, setWarn] = useState(false);
+  // đồng ý lưu ảnh xong → đóng hộp đồng ý, mở camera luôn
+  useEffect(() => { if (consent && a.me.selfie_consent) { setConsent(false); setCam(((ev as any[]) || []).some(e => e.kind === 'in') ? 'out' : 'in'); } }, [consent, a.me.selfie_consent]);
+  if (!office) return null;
+  const list = (ev as any[]) || [];
+  const tin = list.find(e => e.kind === 'in'); const tout = [...list].reverse().find(e => e.kind === 'out');
+  const kind: 'in' | 'out' = tin ? 'out' : 'in';
+  const blocked = !!ip && !ip.ok && (cfg.outside_ip || 'flag') === 'block' && (cfg.ip_whitelist || []).length > 0;
+  const click = () => {
+    if (!a.me.selfie_consent && cfg.require_selfie !== false) { setConsent(true); return; }
+    if (blocked) { setWarn(true); return; }
+    setCam(kind);
+  };
+  const label = !tin ? 'Chấm công vào' : !tout ? 'Chấm công ra' : 'Chấm ra lại';
+  const sub = !tin ? 'Chưa chấm hôm nay' : `Vào ${fmtTime(tin.at)}${tout ? ` · Ra ${fmtTime(tout.at)}` : ''}`;
+  return <>
+    <button type="button" onClick={click}
+      className={cx('inline-flex items-center gap-2 rounded-xl border px-3 text-left font-semibold leading-tight transition active:translate-y-px',
+        block ? 'h-14 w-full justify-center text-base' : 'h-9 text-sm',
+        !tin ? 'border-emerald-600 bg-emerald-600 text-white shadow-[0_6px_16px_-8px_rgba(5,150,105,.9)] hover:bg-emerald-700'
+          : !tout ? 'border-ink-900 bg-ink-900 text-white hover:bg-ink-800' : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100')}>
+      <span className={block ? 'text-xl' : 'text-base'}>{tout ? '✅' : '📷'}</span>
+      <span className="min-w-0"><span className="block whitespace-nowrap">{label}</span>{block && <span className="block text-xs font-medium opacity-80">{sub}</span>}</span>
+      {!block && tin && <span className="hidden whitespace-nowrap text-[11px] font-medium opacity-75 xl:inline">· {sub}</span>}
+    </button>
+    {/* header dùng backdrop-blur → modal phải gắn thẳng vào body, nếu không sẽ bị kẹt trong thanh header */}
+    {(consent || warn || cam) && createPortal(<>
+    {consent && <Modal open onClose={() => setConsent(false)} title="Chấm công" size="sm"><Consent /></Modal>}
+    {warn && <Modal open onClose={() => setWarn(false)} title="Chưa chấm được" size="sm">
+      <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">⛔ Bạn đang ở ngoài mạng công ty ({ip?.ip}) — hãy kết nối wifi văn phòng để chấm công. Đi công tác / gặp khách: tạo đơn ở mục <a className="font-semibold underline" href="#/hr/leave">Xin nghỉ</a>.</div></Modal>}
+    {cam && <Camera kind={cam} onClose={() => setCam(null)} onDone={() => { setCam(null); reload(); a.refreshMe(); }} />}
+    </>, document.body)}
+  </>;
+}
+
+export function Consent() {
   const a = useApp(); const { busy, run } = useAction();
   return (
     <Card title="Đồng ý lưu ảnh chấm công">
@@ -155,7 +197,7 @@ function applyBeauty(c: HTMLCanvasElement, f: typeof FILTERS[number]) {
   ctx.putImageData(img, 0, 0);
 }
 
-function Camera({ kind, onClose, onDone }: { kind: 'in' | 'out'; onClose: () => void; onDone: () => void }) {
+export function Camera({ kind, onClose, onDone }: { kind: 'in' | 'out'; onClose: () => void; onDone: () => void }) {
   const a = useApp(); const video = useRef<HTMLVideoElement>(null); const soft = useRef<HTMLVideoElement>(null);
   const [fk, setFk] = useState(() => { try { return localStorage.getItem('nt_cam_filter') || 'glow'; } catch { return 'glow'; } });
   const flt = FILTERS.find(x => x.k === fk) || FILTERS[0];

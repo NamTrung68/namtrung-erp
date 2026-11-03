@@ -74,3 +74,11 @@ npm run build            # → dist/
 - **Chu kỳ 2 – HĐ chính thức APT:** mỗi dòng (mã hàng MISA `HH…-<số HĐ>-<năm>`) ghép về dòng nháp theo tên (bỏ khoảng trắng / dấu chấm cuối) + SL → nhận mã khai báo, đơn, khách, sale, giá khách. Đối chiếu SL / đơn giá / thuế suất từng dòng; lệch → khóa (`out_items.lech`), kế toán ghép lại hoặc chấp nhận kèm lý do.
 - **Chu kỳ 3 – yêu cầu xuất HĐ:** biên so với giá APT: < 2% cấm, 2–4% tự do, > 4% “Chờ duyệt giá” (Kế toán / Trưởng phòng / Admin, 1 người). Sale không hủy sau khi kế toán export MISA; “Yêu cầu sửa” → sửa → phiên bản +1. Pháp nhân mặc định theo khách. Lập nhanh theo ID đơn có “Chỉ giữ đơn sạch” + màn xác nhận tổng. Tab “Báo cáo tồn” theo sale.
 - Kiểm thử: `tests/doisoat.test.ts` (bản 23), `supabase/tests/99g_v23.sql`.
+
+## Bản 26 (03/11/2026)
+
+- Menu trái dạng nhóm thu gọn (accordion): nhóm của trang đang mở luôn mở, chuyển sang nhóm khác thì mở nhóm đó; trạng thái + vị trí cuộn giữ nguyên khi chuyển trang.
+- Trang Hôm nay: nút **Chấm công vào / ra** (máy tính: trên thanh tiêu đề; điện thoại: nút lớn đầu trang).
+- Mục mới: *Kế toán – Hóa đơn → Hướng dẫn quy trình* (`#/hd/guide`), *Vận hành → Hướng dẫn tổng quan* (`#/guide`). Nội dung sửa trong `src/pages/Guide.tsx`.
+- Phân quyền: *Nhân sự & phân quyền*, *Dữ liệu · Nhật ký* chỉ Admin / BGĐ (chặn cả gõ thẳng URL); `invite_user` + bảng `invites` chỉ Admin / BGĐ. *Duyệt đơn* mở cho mọi người ở chế độ chỉ xem; chỉ người có quyền duyệt mới tạo được ủy quyền (`del_ins`).
+- Nâng cấp DB: chạy `supabase/migrations/0033_v26.sql` trong SQL Editor (tự sao lưu trước khi đổi). Kiểm thử: `supabase/tests/99h_v26.sql`.

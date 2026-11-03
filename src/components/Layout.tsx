@@ -34,6 +34,12 @@ export const Icon = ({ name, className = 'h-[18px] w-[18px]' }: { name: string; 
 );
 
 interface NavItem { to: string; label: string; icon: string; show: boolean }
+/** Quyền vào trang theo đường dẫn — dùng chung cho menu và chặn gõ thẳng URL (main.tsx) */
+export function canOpen(a: ReturnType<typeof useApp>, path: string): boolean {
+  if (path === '/admin/users' || path === '/admin/data') return a.isAdmin; // chỉ Admin + Ban giám đốc
+  if (path === '/admin/settings') return a.isAdmin || a.has('hcns', 'ke_toan');
+  return true;
+}
 export function useNav() {
   const a = useApp();
   const groups: [string, NavItem[]][] = [
@@ -53,7 +59,7 @@ export function useNav() {
       { to: '/hr/attendance', label: 'Chấm công', icon: '📷', show: true },
       { to: '/hr/leave', label: 'Xin nghỉ', icon: '🏖️', show: true },
       { to: '/hr/timesheet', label: 'Bảng công · Chuyên cần', icon: '🗓️', show: true },
-      { to: '/hr/approvals', label: 'Duyệt đơn', icon: '✅', show: a.isLead || a.has('hcns') },
+      { to: '/hr/approvals', label: 'Duyệt đơn', icon: '✅', show: true },
       { to: '/hr/payslips', label: 'Phiếu lương', icon: '💰', show: true },
       { to: '/hr/payroll', label: 'Bảng lương', icon: '💵', show: a.canHR },
       { to: '/hr/staff', label: a.isAdmin || a.has('hcns', 'bgd') ? 'Hồ sơ nhân sự' : 'Hồ sơ của tôi', icon: '🗂️', show: true },
@@ -66,16 +72,18 @@ export function useNav() {
       { to: '/acc', label: 'Danh sách xe đối soát', icon: '🚚', show: a.isAdmin || a.has('ke_toan') },
       { to: '/out', label: 'Tra cứu yêu cầu · bảng gốc', icon: '🔎', show: a.isSales || a.isAdmin || a.has('ke_toan') },
       { to: '/acc/approve', label: 'Duyệt mở chặn HĐ', icon: '🔓', show: a.isAdmin || (a.settings.accounting?.approver_ids || []).includes(a.me.id) },
+      { to: '/hd/guide', label: 'Hướng dẫn quy trình', icon: '📘', show: a.isSales || a.isLead || a.isAdmin || a.has('ke_toan', 'hcns') },
     ]],
     ['Vận hành', [
       { to: '/tickets', label: 'Claim & hỏi đáp', icon: '❓', show: true },
       { to: '/inventory', label: 'Tồn kho', icon: '📦', show: true },
       { to: '/docs', label: 'Chứng từ', icon: '📁', show: a.canDocs },
+      { to: '/guide', label: 'Hướng dẫn tổng quan', icon: '🧭', show: true },
     ]],
     ['Quản trị', [
-      { to: '/admin/users', label: 'Nhân sự & phân quyền', icon: '🛡️', show: a.isAdmin || a.has('hcns') },
+      { to: '/admin/users', label: 'Nhân sự & phân quyền', icon: '🛡️', show: a.isAdmin },
       { to: '/admin/settings', label: 'Cấu hình', icon: '⚙️', show: a.isAdmin || a.has('hcns', 'ke_toan') },
-      { to: '/admin/data', label: 'Dữ liệu · Nhật ký', icon: '🗄️', show: a.isAdmin || a.has('hcns') },
+      { to: '/admin/data', label: 'Dữ liệu · Nhật ký', icon: '🗄️', show: a.isAdmin },
     ]],
   ];
   return groups.map(([g, items]) => [g, items.filter(i => i.show)] as [string, NavItem[]]).filter(([, i]) => i.length);
@@ -85,33 +93,7 @@ export function Layout({ children, title, actions }: { children: React.ReactNode
   const a = useApp(); const { path } = useRoute(); const nav = useNav();
   const [open, setOpen] = useState(false); const [check, setCheck] = useState(false); const [care, setCare] = useState(false); const [reply, setReply] = useState(false);
   useEffect(() => setOpen(false), [path]);
-  const side = (
-    <nav className="flex h-full flex-col gap-3 overflow-y-auto px-3 py-4">
-      <a href="#/" className="mb-1 flex items-center gap-2.5 px-2">
-        <img src="logo-mark.png" alt="" className="h-10 w-10 rounded-xl bg-white object-contain p-0.5 ring-1 ring-ink-100" />
-        <span className="leading-tight"><b className="block text-[19px] font-extrabold tracking-tight">nt.team</b><span className="text-xs text-ink-400">Nam Trung Group</span></span>
-      </a>
-      {nav.map(([g, items]) => (
-        <div key={g}>
-          {g && <div className="mb-1 mt-1 px-3 text-[11px] font-bold uppercase tracking-wider text-ink-400">{g}</div>}
-          {items.map(i => {
-            // mục khớp dài nhất mới sáng (tránh /hd sáng cùng /hd/ql, /acc cùng /acc/mine)
-            const hit = (to: string) => to === '/' ? path === '/' : path === to || path.startsWith(to + '/');
-            const on = hit(i.to) && !nav.some(([, its]) => its.some(o => o.to !== i.to && o.to.length > i.to.length && hit(o.to)));
-            return <a key={i.to} href={'#' + i.to} className={cx('mb-0.5 flex items-center gap-3 rounded-2xl px-3 py-2 text-[14.5px] transition', on ? 'bg-ink-900 font-bold text-white shadow-soft' : 'font-semibold text-ink-600 hover:bg-white hover:text-ink-900')}>
-              <span className="w-6 text-center text-[17px] leading-none">{i.icon}</span>{i.label}</a>;
-          })}
-        </div>
-      ))}
-      <div className="mt-auto border-t border-ink-200 pt-3">
-        <a href="#/account" className="flex items-center gap-2 rounded-2xl px-2 py-1.5 text-sm hover:bg-white">
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-hot text-xs font-bold text-white">{(a.me.full_name || a.me.email)[0]?.toUpperCase()}</span>
-          <span className="min-w-0 leading-tight"><span className="block truncate font-semibold">{a.me.full_name}</span><span className="block truncate text-[11px] text-ink-400">{a.me.job_level_name || a.me.roles.join(', ')}</span></span>
-        </a>
-        <button onClick={() => auth.signOut()} className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-sm text-ink-500 hover:bg-white"><Icon name="logout" />Đăng xuất</button>
-      </div>
-    </nav>
-  );
+  const side = <SideNav nav={nav} path={path} />;
   return (
     <div className="min-h-screen bg-ink-50 lg:pl-64">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-ink-200/70 bg-ink-50 lg:block">{side}</aside>
@@ -135,6 +117,67 @@ export function Layout({ children, title, actions }: { children: React.ReactNode
       <QuickCare open={care} onClose={() => setCare(false)} />
       {reply && <ReplyPicker open onClose={() => setReply(false)} />}
     </div>
+  );
+}
+
+// ---------- Sidebar dạng nhóm thu gọn (Collapsible) ----------
+// Mỗi trang tự bọc <Layout>, nên sidebar được dựng lại mỗi lần chuyển trang. Để menu không "nhảy":
+//  · nhóm đang mở + vị trí cuộn lưu ở biến module (và localStorage), dựng lại vẫn y nguyên;
+//  · vào 1 trang thuộc nhóm khác → mở nhóm đó, đóng nhóm cũ (kiểu accordion); trang thuộc nhóm đầu (Hôm nay, Bảng tin) giữ nguyên nhóm đang mở;
+//  · mục đang chọn chỉ được cuộn tới khi đang khuất.
+const NAV_KEY = 'nt_nav_group';
+let navGroup: string | null = (() => { try { return localStorage.getItem(NAV_KEY); } catch { return null; } })();
+let navScroll = 0;
+const hitPath = (path: string, to: string) => to === '/' ? path === '/' : path === to || path.startsWith(to + '/');
+function activeTo(nav: [string, NavItem[]][], path: string) {
+  let best = ''; for (const [, its] of nav) for (const i of its) if (hitPath(path, i.to) && i.to.length > best.length) best = i.to;
+  return best;
+}
+function SideNav({ nav, path }: { nav: [string, NavItem[]][]; path: string }) {
+  const a = useApp(); const ref = useRef<HTMLElement>(null);
+  const cur = activeTo(nav, path); const curGroup = nav.find(([, its]) => its.some(i => i.to === cur))?.[0] ?? null;
+  const [openG, setOpenG] = useState<string | null>(() => (curGroup ? curGroup : navGroup));
+  const setG = (g: string | null) => { navGroup = g; setOpenG(g); try { g ? localStorage.setItem(NAV_KEY, g) : localStorage.removeItem(NAV_KEY); } catch { /* */ } };
+  useEffect(() => { if (curGroup && curGroup !== openG) setG(curGroup); else if (curGroup) navGroup = curGroup; }, [curGroup]);
+  React.useLayoutEffect(() => {
+    const el = ref.current; if (!el) return; el.scrollTop = navScroll;
+    const on = el.querySelector('[data-on="1"]') as HTMLElement | null;
+    if (on) { const r = on.getBoundingClientRect(), b = el.getBoundingClientRect(); if (r.top < b.top + 60 || r.bottom > b.bottom - 90) on.scrollIntoView({ block: 'center' }); }
+  }, []);
+  return (
+    <nav ref={ref} onScroll={e => { navScroll = (e.target as HTMLElement).scrollTop; }} className="flex h-full flex-col gap-1 overflow-y-auto overscroll-contain px-3 py-4">
+      <a href="#/" className="mb-2 flex items-center gap-2.5 px-2">
+        <img src="logo-mark.png" alt="" className="h-10 w-10 rounded-xl bg-white object-contain p-0.5 ring-1 ring-ink-100" />
+        <span className="leading-tight"><b className="block text-[19px] font-extrabold tracking-tight">nt.team</b><span className="text-xs text-ink-400">Nam Trung Group</span></span>
+      </a>
+      {nav.map(([g, items]) => {
+        const open = !g || openG === g; const hasOn = items.some(i => i.to === cur);
+        return (
+          <div key={g || '_top'} className={g ? 'rounded-2xl' : 'mb-1'}>
+            {g && <button type="button" onClick={() => setG(open ? null : g)} aria-expanded={open}
+              className={cx('flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[11.5px] font-bold uppercase tracking-wider transition hover:bg-white',
+                open ? 'text-ink-800' : 'text-ink-400')}>
+              <span className="flex-1">{g}</span>
+              {!open && hasOn && <span className="h-1.5 w-1.5 rounded-full bg-brand-600" />}
+              {!open && <span className="rounded-full bg-ink-200/70 px-1.5 text-[10px] font-semibold normal-case tracking-normal text-ink-500">{items.length}</span>}
+              <svg viewBox="0 0 24 24" className={cx('h-4 w-4 transition-transform', open ? 'rotate-90' : '')} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
+            </button>}
+            {open && <div className={g ? 'pb-1' : ''}>{items.map(i => {
+              const on = i.to === cur;
+              return <a key={i.to} href={'#' + i.to} data-on={on ? '1' : undefined} className={cx('mb-0.5 flex items-center gap-3 rounded-2xl px-3 py-2 text-[14.5px] transition', on ? 'bg-ink-900 font-bold text-white shadow-soft' : 'font-semibold text-ink-600 hover:bg-white hover:text-ink-900')}>
+                <span className="w-6 text-center text-[17px] leading-none">{i.icon}</span>{i.label}</a>;
+            })}</div>}
+          </div>
+        );
+      })}
+      <div className="mt-auto border-t border-ink-200 pt-3">
+        <a href="#/account" className="flex items-center gap-2 rounded-2xl px-2 py-1.5 text-sm hover:bg-white">
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-hot text-xs font-bold text-white">{(a.me.full_name || a.me.email)[0]?.toUpperCase()}</span>
+          <span className="min-w-0 leading-tight"><span className="block truncate font-semibold">{a.me.full_name}</span><span className="block truncate text-[11px] text-ink-400">{a.me.job_level_name || a.me.roles.join(', ')}</span></span>
+        </a>
+        <button onClick={() => auth.signOut()} className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-1.5 text-sm text-ink-500 hover:bg-white"><Icon name="logout" />Đăng xuất</button>
+      </div>
+    </nav>
   );
 }
 

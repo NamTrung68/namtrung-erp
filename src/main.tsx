@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { auth, Session } from './lib/sb';
-import { AppProvider, loadContext, useRoute } from './state';
+import { AppProvider, loadContext, useApp, useRoute } from './state';
 import { Toaster, Loading, Button } from './components/ui';
-import { Layout } from './components/Layout';
+import { Layout, canOpen } from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Today from './pages/Today';
@@ -34,6 +34,7 @@ import Acc from './pages/acc/Acc';
 import { AccApprove, AccMine } from './pages/acc/Mine';
 import Out from './pages/out/Out';
 import { HdKeToan, HdQuanLy, HdSale } from './pages/hd/Hd';
+import { HdGuide, SystemGuide } from './pages/Guide';
 
 const routes: Record<string, React.FC> = {
   '/': Today, '/dashboard': Dashboard, '/hr/timesheet': Timesheet, '/hr/staff': Staff, '/crm/library': Library, '/crm/replies': Replies, '/inventory': Inventory,
@@ -44,14 +45,16 @@ const routes: Record<string, React.FC> = {
   '/hr/attendance': Attendance, '/hr/leave': Leave, '/hr/approvals': Approvals,
   '/hr/payroll': Payroll, '/hr/payslips': Payslips, '/hr/payslip': PayslipView,
   '/admin/users': Users, '/admin/settings': Settings, '/admin/data': DataAdmin,
-  '/account': Account, '/acc': Acc, '/acc/mine': AccMine, '/acc/approve': AccApprove, '/out': Out, '/hd': HdSale, '/hd/kt': HdKeToan, '/hd/ql': HdQuanLy,
+  '/account': Account, '/acc': Acc, '/acc/mine': AccMine, '/acc/approve': AccApprove, '/out': Out, '/hd': HdSale, '/hd/kt': HdKeToan, '/hd/ql': HdQuanLy, '/hd/guide': HdGuide, '/guide': SystemGuide,
 };
 
 function Router() {
-  const { path } = useRoute();
+  const { path } = useRoute(); const a = useApp();
   const Page = routes[path];
   useEffect(() => { window.scrollTo(0, 0); }, [path]);
   if (!Page) return <Layout title="Không tìm thấy"><div className="p-8 text-center">Trang không tồn tại. <a className="text-brand-700" href="#/">Về trang chủ</a></div></Layout>;
+  if (!canOpen(a, path)) return <Layout title="Không có quyền truy cập"><div className="mx-auto max-w-md rounded-2xl border border-ink-200 bg-white p-8 text-center text-sm">
+    <div className="mb-2 text-3xl">🔒</div>Bạn không có quyền vào mục này. Cần quyền thì báo Admin / Ban giám đốc.<br /><a className="mt-3 inline-block font-semibold text-brand-700" href="#/">Về trang Hôm nay</a></div></Layout>;
   return <Page />;
 }
 

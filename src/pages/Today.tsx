@@ -5,6 +5,7 @@ import { db } from '../lib/sb';
 import { go, useApp } from '../state';
 import { addDays, today } from '../lib/format';
 import { pickDaily } from '../lib/greeting';
+import { QuickCheckin } from './hr/Attendance';
 
 const WD = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 const WDL = ['Chủ nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
@@ -40,8 +41,9 @@ export default function Today() {
   const later = Array.from(new Set(rows.filter(r => r.day > t1).map(r => r.day))).sort();
   const headline = todayRows.length === 0 ? 'Hôm nay đủ quân' : `Hôm nay vắng ${new Set(todayRows.map(r => r.profile_id)).size} người`;
   return (
-    <Layout title="Hôm nay" actions={<Button variant="primary" onClick={() => go('/hr/leave')}>Xin nghỉ / báo vắng</Button>}>
+    <Layout title="Hôm nay" actions={<><span className="hidden md:inline-flex"><QuickCheckin /></span><Button variant="primary" onClick={() => go('/hr/leave')}>Xin nghỉ / báo vắng</Button></>}>
       <div className="mx-auto max-w-4xl py-2 sm:py-6">
+        <div className="mb-4 md:hidden"><QuickCheckin block /></div>
         <div className="text-sm font-semibold text-ink-500">{WDL[wd(t)]}, {dm(t)}</div>
         <h2 className="display mt-1 text-4xl sm:text-6xl">{headline}</h2>
         {pickDaily(a.settings.login_screen?.messages, 3, a.me.id) && <div className="mt-3 inline-flex max-w-2xl items-start gap-2 rounded-2xl bg-gradient-to-r from-brand-50 to-pink-50 px-4 py-2.5 text-sm text-ink-700">

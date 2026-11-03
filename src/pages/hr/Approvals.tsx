@@ -11,9 +11,15 @@ const KIND: Record<string, string> = { cong_tac: 'Công tác', xac_nhan_cong: 'X
 
 export default function Approvals() {
   const a = useApp(); const { run } = useAction(); const [hist, setHist] = useState(false); const [leaveFor, setLeaveFor] = useState(false); const [delOpen, setDelOpen] = useState(false);
-  const { data: lv, loading, reload } = useLoad(() => db.from('leave_requests').select('*').neq('profile_id', a.me.id).eq('status', hist ? 'da_duyet' : 'cho_duyet').order('start_date', { asc: !hist }).limit(200), [hist]);
-  const { data: ar, reload: r2 } = useLoad(() => db.from('attendance_requests').select('*').neq('profile_id', a.me.id).eq('status', hist ? 'da_duyet' : 'cho_duyet').order('work_date', { asc: !hist }).limit(200), [hist]);
+  // Người có quyền duyệt: quản lý (có cấp dưới) / TN / TP / Admin / BGĐ / HCNS, hoặc đang được ủy quyền duyệt.
+  // Nhân viên còn lại vào đây CHỈ XEM (đơn của mình) — không duyệt, không ủy quyền, không tạo đơn hộ. Máy chủ cũng tự chặn (decide_request, delegations).
   const { data: dels, reload: r3 } = useLoad(() => db.from('delegations').select('*').is('revoked_at', null).gte('to_at', new Date().toISOString()).order('from_at'), []);
+  const nowIso = new Date().toISOString();
+  const delegated = ((dels as any[]) || []).some(d => d.delegate_id === a.me.id && d.from_at <= nowIso);
+  const lead = a.isLead || a.has('hcns'); const canDecide = lead || delegated;
+  const mine = (q: any) => (lead || delegated ? q.neq('profile_id', a.me.id) : q.eq('profile_id', a.me.id));
+  const { data: lv, loading, reload } = useLoad(() => mine(db.from('leave_requests').select('*')).eq('status', hist ? 'da_duyet' : 'cho_duyet').order('start_date', { asc: !hist }).limit(200), [hist, canDecide]);
+  const { data: ar, reload: r2 } = useLoad(() => mine(db.from('attendance_requests').select('*')).eq('status', hist ? 'da_duyet' : 'cho_duyet').order('work_date', { asc: !hist }).limit(200), [hist, canDecide]);
   const pl = usePager('appr_leave', [hist]); const pa = usePager('appr_att', [hist]);
   const decide = async (table: 'leave' | 'attendance', id: string, ok: boolean) => {
     const note = ok ? '' : await ask({ title: 'Từ chối đơn', input: { label: 'Lý do', required: true } });
@@ -21,7 +27,9 @@ export default function Approvals() {
     run(async () => { await db.rpc('decide_request', { p_table: table, p_id: id, p_approve: ok, p_note: note || null }); reload(); r2(); }, ok ? 'Đã duyệt' : 'Đã từ chối');
   };
   return (
-    <Layout title="Duyệt đơn" actions={<><Button onClick={() => go('/hr/leave')}>Tạo đơn hộ</Button><Button onClick={() => setDelOpen(true)}>Ủy quyền duyệt</Button></>}>
+    <Layout title="Duyệt đơn" actions={lead ? <><Button onClick={() => go('/hr/leave')}>Tạo đơn hộ</Button><Button onClick={() => setDelOpen(true)}>Ủy quyền duyệt</Button></> : undefined}>
+      {!canDecide && <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-sm text-sky-900">👀 Chế độ <b>chỉ xem</b>: đây là các đơn của bạn và trạng thái duyệt. Muốn tạo / hủy đơn, vào mục <a className="font-semibold underline" href="#/hr/leave">Xin nghỉ</a> hoặc <a className="font-semibold underline" href="#/hr/attendance">Chấm công → Đơn công</a>.</div>}
+      {!lead && delegated && <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">Bạn đang được <b>ủy quyền duyệt</b> đơn thay quản lý trong thời gian ghi ở bảng cuối trang.</div>}
       <div className="mb-3 flex items-center gap-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={hist} onChange={e => setHist(e.target.checked)} /> Xem đơn đã duyệt</label>
         {(a.isAdmin || a.has('tp_kd')) && <Button size="sm" onClick={() => go('/crm/quotes?status=cho_duyet')}>Báo giá chờ duyệt giá →</Button>}</div>
       <Card title="Đơn nghỉ · công tác · vắng theo giờ" bodyClass="p-0" className="mb-4">
@@ -29,19 +37,19 @@ export default function Approvals() {
           <tr key={r.id}><Td className="whitespace-nowrap font-medium">{a.personName(r.profile_id)}</Td><Td>{a.label('leave_type', r.leave_type)}{r.late_notice && <Badge color="amber" className="ml-1">báo gấp</Badge>}</Td>
             <Td className="whitespace-nowrap">{whenText(r)}</Td><Td>{num(r.days, 1)}</Td>
             <Td className="max-w-xs">{r.reason}{r.backup_id && <div className="text-xs text-ink-400">Hỗ trợ: {a.personName(r.backup_id)}</div>}{r.handover && <div className="text-xs text-ink-400">Bàn giao: {r.handover}</div>}</Td><Td className="whitespace-nowrap text-xs">{fmtDateTime(r.created_at)}</Td>
-            <Td className="whitespace-nowrap">{r.status === 'cho_duyet' ? <><Button size="sm" variant="success" onClick={() => decide('leave', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('leave', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pl} total={(lv as any[]).length} /></>}
+            <Td className="whitespace-nowrap">{r.status === 'cho_duyet' && canDecide ? <><Button size="sm" variant="success" onClick={() => decide('leave', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('leave', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pl} total={(lv as any[]).length} /></>}
       </Card>
       <Card title="Đơn xác nhận công (quên chấm)" bodyClass="p-0" className="mb-4">
         {!(ar as any[])?.length ? <Empty>Không có đơn</Empty> : <><Table head={['Nhân sự', 'Loại', 'Ngày', 'Lý do', '']}>{pa.slice(ar as any[]).map(r => (
           <tr key={r.id}><Td className="font-medium">{a.personName(r.profile_id)}</Td><Td>{KIND[r.kind]}{r.minutes && ` · ${r.minutes} phút`}</Td><Td>{fmtDate(r.work_date)}{r.part !== 'full' && ` (${r.part === 'am' ? 'sáng' : 'chiều'})`}</Td><Td>{r.reason}</Td>
-            <Td className="whitespace-nowrap">{r.status === 'cho_duyet' ? <><Button size="sm" variant="success" onClick={() => decide('attendance', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('attendance', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pa} total={(ar as any[]).length} /></>}
+            <Td className="whitespace-nowrap">{r.status === 'cho_duyet' && canDecide ? <><Button size="sm" variant="success" onClick={() => decide('attendance', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('attendance', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pa} total={(ar as any[]).length} /></>}
       </Card>
       <Card title="Ủy quyền đang hiệu lực" bodyClass="p-0">
         {!(dels as any[])?.length ? <Empty>Không có</Empty> : <Table head={['Người ủy quyền', 'Người được ủy quyền', 'Từ', 'Đến', 'Lý do', '']}>{(dels as any[]).map(d => (
           <tr key={d.id}><Td>{a.personName(d.delegator_id)}</Td><Td>{a.personName(d.delegate_id)}</Td><Td>{fmtDateTime(d.from_at)}</Td><Td>{fmtDateTime(d.to_at)}</Td><Td>{d.reason}</Td>
             <Td>{(d.delegator_id === a.me.id || a.isAdmin) && <Button size="sm" variant="ghost" onClick={() => run(async () => { await db.from('delegations').update({ revoked_at: new Date().toISOString() }).eq('id', d.id); r3(); }, 'Đã thu hồi')}>Thu hồi</Button>}</Td></tr>))}</Table>}
       </Card>
-      <Delegate open={delOpen} onClose={() => setDelOpen(false)} onDone={() => { setDelOpen(false); r3(); }} />
+      {lead && <Delegate open={delOpen} onClose={() => setDelOpen(false)} onDone={() => { setDelOpen(false); r3(); }} />}
     </Layout>
   );
 }
