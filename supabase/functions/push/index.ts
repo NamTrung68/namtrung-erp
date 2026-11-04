@@ -7,7 +7,12 @@
 import webpush from 'npm:web-push@3.6.7';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
-const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
+// Khóa quản trị do Supabase tự cấp cho hàm (khóa cũ SUPABASE_SERVICE_ROLE_KEY hoặc khóa mới SUPABASE_SECRET_KEYS)
+const adminKey = (() => {
+  const legacy = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'); if (legacy) return legacy;
+  try { const j = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') || '{}'); return (j.default || Object.values(j)[0]) as string; } catch { return ''; }
+})();
+const sb = createClient(Deno.env.get('SUPABASE_URL')!, adminKey, { auth: { persistSession: false } });
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
