@@ -12,8 +12,11 @@ const MdGia = ({ md, setMd, gk, setGk, needMd, needGk }: { md: string; setMd: (v
     {needGk && <Field label="Giá khách (đ/đv) *" hint={gk ? money(Number(gk)) + ' đ' : 'Giá xuất HĐ cho khách'}><Input inputMode="numeric" value={gk} onChange={e => setGk(numIn(e.target.value))} /></Field>}
   </div> : null;
 
+/** Bản 28: dòng đã tự chốt (biên ngoài khung có giá đề xuất) vẫn sửa được giá khách khi HĐ ký APT chưa về */
+export const canFixPrice = (l: any) => ['A', 'B'].includes(l.luong) && Number(l.gia_khach) > 0 && Number(l.gia_note || l.gia_nhap) > 0 && !l.inv_no && ['ok', 'blocked', 'replied'].includes(l.status);
 /** Lựa chọn hợp với từng loại dòng */
 export function replyOptions(l: any): string[] {
+  if (l.status === 'ok') return [...(canFixPrice(l) ? ['sua_gia_khach'] : []), ...(l.gia_de_xuat && !l.gia_note && !l.inv_no ? ['da_gui_gia'] : [])];
   if (l.luong === 'E') return ['chuyen_xe_sau', 'dong_thua', 'nham', 'da_sua_ht', 'xin_duyet'];
   // Bản 27: dòng có giá khách + giá APT → sale sửa được giá khách ngay tại đây (biên mới trong khung → chốt luôn)
   const canGia = ['A', 'B'].includes(l.luong) && Number(l.gia_khach) > 0 && Number(l.gia_note || l.gia_nhap) > 0;
@@ -43,7 +46,7 @@ export function ReplyForm({ line: l, onDone }: { line: any; onDone: () => void }
     nham: 'Không phải hàng của bạn → dòng chuyển về “Dòng chưa có chủ”. Đúng hàng nhưng sai mã đơn → ghi MD đúng.',
     dong_thua: 'Sale chốt, kế toán đối soát và chốt lại một lần nữa.' };
   return <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50/50 p-3">
-    <div className="mb-2 text-sm font-semibold">Xử lý dòng này</div>
+    <div className="mb-2 text-sm font-semibold">{l.status === 'ok' ? 'Dòng đã tự chốt — sửa giá khách nếu sai' : 'Xử lý dòng này'}</div>
     {l.gia_de_xuat && !l.gia_note && ab && <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 text-sm">
       <span>Biên NT hiện tại <b className="text-red-600">{l.bien_nt !== null && l.bien_nt !== undefined ? (Number(l.bien_nt) * 100).toFixed(2) + '%' : '—'}</b> · Đề nghị APT xuất giá <b>{Math.round(l.gia_de_xuat)}</b></span>
       <Button size="sm" onClick={() => navigator.clipboard.writeText(`STT ${l.apt_stt ?? ''} | ${l.hh || ''} | ${String(l.ten_apt || l.ten_ht || '').slice(0, 60)} — Đề nghị APT xuất giá ${Math.round(l.gia_de_xuat)}`).then(() => { setR('da_gui_gia'); toast.ok('Đã sao chép — gửi APT xong bấm Gửi'); }, () => toast.err('Trình duyệt chặn sao chép — bôi đen và copy tay'))}>📋 Copy gửi APT</Button></div>}

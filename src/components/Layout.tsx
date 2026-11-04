@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { ensurePush, pushActive } from '../lib/push';
 import { useApp, go, useRoute } from '../state';
 import { auth, db } from '../lib/sb';
 import { Button, cx, toast } from './ui';
@@ -190,14 +191,14 @@ function Bell() {
       if (notify && lastId.current) {
         rows.filter(r => r.id > lastId.current && !r.read_at).reverse().forEach(r => {
           toast.info(r.body || '', r.title, () => r.link && (location.hash = r.link));
-          showSystemNotification(r.title, r.body || '', r.link);
+          if (!pushActive()) showSystemNotification(r.title, r.body || '', r.link); // có thông báo đẩy rồi thì không hiện trùng
         });
       }
       if (rows[0]) lastId.current = Math.max(lastId.current, rows[0].id);
       setItems(rows);
     } catch { /* ignore */ }
   };
-  useEffect(() => { load(); const t = setInterval(() => load(true), 30_000); return () => clearInterval(t); }, []);
+  useEffect(() => { load(); ensurePush(); const t = setInterval(() => load(true), 30_000); return () => clearInterval(t); }, []);
   const unread = items.filter(i => !i.read_at).length;
   const markAll = async () => { await db.from('notifications').update({ read_at: new Date().toISOString() }).is('read_at', null); load(); a.refreshMe(); };
   return (

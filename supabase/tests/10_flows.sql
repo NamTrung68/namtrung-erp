@@ -93,8 +93,9 @@ select pg_temp.as_user('b@nt.vn');
 select pg_temp.check((public.check_duplicate('0888886812')->>'status') = 'owned_by_other', 'đã có chủ');
 select pg_temp.check((select count(*) from public.quotations) = 0, 'B không thấy báo giá của A');
 
--- 6. Nghỉ phép (sổ phép năm nhập đầu kỳ)
+-- 6. Nghỉ phép (sổ phép năm nhập đầu kỳ) — bản 28: phép cộng dồn theo tháng, nhân sự vào làm từ năm trước
 select pg_temp.as_user('hr@nt.vn');
+update public.profiles set hire_date = '2025-01-01' where email = 'a@nt.vn';
 insert into public.leave_entitlements(profile_id, year, entitled, carried, used_before) select id, 2026, 1, 0, 0 from public.profiles where email = 'a@nt.vn';
 select pg_temp.as_user('a@nt.vn');
 select pg_temp.expect_error($$insert into public.leave_requests(leave_type, start_date, end_date) values ('phep_nam', date '2026-12-02', date '2026-12-03')$$, 'Phép năm còn');
@@ -111,7 +112,7 @@ select pg_temp.check((select count(*) from public.leave_requests) = 0, 'B không
 select pg_temp.check((select count(*) from public.today_board(date '2026-12-01', date '2026-12-31')) = 3, 'bảng Hôm nay');
 select pg_temp.as_user('lead@nt.vn');
 select public.decide_request('leave', (select id from public.leave_requests where leave_type='phep_nam'), true, null);
-select pg_temp.check((public.leave_balance((select id from public.profiles where email='a@nt.vn'), 2026)->>'balance')::numeric = 3, 'còn 12-7-2=3');
+select pg_temp.check((select (b->>'balance')::numeric = (b->>'accrued')::numeric - 9 and (b->>'accrued')::numeric = least(12, extract(month from app.vn_today())) from (select public.leave_balance((select id from public.profiles where email='a@nt.vn'), 2026) b) x), 'còn = tích lũy theo tháng - 7 - 2');
 -- quản lý tạo hộ → duyệt luôn
 insert into public.leave_requests(profile_id, leave_type, start_date, end_date) select id, 'cong_tac', date '2026-12-07', date '2026-12-07' from public.profiles where email='a@nt.vn';
 select pg_temp.check((select status from public.leave_requests where leave_type='cong_tac') = 'da_duyet', 'đơn tạo hộ được duyệt ngay');

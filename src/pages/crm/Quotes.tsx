@@ -48,7 +48,7 @@ export default function Quotes() {
         ...Object.entries(QUOTE_STATUS).filter(([k]) => k !== 'da_thay_the').map(([k, v]) => [k, v[0], counts[k] || 0, v[1]] as [string, string, number, string])]} />
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
         <Input className="col-span-2" placeholder="Tìm mã BG, khách, mã KH / username HT, MST, mã đơn…" value={q} onChange={e => setQ(e.target.value)} />
-        {a.isLead && <Select options={a.people.map(p => [p.id, p.full_name])} value={sale} onChange={setSale} placeholder="Mọi nhân viên" />}
+        {a.seesTeam && <Select options={a.people.filter(p => a.isLead || !a.isCskh || p.id === a.me.id || a.mySales.includes(p.id)).map(p => [p.id, p.full_name])} value={sale} onChange={setSale} placeholder="Mọi nhân viên" />}
       </div>
       <div className="rounded-2xl border border-ink-200 bg-white shadow-soft">
         {loading ? <Loading /> : !(data as any[])?.length ? <Empty>Chưa có báo giá</Empty> :

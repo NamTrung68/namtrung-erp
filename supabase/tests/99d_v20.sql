@@ -59,7 +59,7 @@ select public.out_file_attach('00000000-0000-0000-0020-000000000003', 'nhap', 'D
 select pg_temp.check((select status from public.out_invoices where id='00000000-0000-0000-0020-000000000001') = 'da_nhap', 'có nháp → Đã xuất nháp');
 select pg_temp.check((public.out_file_match('[{"i":0,"kind":"nhap","mst":"040091011932","tong":23328000,"name":"NHAP_040091011932_23328000_20261031_1.pdf"}]'))->0->>'dup' = 'true', 'tải lại cùng file → báo trùng');
 reset role;
-select pg_temp.check((select count(*) from public.notifications where link = '#/out?inv=00000000-0000-0000-0020-000000000001'
+select pg_temp.check((select count(*) from public.notifications where link = '#/hd?inv=00000000-0000-0000-0020-000000000001'
   and recipient_id = (select id from public.profiles where email='a@nt.vn')) = 1, 'sale A được báo có nháp');
 
 -- Quyền xem: sale A xem phiếu mình; sale B không; trưởng nhóm của A xem được

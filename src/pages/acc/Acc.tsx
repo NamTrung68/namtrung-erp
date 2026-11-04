@@ -11,7 +11,7 @@ import { aptPriceList, aptPriceMsg, MATCH_KIND, type MatchKind, INV_RESULT, InvR
 import { driveReady, saveToDrive } from '../../lib/drive';
 import { bienTone, deXuat, dueTxt, GiaApt, lineName, LuongBadge, Money, pctTxt, REPLY, REPLY_SUB, ST, StatusBadge, useAccCfg } from './common';
 import { downloadMau, type MauKind } from '../../lib/mau';
-import { AssignModal, ChotModal, ClaimForm, ReplyForm } from './forms';
+import { AssignModal, canFixPrice, ChotModal, ClaimForm, ReplyForm } from './forms';
 export { useAccCfg, ReplyForm };
 
 const isAcc = (a: ReturnType<typeof useApp>) => a.isAdmin || a.has('ke_toan');
@@ -246,7 +246,7 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
   const { data: cus } = useLoad(() => l.customer_id ? db.from<any>('customers').select('code,sys_code,sys_username,company_name,contact_name').eq('id', l.customer_id).maybeSingle() : Promise.resolve(null), [l.customer_id]);
   const { data: outs } = useLoad(() => db.from<any[]>('out_items_v').select('ma_hang,sl_nhap,ton,phieu').eq('acc_line_id', l.id), [l.id]);
   const back = () => run(async () => { const note = await ask({ title: 'Trả lại cho sale', input: { label: 'Ghi chú', required: true } }); if (note === null) return; await db.rpc('acc_line_set', { p_id: l.id, p_status: 'blocked', p_note: note }); onChanged(); }, 'Đã trả lại sale');
-  const mine = l.sale_id === a.me.id || (a.isLead && !!l.sale_id); const dx = l.status === 'blocked' && l.gia_de_xuat && !l.gia_note ? Math.round(l.gia_de_xuat) : deXuat(l, cfg);
+  const mine = l.sale_id === a.me.id || (a.seesTeam && !!l.sale_id); const dx = l.status === 'blocked' && l.gia_de_xuat && !l.gia_note ? Math.round(l.gia_de_xuat) : deXuat(l, cfg);
   return <Modal open onClose={onClose} size="lg" title={<span>{l.ma_dong || l.md || 'Dòng không có đơn'} · STT APT {l.apt_stt ?? '—'}</span>}
     footer={acc ? <>{l.status !== 'ok' && l.status !== 'approved' && <Button variant="success" loading={busy} onClick={() => setChot(true)}>✓ Chốt dòng</Button>}
       {['A', 'B'].includes(l.luong) && <Button loading={busy} onClick={() => setAsg(true)}>Gán sale / đơn</Button>}
@@ -276,9 +276,9 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
     {l.inv_no && <div className="mt-2 rounded-xl border border-ink-200 p-3 text-sm">HĐ vào <b>{l.inv_no}</b> dòng {l.inv_stt}: {num(l.inv_qty, 2)} × <Money v={l.inv_price} /> = <Money v={l.inv_amount} /> → <Badge color={INV_RESULT[l.inv_result as InvResult]?.[1]}>{INV_RESULT[l.inv_result as InvResult]?.[0]}</Badge></div>}
     {(outs || []).length > 0 && <div className="mt-2 rounded-xl border border-ink-200 p-3 text-sm"><b>HĐ đầu ra:</b> {(outs || []).map((o: any) => <div key={o.ma_hang} className="text-xs">
       {o.ma_hang} · còn tồn {num(o.ton, 2)}/{num(o.sl_nhap, 2)}{o.phieu ? ' · ' + o.phieu.split(',').map((p: string) => { const [c, st] = p.split(':'); return `${c} (${({ soan: 'đang soạn', cho_nhap: 'chờ xuất nháp', da_nhap: 'đã xuất nháp', xac_nhan_ky: 'sale xác nhận ký', da_ky: 'đã ký' } as any)[st] || st})`; }).join(', ') : ' · chưa lập phiếu'}</div>)}
-      <a className="text-xs font-semibold text-brand-700 underline" href="#/out">Mở Xuất HĐ đầu ra →</a></div>}
+      <a className="text-xs font-semibold text-brand-700 underline" href="#/hd">Mở Hóa đơn →</a></div>}
     {!acc && !l.sale_id && ['blocked', 'replied'].includes(l.status) && <ClaimForm line={l} onDone={onChanged} />}
-    {!acc && mine && ['blocked', 'replied'].includes(l.status) && <ReplyForm line={l} onDone={onChanged} />}
+    {!acc && mine && (['blocked', 'replied'].includes(l.status) || canFixPrice(l)) && <ReplyForm line={l} onDone={onChanged} />}
     {chot && <ChotModal line={l} onClose={() => setChot(false)} onDone={onChanged} />}
     {asg && <AssignModal line={l} onClose={() => setAsg(false)} onDone={onChanged} />}
     {(ev || []).length > 0 && <div className="mt-4"><div className="mb-1 text-xs font-bold uppercase text-ink-400">Nhật ký</div>{(ev || []).map(e => <div key={e.id} className="text-xs text-ink-600">{fmtDateTime(e.at)} · {a.personName(e.actor)} · {e.action}{e.note ? ' — ' + e.note : ''}</div>)}</div>}

@@ -10,23 +10,28 @@ export interface Person { id: string; full_name: string; employee_code: string; 
 
 interface Ctx {
   me: Me; lookups: Lookup[]; settings: Record<string, any>; people: Person[]; levels: any[]; units: any[];
+  /** Phân công CSKH ↔ sale đang hiệu lực mà người dùng được xem (bản 28) */
+  support: { id: string; cskh_id: string; sale_id: string; kind: 'chinh' | 'du_phong'; started_at: string }[];
+  /** Sale người dùng (CSKH) đang hỗ trợ */
+  mySales: string[];
   opts: (cat: string) => [string, string][]; label: (cat: string, code: string | null | undefined) => string; lk: (cat: string, code: string) => Lookup | undefined;
-  has: (...roles: string[]) => boolean; isAdmin: boolean; isSales: boolean; isLead: boolean; canHR: boolean; canDocs: boolean;
+  has: (...roles: string[]) => boolean; isAdmin: boolean; isSales: boolean; isLead: boolean; isCskh: boolean; seesTeam: boolean; canHR: boolean; canDocs: boolean;
   reload: () => Promise<void>; personName: (id: string | null | undefined) => string; refreshMe: () => Promise<void>;
 }
 const AppCtx = createContext<Ctx | null>(null);
 export const useApp = () => useContext(AppCtx)!;
 
 export async function loadContext() {
-  const [me, lookups, settings, people, levels, units] = await Promise.all([
+  const [me, lookups, settings, people, levels, units, support] = await Promise.all([
     db.rpc<Me>('me'),
     db.from<Lookup[]>('lookups').select('*').eq('active', true).order('category').order('sort'),
     db.from<any[]>('settings').select('key,value'),
     db.rpc<Person[]>('people_directory'),
     db.from<any[]>('job_levels').select('*').order('rank'),
     db.from<any[]>('org_units').select('*').order('sort'),
+    db.rpc<any[]>('support_list').catch(() => []),
   ]);
-  return { me, lookups, settings: Object.fromEntries((settings || []).map((s: any) => [s.key, s.value])), people: people || [], levels: levels || [], units: units || [] };
+  return { me, lookups, settings: Object.fromEntries((settings || []).map((s: any) => [s.key, s.value])), people: people || [], levels: levels || [], units: units || [], support: (support || []) as any[] };
 }
 
 export function AppProvider({ initial, children }: { initial: Awaited<ReturnType<typeof loadContext>>; children: React.ReactNode }) {
@@ -40,12 +45,16 @@ export function AppProvider({ initial, children }: { initial: Awaited<ReturnType
   const peopleMap = new Map(state.people.map(p => [p.id, p.full_name]));
   const value: Ctx = {
     ...state,
+    mySales: (state.support || []).filter(s => s.cskh_id === state.me.id).map(s => s.sale_id),
     opts: cat => state.lookups.filter(l => l.category === cat).map(l => [l.code, l.label]),
     label: (cat, code) => (code ? state.lookups.find(l => l.category === cat && l.code === code)?.label || code : ''),
     lk: (cat, code) => state.lookups.find(l => l.category === cat && l.code === code),
     has, isAdmin,
-    isSales: isAdmin || has('sale', 'tn_kd', 'tp_kd'),
+    isSales: isAdmin || has('sale', 'tn_kd', 'tp_kd', 'cskh'),
     isLead: isAdmin || has('tn_kd', 'tp_kd') || state.me.is_manager,
+    // Bản 28: CSKH hỗ trợ sale — xem / thao tác dữ liệu kinh doanh của sale được giao, không duyệt
+    isCskh: has('cskh'),
+    seesTeam: isAdmin || has('tn_kd', 'tp_kd', 'cskh') || state.me.is_manager,
     canHR: isAdmin || has('hcns', 'ke_toan'),
     canDocs: isAdmin || has('ke_toan') || (state.me.level_rank ?? 0) >= 3,
     reload, refreshMe,

@@ -8,7 +8,7 @@ import { db, fetchAll } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { readTable, readXlsx, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
-import { MISA_HEADER_ROW, misaMap, misaRows, parseBuyers, parseInfo, parseOrders, parseSoXuat, soRows, TPL_BUYERS, TPL_ORDERS, TPL_SO } from '../../lib/xuathd';
+import { MISA_HEADER_ROW, misaRows, parseBuyers, parseInfo, parseOrders, parseSoXuat, soRows, TPL_BUYERS, TPL_ORDERS, TPL_SO } from '../../lib/xuathd';
 import { Money, useAccCfg } from '../acc/common';
 import { printDraft } from './print';
 import { FileBadge, HdFilesSection, UploadHdPdf, type HdF } from './HdFiles';
@@ -506,7 +506,7 @@ export async function exportMisaFile(ids: string[] | null, personName: (id: stri
   qq = ids ? qq.in('id', ids) : qq.eq('status', 'cho_nhap').is('misa_at', null);
   const list = await qq; if (!list.length) throw new Error(ids ? 'Không có yêu cầu' : 'Không còn yêu cầu chưa export MISA');
   await writeXlsx('HD_nhap_MISA_' + today(), misaRows(list), 'Hóa đơn GTGT', true, { headerRow: MISA_HEADER_ROW, fmt: { 11: 'int', 12: 'int', 13: 'int', 14: 'pct', 15: 'int' } });
-  await writeXlsx('HD_nhap_doi_chieu_phieu_' + today(), misaMap(list, personName), 'Đối chiếu');
+  // Bản 28: chỉ 1 file nhập MISA (bỏ file đối chiếu phiếu — PDF nháp khớp theo MST + tổng tiền, không cần bảng đối chiếu)
   const cho = list.filter((v: any) => v.status === 'cho_nhap').map((v: any) => v.id);
   if (cho.length) await db.rpc('out_mark_misa', { p_ids: cho });
   return list.length;
@@ -527,7 +527,7 @@ export function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc
   const sign = () => run(async () => { const so = await ask({ title: 'Xác nhận đã ký HĐ', message: 'Đã ký trên phần mềm và gửi mail cho khách. Sale được báo để nhắc khách kiểm tra email.', input: { label: 'Số HĐ đã ký', required: true }, ok: 'Đã ký' });
     if (so === null) return; await db.rpc('out_invoice_status', { p_ids: [id], p_status: 'da_ky', p_so_hd: so, p_ngay: today() }); done(); }, 'Đã xác nhận ký');
   if (!v) return <Modal open onClose={onClose} title="Phiếu xuất HĐ">{vLoading ? <Loading /> : <Empty>Không tìm thấy phiếu (đã xóa, hoặc không thuộc bạn)</Empty>}</Modal>;
-  const mine = a.me.id === v.sale_id || a.isLead; const t = totalOf(v); const lines = (v.out_invoice_lines || []).slice().sort((x: any, y: any) => x.stt - y.stt);
+  const mine = a.me.id === v.sale_id || a.seesTeam; const t = totalOf(v); const lines = (v.out_invoice_lines || []).slice().sort((x: any, y: any) => x.stt - y.stt);
   const preview = () => { if (!printDraft({ co: a.settings.company, cfg: a.settings.accounting, buyer: { name: v.buyer_name || v.buyer_info || '', mst: v.tax_code, addr: v.address, email: v.email, pay: v.payment }, sale: a.personName(v.sale_id), code: v.code,
     lines: lines.map((l: any) => ({ ten: l.out_items?.ten, dvt: l.out_items?.dvt, sl: Number(l.sl), gia: Number(l.don_gia), vat: l.vat ?? l.out_items?.vat })) })) toast.err('Trình duyệt chặn cửa sổ mới — cho phép popup'); };
   const s = v.status; const canEdit = !['da_ky', 'huy'].includes(s) && (acc || (mine && s !== 'xac_nhan_ky'));

@@ -74,13 +74,13 @@ export default function Customers() {
       .is('deleted_at', null).order('next_care_date', { nulls: 'last' }).order('created_at', { asc: false });
     if (dq.trim()) { const s = dq.trim().replace(/[(),]/g, ' '); qq = qq.or(`contact_name.ilike.*${s}*,company_name.ilike.*${s}*,phone_norm.ilike.*${s.replace(/\D/g, '') || s}*,code.ilike.*${s}*,sys_code.ilike.*${s}*,sys_username.ilike.*${s}*,tax_code.ilike.*${s}*`); }
     if (stage) qq = qq.eq('stage', stage); if (temp) qq = qq.eq('temperature', temp); if (type) qq = qq.eq('customer_type', type);
-    if (owner) qq = qq.eq('owner_id', owner); else if (!a.isLead) qq = qq.eq('owner_id', a.me.id);
+    if (owner) qq = qq.eq('owner_id', owner); else if (!a.seesTeam) qq = qq.eq('owner_id', a.me.id);
     if (due) qq = qq.lte('next_care_date', today()).neq('stage', 'khong_tiem_nang');
     return qq;
   };
   const { data: res, loading, reload } = useLoad(() => build(true).range(pg.from, pg.to), [dq, stage, temp, type, owner, due, pg.page, pg.size]);
   const data = (res as any)?.data; const total = (res as any)?.count ?? 0;
-  const salesOpts = a.people.filter(p => p.status === 'active').map(p => [p.id, p.full_name] as [string, string]);
+  const salesOpts = a.people.filter(p => p.status === 'active' && (a.isLead || !a.isCskh || p.id === a.me.id || a.mySales.includes(p.id))).map(p => [p.id, p.full_name] as [string, string]);
   const { data: counts, reload: reloadCounts } = useLoad(() => db.rpc<any[]>('customer_stage_counts', { p_owner: owner || null }), [owner]);
   const cmap = new Map(((counts as any[]) || []).map(r => [r.stage, Number(r.n)]));
   const stageTotal = Array.from(cmap.values()).reduce((x, y) => x + y, 0);
@@ -106,7 +106,7 @@ export default function Customers() {
           <Input className="col-span-2" placeholder="Tìm tên, SĐT, MST, mã KH, username HT…" value={q} onChange={e => setQ(e.target.value)} />
           <Select options={a.opts('temperature')} value={temp} onChange={setTemp} placeholder="Mọi mức độ" />
           <Select options={a.opts('customer_type')} value={type} onChange={setType} placeholder="Mọi loại khách" />
-          {a.isLead ? <Select options={salesOpts} value={owner} onChange={setOwner} placeholder="Mọi nhân viên" /> : <span className="hidden md:block" />}
+          {a.seesTeam ? <Select options={salesOpts} value={owner} onChange={setOwner} placeholder="Mọi nhân viên" /> : <span className="hidden md:block" />}
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={due} onChange={e => setDue(e.target.checked)} /> Chỉ khách đến hạn</label>
         </div>
       </div>
@@ -198,7 +198,7 @@ function CustomerPanel({ id, onClose, onSaved }: { id: string | null; onClose: (
   });
   if (id && loading) return <div className="rounded-xl border border-ink-200 bg-white"><Loading /></div>;
   if (id && !c) return <div className="rounded-xl border border-ink-200 bg-white p-6 text-sm">Không tìm thấy khách hoặc bạn không có quyền. <Button size="sm" onClick={onClose}>Đóng</Button></div>;
-  const mine = !c || c.owner_id === a.me.id || a.isLead;
+  const mine = !c || c.owner_id === a.me.id || a.seesTeam;
   return (
     <div className="flex flex-col rounded-2xl border border-ink-200 bg-white shadow-soft xl:sticky xl:top-16 xl:max-h-[calc(100vh-5rem)]">
       <button onClick={onClose} className="flex items-center gap-1 px-4 pt-3 text-sm font-semibold text-brand-700 xl:hidden">← Quay lại danh sách</button>

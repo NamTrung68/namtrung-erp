@@ -7,11 +7,11 @@ import { useApp } from '../../state';
 import { BANKS } from '../../lib/vietqr';
 import { fmtDate } from '../../lib/format';
 
-export const ROLES: [string, string][] = [['admin', 'Admin hệ thống'], ['bgd', 'Ban giám đốc'], ['hcns', 'HCNS'], ['ke_toan', 'Kế toán'], ['tp_kd', 'Trưởng phòng KD'], ['tn_kd', 'Trưởng nhóm KD'], ['sale', 'Sale'], ['nhan_vien', 'Nhân viên (phòng khác)']];
+export const ROLES: [string, string][] = [['admin', 'Admin hệ thống'], ['bgd', 'Ban giám đốc'], ['hcns', 'HCNS'], ['ke_toan', 'Kế toán'], ['tp_kd', 'Trưởng phòng KD'], ['tn_kd', 'Trưởng nhóm KD'], ['sale', 'Sale'], ['cskh', 'CSKH hỗ trợ sale'], ['nhan_vien', 'Nhân viên (phòng khác)']];
 const SCHED: [string, string][] = [['office', 'Văn phòng (T2–sáng T7, chấm công)'], ['warehouse', 'Kho (T2–T7, không chấm công)'], ['none', 'Không chấm công']];
 
 export default function Users() {
-  const a = useApp(); const [q, setQ] = useState(''); const [edit, setEdit] = useState<any>(null); const [inv, setInv] = useState(false);
+  const a = useApp(); const [q, setQ] = useState(''); const [edit, setEdit] = useState<any>(null); const [inv, setInv] = useState(false); const [sup, setSup] = useState<any>(null);
   const { data, loading, reload } = useLoad(() => db.from('profiles').select('*').order('full_name'), []);
   const { data: invites, reload: ri } = useLoad(() => db.from('invites').select('*').is('used_at', null).order('created_at', { asc: false }), []);
   const { run } = useAction();
@@ -31,8 +31,10 @@ export default function Users() {
         <tr key={i.email}><Td>{i.email}</Td><Td>{i.full_name}</Td><Td>{i.roles.join(', ')}</Td><Td>{fmtDate(i.created_at)}</Td>
           <Td><Button size="sm" variant="ghost" onClick={() => run(async () => { await db.from('invites').delete().eq('email', i.email); ri(); }, 'Đã hủy lời mời')}>Hủy</Button></Td></tr>))}</Table>
         <p className="px-4 py-2 text-xs text-ink-500">Lời mời chưa có tài khoản: bấm Hủy rồi tạo lại kèm mật khẩu tạm.</p></Card>}
+      <SupportCard rows={(data as any[]) || []} onOpen={setSup} />
       {inv && <Invite onClose={() => setInv(false)} onDone={() => { setInv(false); ri(); }} />}
-      {edit && <EditUser p={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); a.reload(); }} />}
+      {sup && <SupportModal p={sup} onClose={() => setSup(null)} onDone={() => { setSup(null); a.reload(); }} />}
+      {edit && <EditUser p={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); a.reload(); }} onSupport={() => { setSup(edit); setEdit(null); }} />}
     </Layout>
   );
 }
@@ -65,7 +67,7 @@ function Invite({ onClose, onDone }: { onClose: () => void; onDone: () => void }
   );
 }
 
-function EditUser({ p, onClose, onDone }: { p: any; onClose: () => void; onDone: () => void }) {
+function EditUser({ p, onClose, onDone, onSupport }: { p: any; onClose: () => void; onDone: () => void; onSupport: () => void }) {
   const a = useApp(); const [f, setF] = useState({ ...p, sale_aliases: (p.sale_aliases || []).join(', ') });
   const { data: priv } = useLoad(() => db.from('profile_private').select('*').eq('profile_id', p.id).maybeSingle(), [p.id]);
   const [pv, setPv] = useState<any>(null); const pp = pv || priv || {};
@@ -117,6 +119,9 @@ function EditUser({ p, onClose, onDone }: { p: any; onClose: () => void; onDone:
         {canHR && <Field label="Ngày sinh 🎂" hint="Hiện ngày/tháng ở mục Sinh nhật, không hiện năm"><Input type="date" value={dobVal} onChange={e => setDob(e.target.value)} /></Field>}
         <Field label="Trạng thái"><Select options={[['active', 'Đang làm'], ['inactive', 'Đã nghỉ (khóa đăng nhập)']]} value={f.status} onChange={set('status')} /></Field>
         <Field label="Vai trò" className="sm:col-span-3"><Chips options={roleOpts} value={f.roles} onChange={set('roles')} /></Field>
+        {p.roles.includes('cskh') && <div className="flex flex-wrap items-center gap-2 rounded-xl bg-sky-50 px-3 py-2 text-sm text-sky-900 sm:col-span-3">CSKH đang hỗ trợ <b>{a.support.filter(s => s.cskh_id === p.id && s.kind === 'chinh').length}</b> sale (chính) · <b>{a.support.filter(s => s.cskh_id === p.id && s.kind === 'du_phong').length}</b> sale (dự phòng)
+          <Button size="sm" onClick={onSupport}>Phân công sale hỗ trợ</Button></div>}
+        {!p.roles.includes('cskh') && f.roles.includes('cskh') && <div className="rounded-xl bg-sky-50 px-3 py-2 text-xs text-sky-900 sm:col-span-3">Lưu vai trò CSKH xong, mở lại để phân công sale hỗ trợ.</div>}
         <Field label="Tên trong file đơn hoàn thành (cột Nhân viên KD), cách nhau dấu phẩy" className="sm:col-span-2"><Input value={f.sale_aliases} onChange={e => set('sale_aliases')(e.target.value)} placeholder="VD: Khơi Lê, Trungdv22" /></Field>
         <label className="flex items-end gap-2 pb-2 text-sm"><input type="checkbox" checked={f.is_new_hire} onChange={e => set('is_new_hire')(e.target.checked)} /> Nhân viên mới (KPI × 0,7)</label>
       </div>
@@ -133,4 +138,43 @@ function EditUser({ p, onClose, onDone }: { p: any; onClose: () => void; onDone:
       </div>}
     </Modal>
   );
+}
+
+// ---------- Bản 28: phân công CSKH hỗ trợ sale (chính + dự phòng) ----------
+const SALE_ROLES = ['sale', 'tn_kd', 'tp_kd'];
+function SupportCard({ rows, onOpen }: { rows: any[]; onOpen: (p: any) => void }) {
+  const a = useApp(); const cskh = rows.filter(p => p.status === 'active' && (p.roles || []).includes('cskh'));
+  const sales = rows.filter(p => p.status === 'active' && (p.roles || []).some((r: string) => SALE_ROLES.includes(r)));
+  const noMain = sales.filter(s => !a.support.some(x => x.sale_id === s.id && x.kind === 'chinh'));
+  if (!cskh.length) return <Card title="Phân công CSKH hỗ trợ sale" className="mt-4"><p className="text-sm text-ink-600">Chưa có nhân sự vai trò <b>CSKH hỗ trợ sale</b>. Mở hồ sơ nhân sự → tick vai trò CSKH → Lưu → mở lại để phân công sale.</p></Card>;
+  return <Card title="Phân công CSKH hỗ trợ sale" className="mt-4" bodyClass="p-0">
+    <p className="px-4 pt-3 text-xs text-ink-500">CSKH xem và thao tác dữ liệu kinh doanh (khách, chăm sóc, báo giá, đối soát xe, hóa đơn) của sale được giao, nhận bản sao thông báo việc của sale đó. <b>Không duyệt</b> (giá ngoài khung, mở chặn, lệch HĐ, nghỉ phép, chấm công), không chuyển / xóa khách, không thấy công – phép – lương của sale. CSKH chính nghỉ cả ngày → CSKH dự phòng nhận thông báo thay.</p>
+    <Table head={['CSKH', 'Hỗ trợ chính', 'Dự phòng', '']}>{cskh.map(p => { const m = a.support.filter(s => s.cskh_id === p.id && s.kind === 'chinh'); const b = a.support.filter(s => s.cskh_id === p.id && s.kind === 'du_phong');
+      return <tr key={p.id}><Td className="font-medium">{p.full_name}{m.length > 10 && <Badge className="ml-1" color="amber">quá 10 sale</Badge>}</Td>
+        <Td className="text-xs">{m.length ? m.map(s => a.personName(s.sale_id)).join(', ') : <span className="text-ink-400">—</span>}</Td>
+        <Td className="text-xs">{b.length ? b.map(s => a.personName(s.sale_id)).join(', ') : <span className="text-ink-400">—</span>}</Td>
+        <Td><Button size="sm" onClick={() => onOpen(p)}>Phân công</Button></Td></tr>; })}</Table>
+    {noMain.length > 0 && <p className="px-4 py-2 text-xs text-amber-700">Sale chưa có CSKH chính: {noMain.map(s => s.full_name).join(', ')}</p>}
+  </Card>;
+}
+function SupportModal({ p, onClose, onDone }: { p: any; onClose: () => void; onDone: () => void }) {
+  const a = useApp(); const { busy, run } = useAction();
+  const sales = a.people.filter(x => x.status === 'active' && x.id !== p.id && (x.roles || []).some(r => SALE_ROLES.includes(r)));
+  const mine = (k: string) => a.support.filter(s => s.cskh_id === p.id && s.kind === k).map(s => s.sale_id);
+  const [main, setMain] = useState<string[]>(mine('chinh')); const [bk, setBk] = useState<string[]>(mine('du_phong'));
+  const takenBy = (sid: string, k: string) => a.support.find(s => s.sale_id === sid && s.kind === k && s.cskh_id !== p.id);
+  const opts = (k: string, other: string[]) => sales.filter(s => !other.includes(s.id)).map(s => { const t = takenBy(s.id, k); return [s.id, s.full_name + (t ? ` (đang của ${a.personName(t.cskh_id)})` : '')] as [string, string]; });
+  const save = () => run(async () => {
+    const clash = [...main.filter(id => takenBy(id, 'chinh')), ...bk.filter(id => takenBy(id, 'du_phong'))];
+    if (clash.length) throw new Error('Sale đã có CSKH khác: ' + clash.map(id => a.personName(id)).join(', ') + ' — bỏ phân công ở CSKH kia trước');
+    await db.rpc('support_assign_save', { p_cskh: p.id, p_main: main, p_backup: bk }); onDone();
+  }, 'Đã lưu phân công');
+  return <Modal open onClose={onClose} title={`Phân công sale cho CSKH · ${p.full_name}`} size="lg" footer={<Button variant="primary" loading={busy} onClick={save}>Lưu phân công</Button>}>
+    <div className="space-y-4">
+      <Field label={`Hỗ trợ chính (${main.length}) — nên 2–10 sale`}><Chips options={opts('chinh', bk)} value={main} onChange={setMain} /></Field>
+      {main.length > 10 && <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">Hơn 10 sale — CSKH dễ quá tải, cân nhắc chia bớt.</div>}
+      <Field label={`Dự phòng (${bk.length}) — thay khi CSKH chính nghỉ`}><Chips options={opts('du_phong', main)} value={bk} onChange={setBk} /></Field>
+      <p className="text-xs text-ink-500">Mỗi sale có tối đa 1 CSKH chính và 1 CSKH dự phòng. Bỏ tick = kết thúc phân công từ hôm nay (lịch sử vẫn lưu).</p>
+    </div>
+  </Modal>;
 }

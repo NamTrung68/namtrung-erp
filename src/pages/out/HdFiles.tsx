@@ -64,7 +64,7 @@ export function HdFilesSection({ v, files, acc, onChanged }: { v: any; files: Hd
   const nhap = files.find(f => f.kind === 'nhap' && f.latest); const ky = files.find(f => f.kind === 'ky' && f.latest);
   const main = ky || nhap;
   useEffect(() => { if (main) hdFile(a.settings.drive, main.id).catch(() => {}); }, [main?.id]);   // tải sẵn để bấm Xem là hiện ngay
-  const mine = a.me.id === v.sale_id || a.isLead;
+  const mine = a.me.id === v.sale_id || a.seesTeam;
   const sent = (f: HdF) => run(async () => { await db.rpc('out_file_sent', { p_file: f.id }); onChanged(); }, 'Đã ghi nhận gửi khách');
   const okSign = () => run(async () => { await db.rpc('out_confirm_sign', { p_invoice: v.id, p_version: nhap?.version ?? null }); setView(null); onChanged(); }, 'Đã báo kế toán ký');
   const fix = () => run(async () => { const note = await ask({ title: 'Khách yêu cầu sửa', input: { label: 'Nội dung cần sửa', required: true } });

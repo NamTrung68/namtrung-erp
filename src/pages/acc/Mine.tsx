@@ -8,7 +8,7 @@ import { useApp } from '../../state';
 import { fmtDateTime, money, num, stripVN } from '../../lib/format';
 import { bienTone, deXuat, dueTxt, GiaApt, lineName, LuongBadge, Money, pctTxt, REPLY, ST, StatusBadge, useAccCfg } from './common';
 import { LineModal } from './Acc';
-import { ClaimForm, ReplyForm } from './forms';
+import { canFixPrice, ClaimForm, ReplyForm } from './forms';
 import { aptPriceMsg, INV_RESULT, InvResult } from '../../lib/doisoat';
 import { writeXlsx } from '../../lib/xlsx';
 
@@ -25,7 +25,7 @@ function LineCard({ l, children, onOpen }: { l: any; children?: React.ReactNode;
     <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm"><span>SL <b>{num(l.sl_apt ?? l.sl_ht, 0)}</b> {l.dvt_apt || l.dvt_ht}</span><span>Giá khách <b><Money v={l.gia_khach} /></b></span>
       <span>Giá APT <b><Money v={l.gia_nhap} /></b>{l.gia_note && Math.abs(l.gia_note - (l.gia_nhap || 0)) > 0.5 ? <> · NOTE <Money v={l.gia_note} /></> : ''}</span>{l.bien_nt !== null && <span>Biên NT <b className={bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max, cfg.bien_chan_max)}>{pctTxt(l.bien_nt)}</b></span>}<LuongBadge l={l.luong} /></div>
     {(l.issues || []).map((x: string, i: number) => <div key={i} className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">⚠ {x}</div>)}
-    {l.reply && <div className="mt-2 text-sm text-ink-600">Đã trả lời: <b>{REPLY[l.reply]}</b>{l.claim_md ? ` — ${l.claim_md}` : ''}{l.claim_gia ? ` — giá khách ${money(l.claim_gia)}` : ''}{l.reply_price ? ` — ${Math.round(l.reply_price)}` : ''}{l.reply_note ? ` — “${l.reply_note}”` : ''} <span className="text-xs text-ink-400">({fmtDateTime(l.replied_at)})</span></div>}
+    {l.reply && <div className="mt-2 text-sm text-ink-600">Đã trả lời: <b>{REPLY[l.reply]}</b>{l.claim_md ? ` — ${l.claim_md}` : ''}{l.claim_gia ? ` — giá khách ${money(l.claim_gia)}` : ''}{l.reply_price ? ` — ${Math.round(l.reply_price)}` : ''}{l.reply_note ? ` — “${l.reply_note}”` : ''} <span className="text-xs text-ink-400">({l.replied_by && l.replied_by !== l.sale_id ? a.personName(l.replied_by) + ' · ' : ''}{fmtDateTime(l.replied_at)})</span></div>}
     {l.approve_note && <div className="mt-1 text-sm text-ink-600">{l.status === 'approved' ? 'Đã duyệt' : 'Người duyệt'}: “{l.approve_note}” <span className="text-xs text-ink-400">— {a.personName(l.approved_by)}</span></div>}
     {children}
   </div>;
@@ -38,7 +38,7 @@ export function AccMine() {
   const go2 = (t: MTab) => { setTab(t); sessionStorage.setItem('nt_accmine', t); };
   const { data, loading, reload } = useLoad(() => fetchAll<any>(() => db.from('acc_lines').select(SEL).eq('is_test', false).order('updated_at', { asc: false }), 20000), []);
   const all = data || [];
-  const mine = all.filter(l => l.sale_id && (l.sale_id === a.me.id || a.isLead));
+  const mine = all.filter(l => l.sale_id && (l.sale_id === a.me.id || a.seesTeam));
   const free = all.filter(l => !l.sale_id && ['A', 'B'].includes(l.luong) && ['blocked', 'replied'].includes(l.status));
   const todo = mine.filter(l => ['blocked', 'replied', 'pending_approval'].includes(l.status));
   // Bản 23: biên ngoài khung chỉ cảnh báo (không chặn) — vẫn liệt kê để sale copy giá đề xuất gửi APT
@@ -76,9 +76,10 @@ export function AccMine() {
     {tab === 'todo' && <><p className="mb-3 text-sm text-ink-600">Dòng hàng trên HĐ APT <b>chưa đủ điều kiện tự chốt</b>. Chọn 1 cách xử lý trong {cfg.han_sale_gio}h. Sửa trên NamtrungLog trước rồi mới bấm “Đã sửa hệ thống”.</p>
       <StatusChips value={st} onChange={setSt} items={[['', 'Tất cả', todo.length, 'dark'], ['blocked', ST.blocked[0], c('blocked'), 'red'], ['replied', ST.replied[0], c('replied'), 'amber'], ['pending_approval', ST.pending_approval[0], c('pending_approval'), 'purple']]} /></>}
     {tab === 'free' && <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Hàng đã lên xe nhưng <b>không tìm thấy đơn / sale trên hệ thống</b>. Nếu là hàng khách của bạn: tạo đơn trên NamtrungLog → bấm “Nhận dòng này”, nhập MD + giá khách. Kế toán kiểm rồi chốt.</p>}
-    {tab === 'price' && (price.length > 0 || xt.length > 0) && <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm">Biên NT ngoài khung — hệ thống tính giá để biên NT về {pctTxt(cfg.bien_muc_tieu)}. Copy gửi APT, gửi xong bấm xác nhận.
+    {tab === 'price' && (price.length > 0 || xt.length > 0) && <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm">Biên NT ngoài khung — hệ thống tính giá để biên NT về {pctTxt(cfg.bien_muc_tieu)}. Copy gửi APT, gửi xong bấm xác nhận. <b>Giá khách sai</b> thì bấm “Sửa giá khách” ngay trên dòng.
       <Button size="sm" variant="primary" onClick={copyAll}>📋 Copy tất cả gửi APT</Button><Button size="sm" onClick={exportPrice}>⬇ Xuất Excel{xt.length ? ` (+${xt.length} xuất thẳng)` : ''}</Button><Button size="sm" variant="success" loading={busy} onClick={sentAll}>✓ Đã gửi APT tất cả</Button></div>}
     <div className="mb-3 flex flex-wrap items-center gap-2"><Input className="max-w-xs" placeholder="🔎 MD, mã HH, tên hàng, số HĐ, xe…" value={q} onChange={e => setQ(e.target.value)} />
+      {tab === 'all' && <span className="text-xs text-ink-500">Bấm vào dòng để xem chi tiết / sửa giá khách (khi HĐ ký APT chưa về).</span>}
       {tab === 'all' && <Select className="w-48" placeholder="HĐ đầu vào: tất cả" options={[['co', 'Đã có HĐ'], ['chua', 'Chưa có HĐ'], ['mot', 'Mới xuất một phần']]} value={hd} onChange={setHd} />}</div>
     {loading ? <Loading /> : !view.length ? <Card><Empty>{tab === 'todo' ? '🎉 Không có dòng nào cần bạn xử lý' : 'Không có dòng'}</Empty></Card> :
       tab === 'all' ? <Card bodyClass="p-0"><Table head={['Xe', 'MD', 'Tên hàng', 'SL', 'Giá APT', 'Giá khách', 'Biên NT', 'Trạng thái', 'HĐ đầu vào']}>{pg.slice(view).map(l =>
@@ -90,7 +91,8 @@ export function AccMine() {
           <Td className="whitespace-nowrap text-xs">{l.inv_no ? <>{l.inv_no}<div><Badge color={INV_RESULT[l.inv_result as InvResult]?.[1]}>{INV_RESULT[l.inv_result as InvResult]?.[0].slice(0, 18)}</Badge></div></> : <span className="text-ink-400">Chưa có</span>}</Td></tr>)}</Table></Card> :
       <div className="space-y-3">{pg.slice(view).map(l => <LineCard key={l.id} l={l} onOpen={() => setSel(l)}>
         
-        {['todo', 'price'].includes(tab) && ['blocked', 'replied'].includes(l.status) && <ReplyForm line={l} onDone={reload} />}
+        {tab === 'todo' && ['blocked', 'replied'].includes(l.status) && <ReplyForm line={l} onDone={reload} />}
+        {tab === 'price' && (['blocked', 'replied'].includes(l.status) || canFixPrice(l)) && <ReplyForm line={l} onDone={reload} />}
         {tab === 'free' && <ClaimForm line={l} onDone={reload} />}</LineCard>)}</div>}
     <Pager p={pg} total={view.length} /></>}
     </div>

@@ -32,7 +32,6 @@ import DataAdmin from './pages/admin/Data';
 import Account from './pages/Account';
 import Acc from './pages/acc/Acc';
 import { AccApprove, AccMine } from './pages/acc/Mine';
-import Out from './pages/out/Out';
 import { HdKeToan, HdQuanLy, HdSale } from './pages/hd/Hd';
 import { HdGuide, SystemGuide } from './pages/Guide';
 
@@ -45,8 +44,16 @@ const routes: Record<string, React.FC> = {
   '/hr/attendance': Attendance, '/hr/leave': Leave, '/hr/approvals': Approvals,
   '/hr/payroll': Payroll, '/hr/payslips': Payslips, '/hr/payslip': PayslipView,
   '/admin/users': Users, '/admin/settings': Settings, '/admin/data': DataAdmin,
-  '/account': Account, '/acc': Acc, '/acc/mine': AccMine, '/acc/approve': AccApprove, '/out': Out, '/hd': HdSale, '/hd/kt': HdKeToan, '/hd/ql': HdQuanLy, '/hd/guide': HdGuide, '/guide': SystemGuide,
+  '/account': Account, '/acc': Acc, '/acc/mine': AccMine, '/acc/approve': AccApprove, '/out': OutRedirect, '/hd': HdSale, '/hd/kt': HdKeToan, '/hd/ql': HdQuanLy, '/hd/guide': HdGuide, '/guide': SystemGuide,
 };
+
+// Bản 28: trang cũ "Xuất HĐ đầu ra" (#/out) đã ẩn — mọi link cũ (thông báo, đánh dấu) chuyển về màn hình mới, giữ ?inv=
+function OutRedirect() {
+  const a = useApp(); const { query } = useRoute();
+  useEffect(() => { const to = (a.isAdmin || a.has('ke_toan') ? '/hd/kt' : '/hd') + (query.inv ? '?inv=' + query.inv : '');
+    location.replace(location.pathname + location.search + '#' + to); }, []); // replace: không để lại #/out trong lịch sử, hashchange tự phát
+  return <div className="grid min-h-screen place-items-center"><Loading text="Đang chuyển sang màn hình Hóa đơn…" /></div>;
+}
 
 function Router() {
   const { path } = useRoute(); const a = useApp();
@@ -77,5 +84,9 @@ function App() {
 
 const recovery = auth.consumeUrlToken();
 if (recovery === 'recovery' || recovery === 'invite' || recovery === 'signup') sessionStorage.setItem('nt_recovery', '1');
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Bản 28: chạm thông báo khi app đang mở → service worker báo đường dẫn, mở đúng mục
+  navigator.serviceWorker.addEventListener('message', e => { const l = e.data && e.data.link; if (typeof l === 'string' && l.startsWith('#')) location.hash = l; });
+}
 createRoot(document.getElementById('root')!).render(<><App /><Toaster /></>);

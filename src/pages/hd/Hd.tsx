@@ -6,7 +6,7 @@ import React, { useMemo, useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Card, cx, Empty, Input, Loading, Select, Stat, Tabs, ask, toast, useAction, useLoad } from '../../components/ui';
 import { db } from '../../lib/sb';
-import { go, useApp } from '../../state';
+import { go, useApp, useRoute } from '../../state';
 import { fmtDate, fmtDateTime, money, num } from '../../lib/format';
 import { downloadMau, MAU, type MauKind } from '../../lib/mau';
 import { Money } from '../acc/common';
@@ -39,7 +39,7 @@ function useInv(statuses: string[], extra: Record<string, any> = {}, dep: any[] 
 function InvRows({ rows, loading, onOpen, empty, action, sale = false }: { rows: any[]; loading: boolean; onOpen: (id: string) => void; empty: string; action?: (v: any) => React.ReactNode; sale?: boolean }) {
   const a = useApp();
   if (loading && !rows.length) return <Loading />;
-  if (!rows.length) return <div className="px-4 py-6 text-center text-sm text-ink-400">{empty}</div>;
+  if (!rows.length) return empty ? <div className="px-4 py-6 text-center text-sm text-ink-400">{empty}</div> : null;
   return <div className="divide-y divide-ink-100">{rows.map(v => { const [who, what] = nextStep(v); const tong = Number(v.tien_hang || 0) + Number(v.tien_thue || 0);
     return <div key={v.id} className="flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 hover:bg-ink-50" onClick={() => onOpen(v.id)}>
       <div className="w-28 shrink-0"><div className="text-sm font-semibold text-ink-900">{v.code}{v.version > 1 && <span className="ml-1 text-[11px] font-normal text-ink-500">v{v.version}</span>}</div>
@@ -66,8 +66,11 @@ type STab = 'ready' | 'duyet' | 'tra' | 'dang' | 'ky';
 export function HdSale() {
   const a = useApp(); const [tab, setTab] = useState<STab>(() => (sessionStorage.getItem('nt_hd_tab') as STab) || 'ready');
   const go2 = (t: string) => { setTab(t as STab); sessionStorage.setItem('nt_hd_tab', t); };
-  const [sale, setSale] = useState(''); const [open, setOpen] = useState<string | null>(null); const [rev, setRev] = useState(0);
-  const { data: saleOpts } = useLoad(() => a.isLead ? db.rpc<any[]>('out_sale_opts') : Promise.resolve([]), []);
+  const { query } = useRoute();
+  const [sale, setSale] = useState(''); const [open, setOpen] = useState<string | null>(query.inv || null); const [rev, setRev] = useState(0);
+  React.useEffect(() => { if (query.inv) setOpen(query.inv); }, [query.inv]);
+  const close = () => { setOpen(null); if (location.hash.includes('inv=')) go('/hd'); };
+  const { data: saleOpts } = useLoad(() => a.seesTeam ? db.rpc<any[]>('out_sale_opts') : Promise.resolve([]), []);
   const { data: cnt } = useLoad(() => db.rpc<any>('out_invoices_page', { p: { limit: 0, sale } }), [sale, rev]);
   const { data: st } = useLoad(() => db.rpc<any>('out_items_stats', { p_mode: 'mine' }), [rev]);
   const c = (k: string) => Number(cnt?.counts?.[k] || 0);
@@ -81,7 +84,7 @@ export function HdSale() {
   ];
   const reload = () => setRev(x => x + 1);
   return <Layout title="Hóa đơn của tôi" actions={<div className="flex items-center gap-2">
-    {a.isLead && (saleOpts || []).length > 1 && <Select className="w-48" placeholder="Cả nhóm" options={(saleOpts || []).map((x: any) => [x.id, x.full_name] as [string, string])} value={sale} onChange={setSale} />}
+    {a.seesTeam && (saleOpts || []).length > 1 && <Select className="w-48" placeholder={a.isCskh && !a.isLead ? 'Các sale tôi hỗ trợ' : 'Cả nhóm'} options={(saleOpts || []).map((x: any) => [x.id, x.full_name] as [string, string])} value={sale} onChange={setSale} />}
     <Button onClick={() => go('/acc/mine')}>Đối soát xe của tôi</Button></div>}>
     <Tabs value={tab} onChange={go2} tabs={tabs} />
     <div className="mt-4">
@@ -91,7 +94,7 @@ export function HdSale() {
       {tab === 'dang' && <SaleList statuses={['cho_nhap', 'xac_nhan_ky']} sale={sale} rev={rev} onOpen={setOpen} empty="Không có yêu cầu đang ở phía kế toán" hint="Đã gửi → kế toán export MISA → có nháp sẽ chuyển sang tab Chờ tôi duyệt. Đã chốt → chờ kế toán ký." />}
       {tab === 'ky' && <SaleList statuses={['da_ky']} sale={sale} rev={rev} onOpen={setOpen} empty="Chưa có HĐ đã ký" hint="Mở yêu cầu để xem / in PDF nháp và PDF đã ký." />}
     </div>
-    {open && <InvoiceDetail id={open} acc={false} onClose={() => setOpen(null)} onChanged={reload} />}
+    {open && <InvoiceDetail id={open} acc={false} onClose={close} onChanged={reload} />}
   </Layout>;
 }
 function SaleList({ statuses, sale, rev, onOpen, empty, hint }: { statuses: string[]; sale: string; rev: number; onOpen: (id: string) => void; empty: string; hint: string }) {
@@ -189,7 +192,10 @@ function Ready({ sale, rev, onChanged }: { sale: string; rev: number; onChanged:
 export function HdKeToan() {
   const a = useApp(); const acc = a.isAdmin || a.has('ke_toan'); const { busy, run } = useAction();
   const [rev, setRev] = useState(0); const reload = () => setRev(x => x + 1);
-  const [imp, setImp] = useState<'' | 'xe' | 'hd' | 'ds'>(''); const [pdf, setPdf] = useState(false); const [open, setOpen] = useState<string | null>(null); const [lechT, setLechT] = useState<any>(null);
+  const { query } = useRoute();
+  const [imp, setImp] = useState<'' | 'xe' | 'hd' | 'ds'>(''); const [pdf, setPdf] = useState(false); const [open, setOpen] = useState<string | null>(query.inv || null); const [lechT, setLechT] = useState<any>(null);
+  React.useEffect(() => { if (query.inv) setOpen(query.inv); }, [query.inv]);
+  const close = () => { setOpen(null); if (location.hash.includes('inv=')) go('/hd/kt'); };
   const { data: st } = useLoad(() => db.rpc<any>('out_items_stats', { p_mode: 'acc' }), [rev]);
   const { data: trucks } = useLoad(() => db.from<any[]>('acc_trucks').select('id,name,truck_date,stats,created_at,is_test').order('created_at', { asc: false }).limit(5), [rev]);
   const { data: blk } = useLoad(() => db.from<any[]>('acc_lines').select('truck_id,status,sale_id').in('status', ['blocked', 'replied', 'pending_approval']).eq('is_test', false).limit(5000), [rev]);
@@ -204,10 +210,12 @@ export function HdKeToan() {
   const S = st || {}; const rows = moi.data || [];
   const chuaExport = rows.filter(v => v.status === 'cho_nhap' && !v.misa_at); const choPdf = rows.filter(v => v.status === 'cho_nhap' && v.misa_at); const duyet = rows.filter(v => v.status === 'cho_duyet_gia');
   const exportAll = () => run(async () => { const n = await exportMisaFile(null, id => a.personName(id)); reload(); toast.ok(`Đã export ${n} yêu cầu — nhập vào MISA, tạo nháp, tải PDF về khối ③`); });
+  // Bản 28: yêu cầu đã export nhưng chưa có PDF nháp vẫn ở khối ②, export lại được (từng phiếu hoặc tất cả)
+  const reExport = (ids: string[]) => run(async () => { const n = await exportMisaFile(ids, id => a.personName(id)); reload(); toast.ok(`Đã export lại ${n} yêu cầu`); });
   const approve = (v: any) => run(async () => { const note = await ask({ title: `Duyệt giá ${v.code} — biên ${pctTxt(Number(v.bien_max))}`, input: { label: 'Ghi chú (không bắt buộc)' }, ok: 'Duyệt' }); if (note === null) return;
     await db.rpc('out_price_approve', { p_ids: [v.id], p_note: note || null }); reload(); }, 'Đã duyệt giá');
   const nBlk = (blk || []).filter(l => l.status === 'blocked').length;
-  return <Layout title="Bàn làm việc kế toán" actions={<div className="flex gap-2"><Button onClick={() => go('/out')}>Tra cứu yêu cầu / bảng gốc</Button><Button onClick={() => go('/acc')}>Danh sách xe</Button></div>}>
+  return <Layout title="Bàn làm việc kế toán" actions={<div className="flex gap-2"><Button onClick={() => go('/acc')}>Danh sách xe</Button></div>}>
     <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
       <Stat label="Dòng xe chờ sale xử lý" value={nBlk} tone={nBlk ? 'red' : undefined} onClick={() => go('/acc')} sub="thiếu đơn / giá khách / sale" />
       <Stat label="Dòng HĐ lệch nháp — khóa" value={S.lech ?? '…'} tone={S.lech ? 'red' : undefined} />
@@ -230,16 +238,19 @@ export function HdKeToan() {
           <Button size="sm" variant={locked(t) ? 'danger' : undefined} onClick={() => setLechT(t)}>{locked(t) ? 'Xử lý lệch' : 'Ghép tay'}</Button></div>)}</div>}
     </Block>
 
-    <Block n="2" title="Yêu cầu mới → export MISA" sub="Chỉ yêu cầu đã gửi (biên 2–4%, hoặc đã được duyệt giá). Export xong, sale không hủy được nữa."
-      actions={<Button variant="primary" loading={busy} disabled={!chuaExport.length} onClick={exportAll}>⬇ Export file nhập MISA ({chuaExport.length})</Button>}>
+    <Block n="2" title="Yêu cầu mới → export MISA" sub={<>Chỉ yêu cầu đã gửi (biên 2–4%, hoặc đã được duyệt giá). Export xong, sale không hủy được nữa. Yêu cầu <b>đã export</b> vẫn nằm đây tới khi nạp PDF nháp. <b>{chuaExport.length}</b> chưa export · <b>{choPdf.length}</b> đã export chờ PDF nháp.</>}
+      actions={<>{choPdf.length > 0 && <Button loading={busy} onClick={() => reExport(choPdf.map(v => v.id))}>↻ Export lại đã export ({choPdf.length})</Button>}<Button variant="primary" loading={busy} disabled={!chuaExport.length} onClick={exportAll}>⬇ Export file nhập MISA ({chuaExport.length})</Button></>}>
       {duyet.length > 0 && <div className="border-b border-ink-100 bg-red-50/40"><div className="px-4 pt-2 text-xs font-semibold text-red-700">Chờ duyệt giá (biên &gt; 4%) — 1 người duyệt là đủ</div>
         <InvRows rows={duyet} loading={false} onOpen={setOpen} empty="" action={v => <Button size="sm" variant="primary" onClick={() => approve(v)}>Duyệt</Button>} /></div>}
-      <InvRows rows={chuaExport} loading={moi.loading} onOpen={setOpen} empty="Không có yêu cầu mới chờ export" />
+      {chuaExport.length > 0 && <div className="px-4 pt-2 text-xs font-semibold text-amber-700">Chưa export ({chuaExport.length})</div>}
+      <InvRows rows={chuaExport} loading={moi.loading} onOpen={setOpen} empty={choPdf.length ? '' : 'Không có yêu cầu mới chờ export'} />
+      {choPdf.length > 0 && <div className="border-t border-ink-100"><div className="px-4 pt-2 text-xs font-semibold text-ink-600">Đã export — chờ nạp PDF nháp ({choPdf.length})</div>
+        <InvRows rows={choPdf} loading={false} onOpen={setOpen} empty="" action={v => <Button size="sm" onClick={() => reExport([v.id])}>Export lại</Button>} /></div>}
     </Block>
 
     <Block n="3" title="PDF nháp từ MISA" sub={<>Tải PDF nháp hàng loạt, tên file dạng <code>NHAP_MST_TổngTiền_yyyymmdd</code> — ERP khớp theo MST + tổng tiền và báo sale.</>}
       actions={<Button variant="dark" onClick={() => setPdf(true)}>⇪ Tải PDF nháp / đã ký</Button>}>
-      <InvRows rows={choPdf} loading={moi.loading} onOpen={setOpen} empty="Không có yêu cầu đã export chờ PDF nháp" />
+      <div className="px-4 py-3 text-sm text-ink-600">{choPdf.length ? <><b>{choPdf.length}</b> yêu cầu đã export đang chờ PDF nháp (danh sách ở khối ②). Nạp PDF xong, yêu cầu tự rời khối ② và báo sale.</> : 'Không có yêu cầu đã export chờ PDF nháp.'}</div>
       {(traSua.data || []).filter(v => v.status === 'tra_sua').length > 0 && <div className="border-t border-ink-100"><div className="px-4 pt-2 text-xs font-semibold text-red-700">Sale trả sửa — chờ sale sửa và gửi lại (xóa nháp cũ trên MISA)</div>
         <InvRows rows={(traSua.data || []).filter(v => v.status === 'tra_sua')} loading={false} onOpen={setOpen} empty="" /></div>}
       {(traSua.data || []).filter(v => v.status === 'da_nhap').length > 0 && <div className="border-t border-ink-100 px-4 py-2 text-xs text-ink-500">{(traSua.data || []).filter(v => v.status === 'da_nhap').length} yêu cầu có nháp, đang chờ sale duyệt.</div>}
@@ -255,7 +266,7 @@ export function HdKeToan() {
     {imp === 'ds' && <ImportSo onClose={() => setImp('')} onDone={() => { setImp(''); reload(); }} />}
     {pdf && <UploadHdPdf onClose={() => setPdf(false)} onDone={() => { setPdf(false); reload(); }} />}
     {lechT && <LechModal t={lechT} onClose={() => setLechT(null)} onDone={() => { setLechT(null); reload(); }} />}
-    {open && <InvoiceDetail id={open} acc onClose={() => setOpen(null)} onChanged={reload} />}
+    {open && <InvoiceDetail id={open} acc onClose={close} onChanged={reload} />}
   </Layout>;
 }
 

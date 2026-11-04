@@ -3,7 +3,7 @@ import { Layout } from '../../components/Layout';
 import { Badge, Button, Card, cx, Empty, Loading, NumInput, Select, Table, Td, Tabs, useAction, useLoad, Input } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { useApp } from '../../state';
-import { downloadCSV, num, today } from '../../lib/format';
+import { downloadCSV, money, num, today } from '../../lib/format';
 
 const COLORS: Record<string, string> = { '✓': 'text-emerald-600', '½': 'text-emerald-600', P: 'bg-amber-100 text-amber-800', R: 'bg-amber-100 text-amber-800', KL: 'bg-ink-200 text-ink-700',
   KP: 'bg-red-600 text-white', V: 'bg-red-100 text-red-700', Ô: 'bg-violet-100 text-violet-800', TS: 'bg-violet-100 text-violet-800', CT: 'bg-sky-100 text-sky-800', WFH: 'bg-sky-100 text-sky-800',
@@ -29,8 +29,8 @@ function Sheet() {
   const days = Array.from({ length: nd }, (_, i) => String(i + 1).padStart(2, '0'));
   const wd = (d: string) => new Date(`${month}-${d}T00:00:00Z`).getUTCDay();
   const flex = a.settings.attendance?.flex_minutes ?? 100;
-  const exp = () => downloadCSV(`bang-cong-${month}`, [['Mã', 'Họ tên', ...days, 'Công chuẩn', 'Công hưởng lương', 'Đi làm', 'Phép năm', 'Không lương', 'Không phép', 'Vắng không đơn', 'Phút muộn/sớm', 'Vượt quỹ', 'Báo gấp', 'Quên chấm', 'Chuyên cần', 'Xếp loại'],
-    ...rows.map(r => [r.employee_code, r.full_name, ...days.map(d => r.days[d]?.c || ''), ...['cong_chuan', 'cong_huong_luong', 'di_lam', 'phep_nam', 'khong_luong', 'khong_phep', 'vang_khong_don', 'phut_muon_som', 'vuot_quy', 'bao_gap', 'quen_cham', 'chuyen_can', 'xep_loai'].map(k => r.summary[k])])]);
+  const exp = () => downloadCSV(`bang-cong-${month}`, [['Mã', 'Họ tên', ...days, 'Công chuẩn', 'Công hưởng lương', 'Đi làm', 'Phép năm', 'Không lương', 'Không phép', 'Vắng không đơn', 'Phút muộn/sớm', 'Vượt quỹ', 'Báo gấp', 'Quên chấm', 'Chuyên cần', 'Xếp loại', 'Lương theo công', 'Phụ cấp theo công', 'Trừ vượt quỹ phút', 'Lương tạm tính'],
+    ...rows.map(r => [r.employee_code, r.full_name, ...days.map(d => r.days[d]?.c || ''), ...['cong_chuan', 'cong_huong_luong', 'di_lam', 'phep_nam', 'khong_luong', 'khong_phep', 'vang_khong_don', 'phut_muon_som', 'vuot_quy', 'bao_gap', 'quen_cham', 'chuyen_can', 'xep_loai', 'luong_cong', 'phu_cap', 'tru_vuot_quy', 'luong_tam_tinh'].map(k => r.summary[k] ?? '')])]);
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -43,7 +43,7 @@ function Sheet() {
           <thead><tr className="border-b border-ink-200 bg-ink-50 text-ink-500">
             <th className="sticky left-0 z-10 min-w-[150px] bg-ink-50 px-3 py-2 text-left font-semibold">Nhân sự</th>
             {days.map(d => <th key={d} className={cx('w-8 px-0.5 py-2 text-center font-semibold', wd(d) === 0 && 'text-ink-300', wd(d) === 6 && 'text-brand-600')}>{d}<div className="text-[9px] font-normal">{['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][wd(d)]}</div></th>)}
-            {['Công', 'Phép', 'KL', 'KP/V', 'Muộn', 'Báo gấp', 'Quên', 'Chuyên cần'].map(h => <th key={h} className="whitespace-nowrap px-2 py-2 text-right font-semibold">{h}</th>)}
+            {['Công', 'Phép', 'KL', 'KP/V', 'Muộn', 'Báo gấp', 'Quên', 'Chuyên cần', 'Lương tạm tính'].map(h => <th key={h} className="whitespace-nowrap px-2 py-2 text-right font-semibold">{h}</th>)}
           </tr></thead>
           <tbody className="divide-y divide-ink-100">{rows.map(r => { const s = r.summary; return <tr key={r.profile_id} className="hover:bg-ink-50/60">
             <td className="sticky left-0 z-10 bg-white px-3 py-1.5"><b>{r.full_name}</b><div className="text-[10px] text-ink-400">{r.employee_code}</div></td>
@@ -53,13 +53,15 @@ function Sheet() {
             <td className={cx('px-2 text-right', (s.khong_phep + s.vang_khong_don) > 0 && 'font-bold text-red-600')}>{num(Number(s.khong_phep) + Number(s.vang_khong_don), 1)}</td>
             <td className={cx('whitespace-nowrap px-2 text-right', s.vuot_quy > 0 && 'font-bold text-red-600')}>{s.phut_muon_som}/{flex}′</td><td className="px-2 text-right">{s.bao_gap}</td><td className="px-2 text-right">{s.quen_cham}</td>
             <td className="px-2 text-right"><Badge color={s.xep_loai === 'A' ? 'green' : s.xep_loai === 'B' ? 'blue' : s.xep_loai === 'C' ? 'amber' : 'red'}>{num(s.chuyen_can, 0)} · {s.xep_loai}</Badge></td>
+            <td className="whitespace-nowrap px-2 text-right" title={s.luong_tam_tinh == null ? '' : `Lương cơ bản ${money(s.luong_co_ban)} × ${num(s.cong_huong_luong, 1)}/${num(s.cong_chuan, 1)} công = ${money(s.luong_cong)}\nPhụ cấp theo công ${money(s.phu_cap)}\nTrừ vượt quỹ phút ${money(s.tru_vuot_quy)}`}>
+              {s.luong_tam_tinh == null ? <span className="text-ink-300">—</span> : <><b>{money(s.luong_tam_tinh)}</b><div className="text-[9px] text-ink-400">/{money(Number(s.luong_co_ban || 0))}</div></>}</td>
           </tr>; })}</tbody></table></div>}
       </Card>
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-ink-600">
         {[['✓', 'Đủ công'], ['½', 'Nửa công'], ['P', 'Phép năm'], ['R', 'Việc riêng có lương'], ['Ô', 'Ốm'], ['KL', 'Không lương'], ['CT', 'Công tác'], ['WFH', 'Làm từ xa'], ['G', 'Vắng theo giờ'], ['V', 'Vắng không đơn'], ['KP', 'Nghỉ không phép'], ['Lễ', 'Nghỉ lễ']].map(([c, l]) =>
           <span key={c} className="flex items-center gap-1"><span className={cx('rounded px-1 font-bold', color(c))}>{c}</span>{l}</span>)}
       </div>
-      <p className="mt-2 text-xs text-ink-500">Chuyên cần bắt đầu 100 điểm: trừ 20/ngày nghỉ không phép hoặc vắng không đơn, 5/đơn báo gấp, 3/lần quên chấm, 1 điểm mỗi 10 phút vượt quỹ {flex} phút. A ≥ 95 · B ≥ 85 · C ≥ 70 · D. Tham số chỉnh ở Cấu hình → Chấm công.</p>
+      <p className="mt-2 text-xs text-ink-500">Chuyên cần bắt đầu 100 điểm: trừ 20/ngày nghỉ không phép hoặc vắng không đơn, 5/đơn báo gấp, 3/lần quên chấm, 1 điểm mỗi 10 phút vượt quỹ {flex} phút. A ≥ 95 · B ≥ 85 · C ≥ 70 · D. Tham số chỉnh ở Cấu hình → Chấm công.<br /><b>Lương tạm tính</b> = lương cơ bản × công hưởng lương đến hôm nay ÷ công chuẩn cả tháng + phụ cấp (cùng tỷ lệ) − trừ phút vượt quỹ. Chấm tới đâu tính tới đó; chưa gồm hoa hồng, thưởng (tính khi chốt bảng lương). Chỉ chính bạn, quản lý trực tiếp và HCNS/Kế toán thấy.</p>
     </>
   );
 }

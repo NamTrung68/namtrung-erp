@@ -6,6 +6,7 @@ import { useApp } from '../state';
 import { BANKS } from '../lib/vietqr';
 import { stripVN } from '../lib/format';
 import { ROLES } from './admin/Users';
+import { enablePush, isIOS, isStandalone, pushSupported, subscribePush } from '../lib/push';
 
 export default function Account() {
   const a = useApp(); const { busy, run } = useAction();
@@ -52,9 +53,12 @@ export default function Account() {
         <Card title="Thông báo & cài ứng dụng">
           <div className="space-y-3 text-sm">
             <div>Thông báo trên thiết bị: <Badge color={perm === 'granted' ? 'green' : 'amber'}>{perm === 'granted' ? 'Đã bật' : perm === 'denied' ? 'Đã chặn — mở cài đặt trình duyệt để bật' : perm === 'unsupported' ? 'Trình duyệt không hỗ trợ' : 'Chưa bật'}</Badge></div>
-            {perm === 'default' && <Button onClick={async () => { const p = await Notification.requestPermission(); setPerm(p); if (p === 'granted') toast.ok('Đã bật thông báo'); }}>Bật thông báo</Button>}
+            {isIOS() && !isStandalone() && <div className="rounded-lg bg-amber-50 px-3 py-2 text-amber-900">Bạn đang mở bằng trình duyệt. iPhone chỉ nhận thông báo khi mở ERP <b>từ biểu tượng trên màn hình chính</b> (Safari → Chia sẻ → Thêm vào MH chính).</div>}
+            {pushSupported() && perm !== 'denied' && <div className="flex flex-wrap gap-2">
+              <Button variant={perm === 'granted' ? undefined : 'primary'} loading={busy} onClick={() => run(async () => { const p = perm === 'granted' ? (await subscribePush(), 'granted' as NotificationPermission) : await enablePush(); setPerm(p); if (p !== 'granted') throw new Error('Chưa được cho phép thông báo'); }, 'Đã bật thông báo cho thiết bị này')}>{perm === 'granted' ? '↻ Bật lại thông báo đẩy cho máy này' : 'Bật thông báo'}</Button>
+              {perm === 'granted' && <Button onClick={() => run(async () => { await db.rpc('push_test'); }, 'Đã gửi thử — khóa máy / thoát app để xem')}>Gửi thử</Button>}</div>}
             <p className="text-ink-600"><b>iPhone:</b> mở bằng Safari → nút Chia sẻ → “Thêm vào MH chính”, rồi mở app từ màn hình chính và bấm “Bật thông báo”.<br /><b>Android:</b> Chrome → menu ⋮ → “Cài đặt ứng dụng”.</p>
-            <p className="text-xs text-ink-400">Thông báo hiện khi ứng dụng đang mở hoặc chạy nền gần đây; luôn có chuông thông báo trong ứng dụng.</p>
+            <p className="text-xs text-ink-400">Đã bật thì thông báo hiện trên màn hình khóa cả khi app chưa mở. Chạm vào thông báo là mở đúng mục liên quan. Mỗi máy (điện thoại, máy tính) cần bật 1 lần.</p>
           </div>
         </Card>
       </div>

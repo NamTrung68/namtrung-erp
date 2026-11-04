@@ -20,8 +20,10 @@ export default function Approvals() {
   const mine = (q: any) => (lead || delegated ? q.neq('profile_id', a.me.id) : q.eq('profile_id', a.me.id));
   const { data: lv, loading, reload } = useLoad(() => mine(db.from('leave_requests').select('*')).eq('status', hist ? 'da_duyet' : 'cho_duyet').order('start_date', { asc: !hist }).limit(200), [hist, canDecide]);
   const { data: ar, reload: r2 } = useLoad(() => mine(db.from('attendance_requests').select('*')).eq('status', hist ? 'da_duyet' : 'cho_duyet').order('work_date', { asc: !hist }).limit(200), [hist, canDecide]);
-  const pl = usePager('appr_leave', [hist]); const pa = usePager('appr_att', [hist]);
+  const pl = usePager('appr_leave', [hist]); const pa = usePager('appr_att', [hist]); const [confirm, setConfirm] = useState<any>(null);
   const decide = async (table: 'leave' | 'attendance', id: string, ok: boolean) => {
+    // Bản 28: duyệt quên chấm → nhập giờ vào / ra thực tế (xem camera) để tính đi muộn, chuyên cần
+    if (ok && table === 'attendance') { const r = ((ar as any[]) || []).find(x => x.id === id); if (r?.kind === 'xac_nhan_cong') { setConfirm(r); return; } }
     const note = ok ? '' : await ask({ title: 'Từ chối đơn', input: { label: 'Lý do', required: true } });
     if (note === null) return;
     run(async () => { await db.rpc('decide_request', { p_table: table, p_id: id, p_approve: ok, p_note: note || null }); reload(); r2(); }, ok ? 'Đã duyệt' : 'Đã từ chối');
@@ -40,8 +42,9 @@ export default function Approvals() {
             <Td className="whitespace-nowrap">{r.status === 'cho_duyet' && canDecide ? <><Button size="sm" variant="success" onClick={() => decide('leave', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('leave', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pl} total={(lv as any[]).length} /></>}
       </Card>
       <Card title="Đơn xác nhận công (quên chấm)" bodyClass="p-0" className="mb-4">
-        {!(ar as any[])?.length ? <Empty>Không có đơn</Empty> : <><Table head={['Nhân sự', 'Loại', 'Ngày', 'Lý do', '']}>{pa.slice(ar as any[]).map(r => (
+        {!(ar as any[])?.length ? <Empty>Không có đơn</Empty> : <><Table head={['Nhân sự', 'Loại', 'Ngày', 'Lý do', 'Giờ xác nhận', '']}>{pa.slice(ar as any[]).map(r => (
           <tr key={r.id}><Td className="font-medium">{a.personName(r.profile_id)}</Td><Td>{KIND[r.kind]}{r.minutes && ` · ${r.minutes} phút`}</Td><Td>{fmtDate(r.work_date)}{r.part !== 'full' && ` (${r.part === 'am' ? 'sáng' : 'chiều'})`}</Td><Td>{r.reason}</Td>
+            <Td className="whitespace-nowrap text-xs">{r.confirm_in ? `Vào ${String(r.confirm_in).slice(0, 5)}` : ''}{r.confirm_out ? ` · Ra ${String(r.confirm_out).slice(0, 5)}` : ''}</Td>
             <Td className="whitespace-nowrap">{r.status === 'cho_duyet' && canDecide ? <><Button size="sm" variant="success" onClick={() => decide('attendance', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('attendance', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pa} total={(ar as any[]).length} /></>}
       </Card>
       <Card title="Ủy quyền đang hiệu lực" bodyClass="p-0">
@@ -49,6 +52,7 @@ export default function Approvals() {
           <tr key={d.id}><Td>{a.personName(d.delegator_id)}</Td><Td>{a.personName(d.delegate_id)}</Td><Td>{fmtDateTime(d.from_at)}</Td><Td>{fmtDateTime(d.to_at)}</Td><Td>{d.reason}</Td>
             <Td>{(d.delegator_id === a.me.id || a.isAdmin) && <Button size="sm" variant="ghost" onClick={() => run(async () => { await db.from('delegations').update({ revoked_at: new Date().toISOString() }).eq('id', d.id); r3(); }, 'Đã thu hồi')}>Thu hồi</Button>}</Td></tr>))}</Table>}
       </Card>
+      {confirm && <ConfirmTime r={confirm} onClose={() => setConfirm(null)} onDone={() => { setConfirm(null); r2(); }} />}
       {lead && <Delegate open={delOpen} onClose={() => setDelOpen(false)} onDone={() => { setDelOpen(false); r3(); }} />}
     </Layout>
   );
@@ -68,4 +72,23 @@ function Delegate({ open, onClose, onDone }: { open: boolean; onClose: () => voi
       </div>
     </Modal>
   );
+}
+
+/** Bản 28: duyệt đơn xác nhận công (quên chấm) — người duyệt ghi giờ vào / ra thực tế theo camera */
+function ConfirmTime({ r, onClose, onDone }: { r: any; onClose: () => void; onDone: () => void }) {
+  const a = useApp(); const { busy, run } = useAction(); const [tin, setIn] = useState(''); const [tout, setOut] = useState(''); const [note, setNote] = useState('');
+  const { data: ev } = useLoad(() => db.from('attendance_events').select('kind,at').eq('profile_id', r.profile_id).eq('work_date', r.work_date).neq('status', 'rejected').order('at'), [r.id]);
+  const evs = (ev as any[]) || []; const hasIn = evs.some(e => e.kind === 'in'); const t = (iso: string) => new Date(iso).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+  return <Modal open onClose={onClose} title={`Duyệt xác nhận công · ${a.personName(r.profile_id)} · ${fmtDate(r.work_date)}`} size="sm"
+    footer={<Button variant="success" loading={busy} disabled={!hasIn && !tin} onClick={() => run(async () => {
+      await db.rpc('decide_request', { p_table: 'attendance', p_id: r.id, p_approve: true, p_note: note || null, p_in: tin || null, p_out: tout || null }); onDone(); }, 'Đã duyệt')}>Duyệt</Button>}>
+    <div className="space-y-3 text-sm">
+      <div className="rounded-lg bg-ink-50 px-3 py-2">Lý do: {r.reason}<div className="mt-1 text-xs text-ink-500">Đã chấm hôm đó: {evs.length ? evs.map(e => `${e.kind === 'in' ? 'vào' : 'ra'} ${t(e.at)}`).join(' · ') : 'không có lần chấm nào'}</div></div>
+      <p className="text-xs text-ink-600">Xem camera văn phòng rồi ghi giờ thực tế. Giờ vào dùng để tính <b>đi muộn</b> và <b>chuyên cần</b> như một lần chấm công bình thường.</p>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label={hasIn ? 'Giờ vào thực tế (đã có lần chấm vào)' : 'Giờ vào thực tế *'}><Input type="time" value={tin} onChange={e => setIn(e.target.value)} /></Field>
+        <Field label="Giờ ra thực tế (nếu quên chấm ra)"><Input type="time" value={tout} onChange={e => setOut(e.target.value)} /></Field></div>
+      <Field label="Ghi chú"><Input value={note} onChange={e => setNote(e.target.value)} placeholder="VD: camera 08:25 vào cổng" /></Field>
+    </div>
+  </Modal>;
 }
