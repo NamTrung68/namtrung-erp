@@ -14,6 +14,7 @@ import { printDraft } from './print';
 import { FileBadge, HdFilesSection, UploadHdPdf, type HdF } from './HdFiles';
 import { BulkInvoices, PricePick, VatBadge, srcTxt } from './Bulk';
 import { downloadMau } from '../../lib/mau';
+import { MisaBox, MisaTag } from './MisaRun';
 
 export const OST: Record<string, [string, string]> = {
   soan: ['Sale đang soạn', 'slate'], cho_duyet_gia: ['Chờ duyệt giá', 'red'], cho_nhap: ['Đã gửi — chờ export', 'amber'], da_nhap: ['Có nháp — chờ sale duyệt', 'blue'],
@@ -488,6 +489,7 @@ function Invoices({ acc, openId }: { acc: boolean; openId?: string | null }) {
       <button key={v.id} className="block w-full rounded-2xl border border-ink-200 bg-white p-3 text-left shadow-soft" onClick={() => setSel(v.id)}>
         <div className="flex items-center justify-between gap-2"><b>{v.code}</b><OBadge s={v.status} /></div>
         {(v.nhap_v || v.ky_v) && <div className="mt-1"><FileBadge v={v} /></div>}
+        <MisaTag v={v} />
         <div className="mt-1 line-clamp-2 text-sm font-medium text-ink-900">{v.buyer_name || v.buyer_info}</div>
         {v.mds && <div className="text-xs font-semibold text-ink-700">ID đơn: {v.mds}{v.vat10 && <span className="ml-2 rounded bg-amber-100 px-1 text-[11px] text-amber-800">có VAT 10%</span>}</div>}
         <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-ink-600">{v.tax_code && <span>MST {v.tax_code}</span>}<span>{v.so_dong} dòng</span><span>Tổng <b><Money v={Number(v.tien_hang) + Number(v.tien_thue)} /></b></span>
@@ -502,7 +504,7 @@ function Invoices({ acc, openId }: { acc: boolean; openId?: string | null }) {
           <Td className="max-w-[130px] text-xs font-semibold">{v.mds || <span className="font-normal text-ink-300">—</span>}{v.vat10 && <div className="text-[10px] font-semibold text-amber-700">có VAT 10%</div>}</Td>
           <Td className="whitespace-nowrap text-xs">{a.personName(v.sale_id)}</Td><Td className="max-w-[260px] text-xs"><div className="line-clamp-2">{v.buyer_name || v.buyer_info}</div></Td><Td className="text-xs">{v.tax_code}</Td>
           <Td className="text-right">{v.so_dong}</Td><Td className="text-right"><Money v={v.tien_hang} /></Td><Td className="text-right text-xs"><Money v={v.tien_thue} /></Td>
-          <Td><OBadge s={v.status} />{(v.nhap_v || v.ky_v) && <div className="mt-1"><FileBadge v={v} /></div>}</Td>
+          <Td><OBadge s={v.status} />{(v.nhap_v || v.ky_v) && <div className="mt-1"><FileBadge v={v} /></div>}<MisaTag v={v} /></Td>
           <Td className="min-w-[180px]"><NextStep v={v} /><div className="text-[10px] text-ink-400">từ {fmtDateTime(v.status_at)}</div></Td>
           <Td className="whitespace-nowrap text-xs">{v.so_hd}<div className="text-ink-400">{v.ngay_hd ? fmtDate(v.ngay_hd) : ''}</div></Td></tr>)}</Table>}
       <Pager p={pg} total={total} /></Card>
@@ -515,7 +517,11 @@ function Invoices({ acc, openId }: { acc: boolean; openId?: string | null }) {
 export async function exportMisaFile(ids: string[] | null, personName: (id: string) => string): Promise<number> {
   let qq = db.from<any[]>('out_invoices').select(INV_SEL).order('status_at');
   qq = ids ? qq.in('id', ids) : qq.eq('status', 'cho_nhap').is('misa_at', null);
-  const list = await qq; if (!list.length) throw new Error(ids ? 'Không có yêu cầu' : 'Không còn yêu cầu chưa export MISA');
+  let list = await qq; if (!list.length) throw new Error(ids ? 'Không có yêu cầu' : 'Không còn yêu cầu chưa export MISA');
+  // Bản 31: phiếu đang có nháp tạo bằng API → bỏ khỏi file Excel (tránh 2 nháp cho 1 phiếu)
+  const api = new Set(((await db.from<any[]>('out_misa').select('invoice_id').in('invoice_id', list.map((v: any) => v.id)).in('trang_thai', ['dang_tao', 'da_tao', 'da_phat_hanh'])) || []).map((m: any) => m.invoice_id));
+  if (api.size) { list = list.filter((v: any) => !api.has(v.id)); toast.info(`Bỏ qua ${api.size} phiếu đã có nháp tạo bằng API`); }
+  if (!list.length) throw new Error('Các phiếu chọn đều đã có nháp tạo bằng API');
   await writeXlsx('HD_nhap_MISA_' + today(), misaRows(list), 'Hóa đơn GTGT', true, { headerRow: MISA_HEADER_ROW, fmt: { 11: 'int', 12: 'int', 13: 'int', 14: 'pct', 15: 'int' } });
   // Bản 28: chỉ 1 file nhập MISA (bỏ file đối chiếu phiếu — PDF nháp khớp theo MST + tổng tiền, không cần bảng đối chiếu)
   const cho = list.filter((v: any) => v.status === 'cho_nhap').map((v: any) => v.id);
@@ -560,6 +566,7 @@ export function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc
     {(() => { const [who, what] = nextStep({ ...v, nhap_v: nhapV, nhap_sent: !!fl.find(f => f.kind === 'nhap' && f.latest)?.sent_at }); return who && !(fl.length && ['da_nhap', 'xac_nhan_ky'].includes(s)) ? <div className={cx('mb-3 rounded-xl border px-3 py-2 text-sm', who === 'Sale' ? 'border-brand-200 bg-brand-50' : 'border-amber-200 bg-amber-50')}>
       Việc tiếp theo — <b>{who}</b>: {what}{v.sua_sau_nhap && s === 'cho_nhap' ? <span className="ml-1 font-semibold text-red-700">(sửa sau nháp)</span> : null}</div> : null; })()}
     <HdFilesSection v={v} files={fl} acc={acc} onChanged={done} />
+    <MisaBox v={v} acc={acc} onChanged={done} />
     {s === 'da_ky' && v.ma_tra_cuu && <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký{v.so_hd ? <> HĐ số <b>{v.so_hd}</b></> : ''}{v.ngay_hd ? ' ngày ' + fmtDate(v.ngay_hd) : ''} · Mã tra cứu <TraCuu ma={v.ma_tra_cuu} /> <span className="text-xs text-emerald-700">bấm mã để xem HĐ</span></div>}
     {acc && ['xac_nhan_ky', 'da_ky'].includes(s) && <div className="mb-3"><SignBox v={v} onDone={done} /></div>}
     {s === 'da_ky' && !v.ma_tra_cuu && !fl.some(f => f.kind === 'ky') && <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký HĐ số <b>{v.so_hd}</b> ngày {fmtDate(v.ngay_hd)} — kế toán đã gửi mail. Sale báo khách kiểm tra email.</div>}

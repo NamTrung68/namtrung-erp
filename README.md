@@ -99,3 +99,23 @@ npm run build            # → dist/
 - Tab "Đề xuất giá gửi APT": nút **Xuất Excel**, cột cuối chỉ có giá đề nghị (định dạng số `0`, không dấu phân cách).
 - Ẩn menu "Tra cứu yêu cầu · bảng gốc" (trang `#/out` vẫn mở từ nút trong Bàn làm việc kế toán).
 - Nâng cấp DB: chạy `supabase/migrations/0034_v27.sql` (tự sao lưu trước). Kiểm thử: `supabase/tests/99i_v27.sql`.
+
+## Bản 31 — Tạo HĐ nháp MISA meInvoice bằng API (05/11/2026)
+
+Chạy **song song** với cách làm tay: chưa bật API (chưa có ClientID) thì ERP chạy y như bản 30 — Excel → nhập MISA → tải PDF nháp → dán mã tra cứu.
+
+- **Kế toán** (Bàn làm việc kế toán, khối ②): tick phiếu → **⚡ Tạo nháp MISA** → cửa sổ *Kiểm tra* (✓/✗ từng phiếu, khác gì so với nháp trước) → *Gửi* theo lô (mặc định 10, tối đa 30) → MISA xem thử từng HĐ → tạo → ERP đọc lại so tiền → lấy PDF về Drive → phiếu “Có nháp”, báo sale.
+- **Chi tiết phiếu**: khung MISA — các lần tạo, nguyên văn lỗi MISA, dữ liệu đã gửi; nút Tạo lại / Xóa nháp / Lấy PDF / Kiểm tra MISA / Xem thử.
+- **Tự đối soát**: pg_cron 15 phút/lần (7h–21h) gọi hàm `misa` → nháp đã phát hành → ghi số HĐ + mã tra cứu (`TransactionID`), chuyển “Đã ký”, báo sale. Không lấy được mã tra cứu → báo kế toán nhập tay như cũ.
+- **Chống trùng**: mỗi phiếu tối đa 1 nháp sống (chỉ mục duy nhất `out_misa_one_active`); RefID = GUID mới mỗi lần, không dùng lại; phiếu đã xuất Excel không tạo API được (trừ khi “Bỏ mốc export” sau khi xóa nháp tay); phiếu có nháp API bị bỏ khỏi file Excel; không hủy phiếu khi còn nháp sống trên MISA.
+- **An toàn**: chỉ 7 đường dẫn `/invoiceweb/*` (token, templates, insert, preview, viewrefid, getlist, delete) — `tests/misa-guard.test.ts` quét repo, chặn mọi lời gọi nhóm phát hành / ký số và khóa bí mật trong code.
+- **Phân quyền**: bảng `out_misa` RLS giống phiếu xuất HĐ — sale thấy của mình, CSKH thấy sale mình hỗ trợ, trưởng nhóm/phòng thấy cấp dưới, Kế toán/Admin/BGĐ thấy tất cả; chỉ Kế toán/Admin/BGĐ thao tác.
+
+**Cài khi có ClientID** (Admin, 1 lần):
+1. Supabase → Edge Functions → *Deploy new function* tên `misa`, dán `supabase/functions/misa/index.ts`, **tắt Verify JWT** (hàm tự kiểm phiên đăng nhập + quyền).
+2. Edge Functions → *Secrets*: `MISA_CLIENT_ID`, `MISA_CLIENT_SECRET`, `MISA_TAX_CODE`, `MISA_USERNAME`, `MISA_PASSWORD` (tài khoản tích hợp không có quyền ký/phát hành). Tùy chọn `MISA_BASE_URL`.
+3. ERP → Cấu hình → Kế toán – Hóa đơn → khung MISA: *Kiểm tra kết nối* → chọn mẫu HĐ → tick *Bật* → Lưu.
+
+Còn chờ xác nhận bằng dữ liệu thật của MISA (tài liệu chưa nói rõ): định dạng base64 của `viewrefid` (ERP chỉ nhận PDF, khác thì báo kế toán tải tay), tên trường mã tra cứu trong `getlist` (đang đọc `TransactionID`), cấu trúc dữ liệu token.
+
+Kiểm thử: `tests/misa.test.ts`, `tests/misa-guard.test.ts`, `supabase/tests/99m_v31.sql`.

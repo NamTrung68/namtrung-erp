@@ -17,6 +17,8 @@ import { UploadHdPdf } from '../out/HdFiles';
 import { ImportHd } from './ImportHd';
 import { exportHdChinhThuc, listHdVao } from '../../lib/hdExport';
 import { Chips, Modal } from '../../components/ui';
+import { MisaRun, MisaTag } from '../out/MisaRun';
+import { exportMisaDoiChieu, misaCall, misaCfgOf, misaOn } from '../../lib/misa';
 
 // ---------------- dùng chung ----------------
 const bien = (t: any) => (Number(t.gia_khach) > 0 && Number(t.dg_nhap) > 0 ? Number(t.gia_khach) / Number(t.dg_nhap) - 1 : null);
@@ -38,19 +40,20 @@ function useInv(statuses: string[], extra: Record<string, any> = {}, dep: any[] 
     return rs.flatMap(r => r?.rows || []);
   }, [statuses.join(), JSON.stringify(extra), ...dep]);
 }
-function InvRows({ rows, loading, onOpen, empty, action, sale = false }: { rows: any[]; loading: boolean; onOpen: (id: string) => void; empty: string; action?: (v: any) => React.ReactNode; sale?: boolean }) {
+function InvRows({ rows, loading, onOpen, empty, action, sale = false, sel, onSel }: { rows: any[]; loading: boolean; onOpen: (id: string) => void; empty: string; action?: (v: any) => React.ReactNode; sale?: boolean; sel?: Record<string, boolean>; onSel?: (id: string, on: boolean) => void }) {
   const a = useApp();
   if (loading && !rows.length) return <Loading />;
   if (!rows.length) return empty ? <div className="px-4 py-6 text-center text-sm text-ink-400">{empty}</div> : null;
   return <div className="divide-y divide-ink-100">{rows.map(v => { const [who, what] = nextStep(v); const tong = Number(v.tien_hang || 0) + Number(v.tien_thue || 0);
-    return <div key={v.id} className="flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 hover:bg-ink-50" onClick={() => onOpen(v.id)}>
+    return <div key={v.id} className={cx('flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 hover:bg-ink-50', sel?.[v.id] && 'bg-brand-50/60')} onClick={() => onOpen(v.id)}>
+      {onSel && <input type="checkbox" className="h-5 w-5" checked={!!sel?.[v.id]} onClick={e => e.stopPropagation()} onChange={e => onSel(v.id, e.target.checked)} />}
       <div className="w-28 shrink-0"><div className="text-sm font-semibold text-ink-900">{v.code}{v.version > 1 && <span className="ml-1 text-[11px] font-normal text-ink-500">v{v.version}</span>}</div>
         <div className="text-[11px] text-ink-400">{fmtDateTime(v.status_at)}</div></div>
       <div className="min-w-[180px] flex-1"><div className="line-clamp-1 text-sm text-ink-800">{v.buyer_name || '—'}</div>
         <div className="text-[11px] text-ink-500">{v.mds || ''}{v.tax_code ? ' · MST ' + v.tax_code : ''}{!sale ? ' · ' + (a.personName(v.sale_id) || '') : ''}</div>
         {v.mas && <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">{v.hds && <span className="rounded bg-ink-900 px-1.5 py-px font-semibold text-white">HĐ {v.hds}</span>}{String(v.mas).split(', ').slice(0, 6).map((m: string) => <span key={m} className="rounded bg-brand-50 px-1.5 py-px font-mono text-brand-800">{m}</span>)}{String(v.mas).split(', ').length > 6 && <span className="text-ink-400">+{String(v.mas).split(', ').length - 6} mã</span>}</div>}</div>
       <div className="w-28 text-right text-sm font-semibold tabular-nums">{money(tong)}{v.bien_max != null && Number(v.bien_max) > BIEN_DUYET && <div className="text-[11px] font-semibold text-amber-700">biên {pctTxt(Number(v.bien_max))}</div>}</div>
-      <div className="w-48">{v.misa_at && v.status === 'cho_nhap' ? <Badge color="amber">Đã export — chờ PDF nháp</Badge> : <SBadge s={v.status} />}
+      <div className="w-48">{v.misa_at && v.status === 'cho_nhap' && !(v.misa && v.misa.st !== 'da_xoa') ? <Badge color="amber">Đã export — chờ PDF nháp</Badge> : <SBadge s={v.status} />}<MisaTag v={v} />
         {v.status === 'da_ky' && v.ma_tra_cuu && <div className="mt-1"><TraCuu ma={v.ma_tra_cuu} /></div>}
         {who && <div className="mt-0.5 text-[11px] text-ink-500"><b className={who === 'Sale' ? 'text-brand-700' : 'text-amber-700'}>{who}</b>: {what}</div>}</div>
       {action && <div onClick={e => e.stopPropagation()}>{action(v)}</div>}
@@ -213,18 +216,27 @@ export function HdKeToan() {
     return [...(x?.rows || []), ...(y?.rows || [])];
   }, [rev]);
   const moi = useInv(['cho_duyet_gia', 'cho_nhap'], { flag: '' }, [rev]);
+  // Bản 31: API MISA chạy song song cách làm tay
+  const api = misaOn(a.settings); const mcfg = misaCfgOf(a.settings);
+  const [pick, setPick] = useState<Record<string, boolean>>({}); const [runner, setRunner] = useState<string[] | null>(null);
+  const onSel = (id: string, on: boolean) => setPick(p => ({ ...p, [id]: on }));
   const ky = useInv(['xac_nhan_ky'], {}, [rev]);
   const traSua = useInv(['tra_sua', 'da_nhap'], {}, [rev]);
   if (!acc) return <Layout title="Bàn làm việc kế toán"><Card>Chỉ Kế toán, BGĐ.</Card></Layout>;
   const S = st || {}; const rows = moi.data || [];
   const chuaExport = rows.filter(v => v.status === 'cho_nhap' && !v.misa_at); const choPdf = rows.filter(v => v.status === 'cho_nhap' && v.misa_at); const duyet = rows.filter(v => v.status === 'cho_duyet_gia');
+  const apiReady = chuaExport.filter(v => !v.misa || ['loi', 'da_xoa'].includes(v.misa.st) || v.misa.cu);
+  const picked = chuaExport.filter(v => pick[v.id]).map(v => v.id);
+  const taoNhap = () => { const ids = picked.length ? picked : apiReady.map(v => v.id); if (!ids.length) { toast.info('Không có phiếu sẵn sàng tạo nháp'); return; } setRunner(ids); };
+  const doMisa = () => run(async () => { const r = await misaCall<any>('sync'); reload(); toast.ok(`Đã dò MISA ${r.checked || 0} nháp: ${r.phat_hanh || 0} đã phát hành${r.bi_xoa ? ` · ${r.bi_xoa} bị xóa trên web` : ''}`); });
+  const layPdf = (v: any) => run(async () => { await misaCall('pdf', { hd_id: v.misa.hd_id }); reload(); }, 'Đã lấy PDF nháp — đã báo sale');
   const exportAll = () => run(async () => { const n = await exportMisaFile(null, id => a.personName(id)); reload(); toast.ok(`Đã export ${n} yêu cầu — nhập vào MISA, tạo nháp, tải PDF về khối ③`); });
   // Bản 28: yêu cầu đã export nhưng chưa có PDF nháp vẫn ở khối ②, export lại được (từng phiếu hoặc tất cả)
   const reExport = (ids: string[]) => run(async () => { const n = await exportMisaFile(ids, id => a.personName(id)); reload(); toast.ok(`Đã export lại ${n} yêu cầu`); });
   const approve = (v: any) => run(async () => { const note = await ask({ title: `Duyệt giá ${v.code} — biên ${pctTxt(Number(v.bien_max))}`, input: { label: 'Ghi chú (không bắt buộc)' }, ok: 'Duyệt' }); if (note === null) return;
     await db.rpc('out_price_approve', { p_ids: [v.id], p_note: note || null }); reload(); }, 'Đã duyệt giá');
   const nBlk = (blk || []).filter(l => l.status === 'blocked').length;
-  return <Layout title="Bàn làm việc kế toán" actions={<div className="flex gap-2"><Button onClick={() => go('/acc')}>Danh sách xe</Button></div>}>
+  return <Layout title="Bàn làm việc kế toán" actions={<div className="flex gap-2">{api && <Button loading={busy} onClick={() => run(async () => { const n = await exportMisaDoiChieu(id => a.personName(id)); toast.ok(`Đã xuất ${n} lần tạo nháp`); })}>⬇ Excel đối chiếu ERP ↔ MISA</Button>}<Button onClick={() => go('/acc')}>Danh sách xe</Button></div>}>
     <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
       <Stat label="Dòng xe chờ sale xử lý" value={nBlk} tone={nBlk ? 'red' : undefined} onClick={() => go('/acc')} sub="thiếu đơn / giá khách / sale" />
       <Stat label="Dòng HĐ lệch nháp — khóa" value={S.lech ?? '…'} tone={S.lech ? 'red' : undefined} />
@@ -247,14 +259,18 @@ export function HdKeToan() {
           <Button size="sm" variant={locked(t) ? 'danger' : undefined} onClick={() => setLechT(t)}>{locked(t) ? 'Xử lý lệch' : 'Ghép tay'}</Button></div>)}</div>}
     </Block>
 
-    <Block n="2" title="Yêu cầu mới → export MISA" sub={<>Chỉ yêu cầu đã gửi (biên 2–4%, hoặc đã được duyệt giá). Export xong, sale không hủy được nữa. Yêu cầu <b>đã export</b> vẫn nằm đây tới khi nạp PDF nháp. <b>{chuaExport.length}</b> chưa export · <b>{choPdf.length}</b> đã export chờ PDF nháp.</>}
-      actions={<>{choPdf.length > 0 && <Button loading={busy} onClick={() => reExport(choPdf.map(v => v.id))}>↻ Export lại đã export ({choPdf.length})</Button>}<Button variant="primary" loading={busy} disabled={!chuaExport.length} onClick={exportAll}>⬇ Export file nhập MISA ({chuaExport.length})</Button></>}>
+    <Block n="2" title={api ? 'Yêu cầu mới → tạo nháp MISA' : 'Yêu cầu mới → export MISA'} sub={<>Chỉ yêu cầu đã gửi (biên 2–4%, hoặc đã được duyệt giá). Tạo nháp / export xong, sale không hủy được nữa. {api ? <><b>⚡ API</b>: tick phiếu (hoặc để trống = mọi phiếu sẵn sàng) → ERP kiểm, gửi MISA, lấy PDF, báo sale. <b>Làm tay</b> khi MISA lỗi: Excel → nhập MISA → khối ③. </> : <>Yêu cầu <b>đã export</b> vẫn nằm đây tới khi nạp PDF nháp. </>}<b>{chuaExport.length}</b> chưa tạo nháp · <b>{choPdf.length}</b> chờ PDF nháp.</>}
+      actions={<>{api && picked.length > 0 && <button className="text-xs text-ink-500 underline" onClick={() => setPick({})}>Bỏ chọn ({picked.length})</button>}
+        {api && chuaExport.length > 0 && picked.length < chuaExport.length && <button className="text-xs text-brand-700 underline" onClick={() => setPick(Object.fromEntries(chuaExport.map(v => [v.id, true])))}>Chọn tất cả ({chuaExport.length})</button>}
+        {choPdf.length > 0 && <Button loading={busy} onClick={() => reExport(choPdf.map(v => v.id))}>↻ Export lại đã export ({choPdf.filter(v => !v.misa || v.misa.st === 'da_xoa').length})</Button>}
+        <Button variant={api ? undefined : 'primary'} loading={busy} disabled={!chuaExport.length} onClick={api && picked.length ? () => reExport(picked) : exportAll}>⬇ {api ? 'Excel nhập MISA — làm tay' : 'Export file nhập MISA'} ({api && picked.length ? picked.length : chuaExport.length})</Button>
+        {api && <Button variant="primary" disabled={!chuaExport.length} onClick={taoNhap}>⚡ Tạo nháp MISA ({picked.length || apiReady.length})</Button>}</>}>
       {duyet.length > 0 && <div className="border-b border-ink-100 bg-red-50/40"><div className="px-4 pt-2 text-xs font-semibold text-red-700">Chờ duyệt giá (biên &gt; 4%) — 1 người duyệt là đủ</div>
         <InvRows rows={duyet} loading={false} onOpen={setOpen} empty="" action={v => <Button size="sm" variant="primary" onClick={() => approve(v)}>Duyệt</Button>} /></div>}
       {chuaExport.length > 0 && <div className="px-4 pt-2 text-xs font-semibold text-amber-700">Chưa export ({chuaExport.length})</div>}
-      <InvRows rows={chuaExport} loading={moi.loading} onOpen={setOpen} empty={choPdf.length ? '' : 'Không có yêu cầu mới chờ export'} />
+      <InvRows rows={chuaExport} loading={moi.loading} onOpen={setOpen} empty={choPdf.length ? '' : 'Không có yêu cầu mới chờ export'} sel={api ? pick : undefined} onSel={api ? onSel : undefined} />
       {choPdf.length > 0 && <div className="border-t border-ink-100"><div className="px-4 pt-2 text-xs font-semibold text-ink-600">Đã export — chờ nạp PDF nháp ({choPdf.length})</div>
-        <InvRows rows={choPdf} loading={false} onOpen={setOpen} empty="" action={v => <Button size="sm" onClick={() => reExport([v.id])}>Export lại</Button>} /></div>}
+        <InvRows rows={choPdf} loading={false} onOpen={setOpen} empty="" action={v => v.misa && v.misa.st === 'da_tao' && !v.misa.cu ? (v.misa.khop === false ? <Button size="sm" onClick={() => setOpen(v.id)}>Xử lý lệch</Button> : <Button size="sm" variant="primary" loading={busy} onClick={() => layPdf(v)}>⬇ Lấy PDF</Button>) : <Button size="sm" onClick={() => reExport([v.id])}>Export lại</Button>} /></div>}
     </Block>
 
     <Block n="3" title="PDF nháp từ MISA" sub={<>Tải PDF nháp hàng loạt, tên file dạng <code>NHAP_MST_TổngTiền_yyyymmdd</code> — ERP khớp theo MST + tổng tiền và báo sale.</>}
@@ -265,7 +281,8 @@ export function HdKeToan() {
       {(traSua.data || []).filter(v => v.status === 'da_nhap').length > 0 && <div className="border-t border-ink-100 px-4 py-2 text-xs text-ink-500">{(traSua.data || []).filter(v => v.status === 'da_nhap').length} yêu cầu có nháp, đang chờ sale duyệt.</div>}
     </Block>
 
-    <Block n="4" title="Chờ ký — sale đã chốt" sub={<>Ký trên MISA đúng bản sale chốt → dán <b>mã tra cứu</b> MISA vào ô của phiếu → bấm <b>✓ Đã ký</b>. Sale được báo và bấm mã để xem HĐ.</>}>
+    <Block n="4" title="Chờ ký — sale đã chốt" sub={<>Ký trên MISA đúng bản sale chốt → dán <b>mã tra cứu</b> MISA vào ô của phiếu → bấm <b>✓ Đã ký</b>. Sale được báo và bấm mã để xem HĐ.{api && <> Nháp tạo bằng API: ERP <b>tự dò MISA 15 phút/lần</b> (7h–21h) và tự chuyển Đã ký{mcfg.last_sync_at ? ` — lần dò gần nhất ${fmtDateTime(mcfg.last_sync_at)}` : ''}.</>}</>}
+      actions={api ? <Button loading={busy} onClick={doMisa}>⟳ Dò MISA ngay</Button> : undefined}>
       <InvRows rows={ky.data || []} loading={ky.loading} onOpen={setOpen} empty="Không có yêu cầu chờ ký" action={v => <SignBox v={v} onDone={reload} compact />} />
     </Block>
 
@@ -276,6 +293,7 @@ export function HdKeToan() {
     {pdf && <UploadHdPdf onClose={() => setPdf(false)} onDone={() => { setPdf(false); reload(); }} />}
     {lechT && <LechModal t={lechT} onClose={() => setLechT(null)} onDone={() => { setLechT(null); reload(); }} />}
     {open && <InvoiceDetail id={open} acc onClose={close} onChanged={reload} />}
+    {runner && <MisaRun ids={runner} onClose={() => { setRunner(null); setPick({}); }} onDone={reload} />}
   </Layout>;
 }
 

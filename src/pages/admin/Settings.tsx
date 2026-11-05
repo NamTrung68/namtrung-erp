@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Layout } from '../../components/Layout';
-import { Badge, Button, Card, Chips, Empty, Field, Input, NumInput, Select, Table, Td, Tabs, toast, useAction, useLoad } from '../../components/ui';
+import { Badge, Button, Card, Chips, cx, Empty, Field, Input, NumInput, Select, Table, Td, Tabs, toast, useAction, useLoad } from '../../components/ui';
 import { db, storage } from '../../lib/sb';
 import { CARD_COLORS, LoginCard, LoginContent } from '../../lib/greeting';
 import { ROLES } from './Users';
@@ -10,6 +10,7 @@ import { BANKS } from '../../lib/vietqr';
 import { fmtDate, fmtDateTime, money, num } from '../../lib/format';
 import { appsScriptCode, saveToDrive } from '../../lib/drive';
 import { DEFAULT_ACC_CFG } from '../../lib/doisoat';
+import { misaCall } from '../../lib/misa';
 
 const TG_EVENTS: [string, string][] = [['leave_request', 'Đơn nghỉ / đơn công mới'], ['attendance_flag', 'Chấm công ngoài IP'], ['quote_approval', 'Báo giá chờ duyệt giá'], ['quote_won', 'Chốt đơn'],
   ['support', 'Gọi hỗ trợ'], ['ticket', 'Ticket mới'], ['announcement', 'Bảng tin toàn công ty'], ['payroll', 'Chốt lương'], ['daily_summary', 'Tóm tắt 9h sáng'], ['acc_invoice', 'HĐ APT có dòng không đơn / lệch giá'], ['acc_overdue', 'Dòng HĐ quá hạn sale chưa xử lý'], ['report_missing', 'Sale chưa nộp báo cáo 18h'], ['hr', 'Hợp đồng lao động sắp hết hạn'], ['test', 'Tin thử']];
@@ -371,12 +372,46 @@ function AccCfg() {
         <Field label="Số tài khoản in trên HĐ" hint="VD 117634318888 - Vietinbank - Chi nhánh TP Hà Nội"><Input value={v.stk_hd || ''} onChange={e => s.set('stk_hd')(e.target.value)} /></Field></div>
       <Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>
     </Card>
+    <MisaCfg s={s} v={v} />
     <Card title="Người được duyệt mở chặn">
       <p className="mb-2 text-xs text-ink-500">Duyệt dòng chưa có đơn, giá khách = 0, biên NT dưới khung. {a.isAdmin ? 'Chọn người rồi bấm Lưu.' : 'Chỉ Admin/BGĐ được thay đổi danh sách này.'}</p>
       <Chips disabled={!a.isAdmin} options={a.people.filter(x => x.status === 'active').map(x => [x.id, x.full_name])} value={v.approver_ids || []} onChange={s.set('approver_ids')} />
       {a.isAdmin && <Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>}
     </Card>
   </div>;
+}
+
+/** Bản 31 — API MISA meInvoice (tạo HĐ nháp). Bí mật nằm ở Supabase Secrets, không nhập ở đây. */
+function MisaCfg({ s, v }: { s: any; v: any }) {
+  const m = v.misa || {}; const setM = (x: any) => s.set('misa')({ ...m, ...x }); const { busy, run } = useAction();
+  const { data: st, error: stErr, reload } = useLoad(() => misaCall<any>('status'), []);
+  const [tpls, setTpls] = useState<any[] | null>(null);
+  const test = () => run(async () => { const r = await misaCall<any>('test', { with_code: m.with_code !== false }); setTpls(r.templates || []); reload(); }, 'Kết nối MISA OK');
+  const ready = !!(m.template_id && m.inv_series);
+  return <Card title="MISA meInvoice — tạo HĐ nháp bằng API (bản 31)">
+    <p className="mb-2 text-xs text-ink-500">Chạy song song với cách làm tay: chưa bật thì ERP chạy như cũ (Excel → nhập MISA → tải PDF). Bật rồi, khối ② có thêm nút <b>⚡ Tạo nháp MISA</b>; ERP chỉ tạo <b>nháp</b>, không ký, không phát hành.</p>
+    <div className="mb-3 text-sm">Máy chủ: {stErr ? <Badge color="red">{stErr}</Badge> : !st ? <Badge>đang kiểm tra…</Badge> : st.configured ? <Badge color="green">Đã có đủ bí mật MISA</Badge>
+      : <Badge color="amber">Chưa nhập bí mật: {(st.missing || []).join(', ')}</Badge>}
+      {m.last_sync_at && <span className="ml-2 text-xs text-ink-500">Dò MISA gần nhất {fmtDateTime(m.last_sync_at)}</span>}</div>
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Field label="Loại HĐ" hint="Ký hiệu 1C… = có mã CQT; 1K… = không mã"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={m.with_code !== false} onChange={e => setM({ with_code: e.target.checked })} /> HĐ có mã của cơ quan thuế</label></Field>
+      <Field label="Mẫu HĐ MISA" hint={m.inv_series ? `Đang dùng: ${m.inv_series}${m.template_name ? ' · ' + m.template_name : ''}` : 'Bấm Kiểm tra kết nối để lấy danh sách mẫu'}>
+        <div className="flex gap-2">{tpls ? <Select options={tpls.filter(t => !t.inactive).map(t => [t.id, `${t.series} · ${t.name || t.no || ''}`] as [string, string])} value={m.template_id || ''}
+          onChange={id => { const t = tpls.find(x => x.id === id); setM({ template_id: id, inv_series: t?.series || '', template_name: t?.name || '' }); }} />
+          : <Input disabled value={m.inv_series || ''} placeholder="chưa chọn" />}<Button loading={busy} onClick={test}>Kiểm tra kết nối</Button></div></Field>
+      <Field label="Số HĐ mỗi lô gửi" hint="Mặc định 10, tối đa 30"><NumInput value={m.batch ?? 10} onChange={x => setM({ batch: Math.max(1, Math.min(30, Number(x) || 10)) })} /></Field>
+      <Field label="Tự dò HĐ đã ký" hint="15 phút/lần, 7h–21h: nháp đã phát hành → tự ghi số HĐ + mã tra cứu, chuyển Đã ký"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={m.auto_sync !== false} onChange={e => setM({ auto_sync: e.target.checked })} /> Bật</label></Field>
+    </div>
+    <label className={cx('mt-3 flex items-center gap-2 rounded-xl border px-3 py-2 text-sm', m.enabled ? 'border-emerald-300 bg-emerald-50' : 'border-ink-200')}>
+      <input type="checkbox" disabled={!ready && !m.enabled} checked={!!m.enabled} onChange={e => setM({ enabled: e.target.checked })} />
+      <b>Bật tạo nháp bằng API</b>{!ready && <span className="text-xs text-ink-500">— chọn mẫu HĐ trước</span>}</label>
+    <Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>
+    <details className="mt-3 text-xs text-ink-600"><summary className="cursor-pointer font-semibold">Cài đặt khi MISA cấp ClientID (Admin, 1 lần)</summary>
+      <ol className="mt-2 list-decimal space-y-1 pl-5">
+        <li>Supabase → <b>Edge Functions → Secrets</b>: thêm <code>MISA_CLIENT_ID</code>, <code>MISA_CLIENT_SECRET</code>, <code>MISA_TAX_CODE</code> (0108195040), <code>MISA_USERNAME</code>, <code>MISA_PASSWORD</code> (tài khoản tích hợp, không có quyền ký / phát hành).</li>
+        <li>Edge Functions → hàm <b>misa</b> phải có sẵn (mã ở <code>supabase/functions/misa/index.ts</code>), <b>tắt Verify JWT</b>.</li>
+        <li>Quay lại đây: <b>Kiểm tra kết nối</b> → chọn mẫu HĐ → tick <b>Bật</b> → Lưu. Tạo thử 1 phiếu, xem trên meinvoice.vn ở trạng thái <i>Chưa phát hành</i>.</li></ol></details>
+  </Card>;
 }
 
 function DriveCfg() {

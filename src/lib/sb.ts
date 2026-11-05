@@ -83,6 +83,9 @@ async function ensureFresh() { if (session && session.expires_at * 1000 - Date.n
 const toSession = (j: any): Session => ({ access_token: j.access_token, refresh_token: j.refresh_token,
   expires_at: j.expires_at || Math.floor(Date.now() / 1000) + (j.expires_in || 3600), user: { id: j.user?.id, email: j.user?.email } });
 
+/** JWT phiên đăng nhập hiện tại (tự làm mới nếu sắp hết hạn) — dùng khi gọi hàm máy chủ (Edge Function) */
+export async function accessToken(): Promise<string> { await ensureFresh(); return session?.access_token || ''; }
+
 export const auth = {
   get session() { return session; },
   onChange(f: (s: Session | null) => void) { listeners.add(f); return () => listeners.delete(f); },
