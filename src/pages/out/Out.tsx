@@ -32,6 +32,17 @@ function giaCheck(gia: number, dgNhap: number | null, gk: number | null, min: nu
   return { tone: bad ? 'text-red-600 font-semibold' : duyet ? 'text-amber-700 font-semibold' : 'text-ink-500', txt: parts.join(' · '), bad };
 }
 /** Việc tiếp theo của phiếu: ai làm, làm gì */
+/** Bản 30: link xem HĐ đã ký trên MISA meInvoice theo mã tra cứu */
+export const TRA_CUU_URL = 'https://www.meinvoice.vn/tra-cuu/tra-cuu/DownloadHandler.ashx?Type=pdf&Viewer=1&ext=QXVLM59J&Code={code}';
+export const traCuuLink = (ma: string, tpl?: string) => (tpl || TRA_CUU_URL).replace('{code}', encodeURIComponent(ma));
+export const normMaTraCuu = (s: string) => s.replace(/\s+/g, '').toUpperCase();
+export const maTraCuuOk = (s: string) => /^[A-Z0-9_-]{6,30}$/.test(normMaTraCuu(s));
+export function TraCuu({ ma, className }: { ma: string; className?: string }) {
+  const a = useApp();
+  return <a href={traCuuLink(ma, a.settings.accounting?.tra_cuu_url)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} title="Mở HĐ đã ký trên MISA meInvoice"
+    className={cx('inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 font-mono text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200 hover:bg-emerald-100', className)}>{ma} <span aria-hidden>↗</span></a>;
+}
+
 export function nextStep(v: any): [string, string] {
   switch (v.status) {
     case 'soan': return ['Sale', 'gửi kế toán'];
@@ -39,7 +50,7 @@ export function nextStep(v: any): [string, string] {
     case 'tra_sua': return ['Sale', 'sửa nội dung rồi gửi lại kế toán'];
     case 'cho_nhap': return v.misa_at ? ['Kế toán', `tải PDF nháp (đã xuất MISA ${fmtDateTime(v.misa_at)})`] : ['Kế toán', v.sua_sau_nhap ? 'sửa nháp theo yêu cầu, xuất file MISA' : 'xuất file nhập MISA'];
     case 'da_nhap': return !v.nhap_v ? ['Kế toán', 'tải PDF nháp'] : v.nhap_sent ? ['Sale', 'chờ khách phản hồi'] : ['Sale', `gửi khách nháp v${v.nhap_v}`];
-    case 'xac_nhan_ky': return ['Kế toán', 'ký trên MISA, tải PDF đã ký'];
+    case 'xac_nhan_ky': return ['Kế toán', 'ký trên MISA, nhập mã tra cứu'];
     default: return ['', ''];
   }
 }
@@ -549,7 +560,9 @@ export function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc
     {(() => { const [who, what] = nextStep({ ...v, nhap_v: nhapV, nhap_sent: !!fl.find(f => f.kind === 'nhap' && f.latest)?.sent_at }); return who && !(fl.length && ['da_nhap', 'xac_nhan_ky'].includes(s)) ? <div className={cx('mb-3 rounded-xl border px-3 py-2 text-sm', who === 'Sale' ? 'border-brand-200 bg-brand-50' : 'border-amber-200 bg-amber-50')}>
       Việc tiếp theo — <b>{who}</b>: {what}{v.sua_sau_nhap && s === 'cho_nhap' ? <span className="ml-1 font-semibold text-red-700">(sửa sau nháp)</span> : null}</div> : null; })()}
     <HdFilesSection v={v} files={fl} acc={acc} onChanged={done} />
-    {s === 'da_ky' && !fl.some(f => f.kind === 'ky') && <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký HĐ số <b>{v.so_hd}</b> ngày {fmtDate(v.ngay_hd)} — kế toán đã gửi mail. Sale báo khách kiểm tra email.</div>}
+    {s === 'da_ky' && v.ma_tra_cuu && <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký{v.so_hd ? <> HĐ số <b>{v.so_hd}</b></> : ''}{v.ngay_hd ? ' ngày ' + fmtDate(v.ngay_hd) : ''} · Mã tra cứu <TraCuu ma={v.ma_tra_cuu} /> <span className="text-xs text-emerald-700">bấm mã để xem HĐ</span></div>}
+    {acc && ['xac_nhan_ky', 'da_ky'].includes(s) && <div className="mb-3"><SignBox v={v} onDone={done} /></div>}
+    {s === 'da_ky' && !v.ma_tra_cuu && !fl.some(f => f.kind === 'ky') && <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký HĐ số <b>{v.so_hd}</b> ngày {fmtDate(v.ngay_hd)} — kế toán đã gửi mail. Sale báo khách kiểm tra email.</div>}
     {s === 'da_nhap' && !fl.length && <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">Phiếu chưa có PDF nháp từ MISA (phiếu sổ cũ). Kế toán tải PDF nháp lên để sale gửi khách.</div>}
     <div className="grid gap-x-6 sm:grid-cols-2 text-sm">
       <div><div className="text-xs font-bold uppercase text-ink-400">Đơn vị mua</div><div className="font-semibold">{v.buyer_name}</div><div>MST: {v.tax_code || '—'}</div><div>Địa chỉ: {v.address || '—'}</div><div>Email: {v.email || '—'}</div><div>Thanh toán: {v.payment}</div>
@@ -569,4 +582,16 @@ export function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc
       <div className="mt-2 flex flex-wrap items-center gap-2"><Button size="sm" loading={busy} onClick={sign}>Đánh dấu đã ký thủ công (không có PDF)</Button><span className="text-ink-500">Chỉ dùng khi không tải được PDF đã ký.</span></div></details>}
     {edit && <InvoiceEditor inv={v} onClose={() => setEdit(false)} onDone={() => { setEdit(false); done(); }} />}
   </Modal>;
+}
+
+/** Bản 30: kế toán dán mã tra cứu MISA → nút "Đã ký" bật → bấm là xong (không hộp thoại). HĐ đã ký: sửa mã nếu gõ nhầm. */
+export function SignBox({ v, onDone, compact = false }: { v: any; onDone: () => void; compact?: boolean }) {
+  const [ma, setMa] = useState(v.ma_tra_cuu || ''); const { busy, run } = useAction(); const signed = v.status === 'da_ky';
+  const okMa = maTraCuuOk(ma) && normMaTraCuu(ma) !== (v.ma_tra_cuu || '');
+  const save = () => run(async () => { await db.rpc('out_mark_signed', { p_id: v.id, p_ma: normMaTraCuu(ma) }); onDone(); }, signed ? 'Đã sửa mã tra cứu' : `Đã ký ${v.code} — đã báo sale`);
+  return <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+    <Input className={cx('font-mono uppercase', compact ? 'h-8 w-40 text-xs' : 'w-56')} placeholder="Mã tra cứu MISA" value={ma} onChange={e => setMa(e.target.value)}
+      onKeyDown={e => { if (e.key === 'Enter' && okMa && !busy) save(); }} />
+    <Button size="sm" variant={signed ? undefined : 'success'} loading={busy} disabled={!okMa} onClick={save}>{signed ? 'Lưu mã' : '✓ Đã ký'}</Button>
+  </div>;
 }

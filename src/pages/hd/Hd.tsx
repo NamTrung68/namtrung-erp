@@ -11,7 +11,7 @@ import { fmtDate, fmtDateTime, money, num } from '../../lib/format';
 import { downloadMau, MAU, type MauKind } from '../../lib/mau';
 import { Money } from '../acc/common';
 import { ImportTruck } from '../acc/Acc';
-import { BIEN_CAM, BIEN_DUYET, ImportSo, InvoiceDetail, InvoiceEditor, LechModal, OST, TonReport, exportMisaFile, nextStep } from '../out/Out';
+import { BIEN_CAM, BIEN_DUYET, ImportSo, InvoiceDetail, InvoiceEditor, LechModal, OST, SignBox, TonReport, TraCuu, exportMisaFile, nextStep } from '../out/Out';
 import { BulkInvoices } from '../out/Bulk';
 import { UploadHdPdf } from '../out/HdFiles';
 import { ImportHd } from './ImportHd';
@@ -51,6 +51,7 @@ function InvRows({ rows, loading, onOpen, empty, action, sale = false }: { rows:
         {v.mas && <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">{v.hds && <span className="rounded bg-ink-900 px-1.5 py-px font-semibold text-white">HĐ {v.hds}</span>}{String(v.mas).split(', ').slice(0, 6).map((m: string) => <span key={m} className="rounded bg-brand-50 px-1.5 py-px font-mono text-brand-800">{m}</span>)}{String(v.mas).split(', ').length > 6 && <span className="text-ink-400">+{String(v.mas).split(', ').length - 6} mã</span>}</div>}</div>
       <div className="w-28 text-right text-sm font-semibold tabular-nums">{money(tong)}{v.bien_max != null && Number(v.bien_max) > BIEN_DUYET && <div className="text-[11px] font-semibold text-amber-700">biên {pctTxt(Number(v.bien_max))}</div>}</div>
       <div className="w-48">{v.misa_at && v.status === 'cho_nhap' ? <Badge color="amber">Đã export — chờ PDF nháp</Badge> : <SBadge s={v.status} />}
+        {v.status === 'da_ky' && v.ma_tra_cuu && <div className="mt-1"><TraCuu ma={v.ma_tra_cuu} /></div>}
         {who && <div className="mt-0.5 text-[11px] text-ink-500"><b className={who === 'Sale' ? 'text-brand-700' : 'text-amber-700'}>{who}</b>: {what}</div>}</div>
       {action && <div onClick={e => e.stopPropagation()}>{action(v)}</div>}
     </div>; })}</div>;
@@ -98,13 +99,13 @@ export function HdSale() {
       {tab === 'duyet' && <SaleList statuses={['da_nhap']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có bản nháp nào chờ bạn" hint="Mở yêu cầu → xem PDF nháp → gửi khách → Chốt, hoặc Yêu cầu sửa." />}
       {tab === 'tra' && <SaleList statuses={['tra_sua', 'cho_duyet_gia', 'soan']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có yêu cầu bị trả hay chờ duyệt" hint="Trả sửa: bấm Sửa rồi gửi lại (lên phiên bản mới). Chờ duyệt giá: biên > 4%, chờ quản lý duyệt. Đang soạn: chưa gửi kế toán." />}
       {tab === 'dang' && <SaleList statuses={['cho_nhap', 'xac_nhan_ky']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có yêu cầu đang ở phía kế toán" hint="Đã gửi → kế toán export MISA → có nháp sẽ chuyển sang tab Chờ tôi duyệt. Đã chốt → chờ kế toán ký." />}
-      {tab === 'ky' && <SaleList statuses={['da_ky']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Chưa có HĐ đã ký" hint="Mở yêu cầu để xem / in PDF nháp và PDF đã ký." />}
+      {tab === 'ky' && <SaleList statuses={['da_ky']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Chưa có HĐ đã ký" hint="Bấm vào mã tra cứu (ô xanh) để xem / tải HĐ đã ký trên MISA — gửi khách hoặc in hợp đồng." />}
     </div>
     {open && <InvoiceDetail id={open} acc={false} onClose={close} onChanged={reload} />}
   </Layout>;
 }
 function SaleList({ statuses, sale, hd, rev, onOpen, empty, hint }: { statuses: string[]; sale: string; hd: string; rev: number; onOpen: (id: string) => void; empty: string; hint: string }) {
-  const { data, loading } = useInv(statuses, { sale, hd }, [rev]);
+  const { data, loading } = useInv(statuses, { sale, hd, ...(statuses.includes('da_ky') ? { dir: 'desc' } : {}) }, [rev]); // đã ký: mới nhất lên đầu
   return <><p className="mb-3 text-sm text-ink-600">{hint}</p><Card bodyClass="p-0"><InvRows rows={data || []} loading={loading} onOpen={onOpen} empty={empty} sale /></Card></>;
 }
 
@@ -264,9 +265,8 @@ export function HdKeToan() {
       {(traSua.data || []).filter(v => v.status === 'da_nhap').length > 0 && <div className="border-t border-ink-100 px-4 py-2 text-xs text-ink-500">{(traSua.data || []).filter(v => v.status === 'da_nhap').length} yêu cầu có nháp, đang chờ sale duyệt.</div>}
     </Block>
 
-    <Block n="4" title="Chờ ký — sale đã chốt" sub={<>Ký trên MISA đúng bản sale chốt. Cuối ngày tải PDF đã ký, tên <code>KY_KýHiệu-SốHĐ_MST_TổngTiền</code>.</>}
-      actions={<Button variant="dark" onClick={() => setPdf(true)}>⇪ Tải PDF đã ký</Button>}>
-      <InvRows rows={ky.data || []} loading={ky.loading} onOpen={setOpen} empty="Không có yêu cầu chờ ký" />
+    <Block n="4" title="Chờ ký — sale đã chốt" sub={<>Ký trên MISA đúng bản sale chốt → dán <b>mã tra cứu</b> MISA vào ô của phiếu → bấm <b>✓ Đã ký</b>. Sale được báo và bấm mã để xem HĐ.</>}>
+      <InvRows rows={ky.data || []} loading={ky.loading} onOpen={setOpen} empty="Không có yêu cầu chờ ký" action={v => <SignBox v={v} onDone={reload} compact />} />
     </Block>
 
     {imp === 'xe' && <ImportTruck onClose={() => setImp('')} onDone={id => { setImp(''); go('/acc?truck=' + id); }} />}

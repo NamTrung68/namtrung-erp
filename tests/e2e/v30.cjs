@@ -1,0 +1,31 @@
+// v30: bước 4 — kế toán dán mã tra cứu → nút Đã ký bật → bấm; sale thấy mã tra cứu là link meinvoice
+const { chromium } = require('playwright'); const { execSync } = require('child_process');
+const BASE = 'http://localhost:8080/'; const SHOTS = '/tmp/v30-shots'; require('fs').mkdirSync(SHOTS, { recursive: true });
+const errors = []; const ok = (c, m) => { if (!c) errors.push('FAIL ' + m); else console.log('  ✓ ' + m); };
+const sql = q => execSync(`psql -h /var/tmp/pg -p 5433 -U postgres -d nt_e2e -Atqc "${q.replace(/"/g, '\\"')}"`).toString().trim();
+(async () => {
+  const A = sql("select id from profiles where email='a@nt.vn'");
+  sql(`insert into out_invoices(id, code, sale_id, buyer_name, tax_code, status) values ('00000000-0000-0000-0030-00000000e0b1', 'XHD30001', '${A}', 'Trần Văn Diệm', '036092010112', 'xac_nhan_ky')`);
+  const b = await chromium.launch();
+  const login = async email => { const p = await (await b.newContext({ viewport: { width: 1440, height: 900 } })).newPage(); p.on('pageerror', e => errors.push(`[${email}] ${e.message}`));
+    await p.goto(BASE); await p.fill('input[type=email]', email); await p.fill('input[type=password]', 'Test1234!'); await p.click('button[type=submit]'); await p.waitForSelector('h2.display'); return p; };
+  const kt = await login('kt@nt.vn'); await kt.goto(BASE + '#/hd/kt'); await kt.waitForTimeout(1500);
+  ok(await kt.locator('button:has-text("Tải PDF đã ký")').count() === 0, 'bước 4 bỏ nút Tải PDF đã ký');
+  const row = kt.locator('div.cursor-pointer', { hasText: 'XHD30001' }); const btn = row.locator('button:has-text("Đã ký")');
+  ok(await btn.isDisabled(), 'chưa điền mã → nút Đã ký tắt');
+  await row.locator('input').fill('1zf8cq372vl3'); await kt.waitForTimeout(200);
+  ok(!(await btn.isDisabled()), 'điền mã → nút Đã ký bật');
+  await kt.screenshot({ path: SHOTS + '/1-ke-toan.png' });
+  await btn.click(); await kt.waitForTimeout(1500);
+  ok(sql("select status || '|' || ma_tra_cuu from out_invoices where code='XHD30001'") === 'da_ky|1ZF8CQ372VL3', 'bấm Đã ký → lưu mã, chuyển Đã ký');
+  await kt.waitForTimeout(4500); console.log('   còn:', JSON.stringify(await kt.locator('div.cursor-pointer', { hasText: 'XHD30001' }).allInnerTexts()));
+  ok(await kt.locator('div.cursor-pointer:has(input)', { hasText: 'XHD30001' }).count() === 0, 'phiếu rời khỏi bước 4, không mở hộp nào');
+  const s = await login('a@nt.vn'); await s.goto(BASE + '#/hd'); await s.waitForTimeout(1200);
+  await s.locator('button', { hasText: 'Đã ký' }).first().click(); await s.waitForTimeout(1200);
+  const link = s.locator('a', { hasText: '1ZF8CQ372VL3' });
+  ok(await link.count() === 1, 'sale thấy mã tra cứu trong tab Đã ký');
+  ok((await link.getAttribute('href')) === 'https://www.meinvoice.vn/tra-cuu/tra-cuu/DownloadHandler.ashx?Type=pdf&Viewer=1&ext=QXVLM59J&Code=1ZF8CQ372VL3' && (await link.getAttribute('target')) === '_blank', 'mã tra cứu là link xem HĐ (tab mới)');
+  await s.screenshot({ path: SHOTS + '/2-sale.png' });
+  ok(Number(sql("select count(*) from notifications where title='Đã ký HĐ: XHD30001'")) === 1, 'sale được báo');
+  await b.close(); if (errors.length) { console.log(errors.join('\n')); process.exit(1); } console.log('V30 E2E OK');
+})().catch(e => { console.log('FAILED', e.message, errors.join('\n')); process.exit(1); });
