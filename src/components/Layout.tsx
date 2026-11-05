@@ -36,9 +36,12 @@ export const Icon = ({ name, className = 'h-[18px] w-[18px]' }: { name: string; 
 
 interface NavItem { to: string; label: string; icon: string; show: boolean }
 /** Quyền vào trang theo đường dẫn — dùng chung cho menu và chặn gõ thẳng URL (main.tsx) */
+/** Bản 29: các mục CSKH (thuần) không được truy cập */
+export const CSKH_BLOCK = ['/support', '/crm/daily', '/crm/reports', '/kpi'];
 export function canOpen(a: ReturnType<typeof useApp>, path: string): boolean {
   if (path === '/admin/users' || path === '/admin/data') return a.isAdmin; // chỉ Admin + Ban giám đốc
   if (path === '/admin/settings') return a.isAdmin || a.has('hcns', 'ke_toan');
+  if (a.cskhOnly && CSKH_BLOCK.includes(path)) return false; // bản 29
   return true;
 }
 export function useNav() {
@@ -51,10 +54,10 @@ export function useNav() {
       { to: '/crm/quotes', label: 'Báo giá', icon: '🧾', show: a.isSales },
       { to: '/crm/library', label: 'Kho báo giá', icon: '📚', show: true },
       { to: '/crm/replies', label: 'Câu trả lời mẫu', icon: '💬', show: true },
-      { to: '/support', label: 'Hỗ trợ khách', icon: '🆘', show: true },
-      { to: '/crm/daily', label: 'Báo cáo ngày', icon: '📝', show: a.isSales },
-      { to: '/crm/reports', label: 'Báo cáo và KPI', icon: '📈', show: a.isSales },
-      { to: '/kpi', label: 'Bảng Phong Thần', icon: '🏆', show: true },
+      { to: '/support', label: 'Hỗ trợ khách', icon: '🆘', show: !a.cskhOnly },
+      { to: '/crm/daily', label: 'Báo cáo ngày', icon: '📝', show: a.isSales && !a.cskhOnly },
+      { to: '/crm/reports', label: 'Báo cáo và KPI', icon: '📈', show: a.isSales && !a.cskhOnly },
+      { to: '/kpi', label: 'Bảng Phong Thần', icon: '🏆', show: !a.cskhOnly },
     ]],
     ['Nhân sự', [
       { to: '/hr/attendance', label: 'Chấm công', icon: '📷', show: true },

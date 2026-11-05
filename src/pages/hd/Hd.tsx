@@ -47,7 +47,8 @@ function InvRows({ rows, loading, onOpen, empty, action, sale = false }: { rows:
       <div className="w-28 shrink-0"><div className="text-sm font-semibold text-ink-900">{v.code}{v.version > 1 && <span className="ml-1 text-[11px] font-normal text-ink-500">v{v.version}</span>}</div>
         <div className="text-[11px] text-ink-400">{fmtDateTime(v.status_at)}</div></div>
       <div className="min-w-[180px] flex-1"><div className="line-clamp-1 text-sm text-ink-800">{v.buyer_name || '—'}</div>
-        <div className="text-[11px] text-ink-500">{v.mds || ''}{v.tax_code ? ' · MST ' + v.tax_code : ''}{!sale ? ' · ' + (a.personName(v.sale_id) || '') : ''}</div></div>
+        <div className="text-[11px] text-ink-500">{v.mds || ''}{v.tax_code ? ' · MST ' + v.tax_code : ''}{!sale ? ' · ' + (a.personName(v.sale_id) || '') : ''}</div>
+        {v.mas && <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">{v.hds && <span className="rounded bg-ink-900 px-1.5 py-px font-semibold text-white">HĐ {v.hds}</span>}{String(v.mas).split(', ').slice(0, 6).map((m: string) => <span key={m} className="rounded bg-brand-50 px-1.5 py-px font-mono text-brand-800">{m}</span>)}{String(v.mas).split(', ').length > 6 && <span className="text-ink-400">+{String(v.mas).split(', ').length - 6} mã</span>}</div>}</div>
       <div className="w-28 text-right text-sm font-semibold tabular-nums">{money(tong)}{v.bien_max != null && Number(v.bien_max) > BIEN_DUYET && <div className="text-[11px] font-semibold text-amber-700">biên {pctTxt(Number(v.bien_max))}</div>}</div>
       <div className="w-48">{v.misa_at && v.status === 'cho_nhap' ? <Badge color="amber">Đã export — chờ PDF nháp</Badge> : <SBadge s={v.status} />}
         {who && <div className="mt-0.5 text-[11px] text-ink-500"><b className={who === 'Sale' ? 'text-brand-700' : 'text-amber-700'}>{who}</b>: {what}</div>}</div>
@@ -70,10 +71,12 @@ export function HdSale() {
   const go2 = (t: string) => { setTab(t as STab); sessionStorage.setItem('nt_hd_tab', t); };
   const { query } = useRoute();
   const [sale, setSale] = useState(''); const [open, setOpen] = useState<string | null>(query.inv || null); const [rev, setRev] = useState(0);
+  const [hd, setHd] = useState(''); // bản 29: lọc theo số HĐ đầu vào APT
+  const { data: hdOpts } = useLoad(() => db.rpc<any[]>('out_hd_opts', { p_mode: 'mine' }).catch(() => []), [rev]);
   React.useEffect(() => { if (query.inv) setOpen(query.inv); }, [query.inv]);
   const close = () => { setOpen(null); if (location.hash.includes('inv=')) go('/hd'); };
   const { data: saleOpts } = useLoad(() => a.seesTeam ? db.rpc<any[]>('out_sale_opts') : Promise.resolve([]), []);
-  const { data: cnt } = useLoad(() => db.rpc<any>('out_invoices_page', { p: { limit: 0, sale } }), [sale, rev]);
+  const { data: cnt } = useLoad(() => db.rpc<any>('out_invoices_page', { p: { limit: 0, sale, hd } }), [sale, hd, rev]);
   const { data: st } = useLoad(() => db.rpc<any>('out_items_stats', { p_mode: 'mine' }), [rev]);
   const c = (k: string) => Number(cnt?.counts?.[k] || 0);
   if (!a.isSales && !a.isAdmin) return <Layout title="Hóa đơn của tôi"><Card>Chỉ dành cho Kinh doanh.</Card></Layout>;
@@ -85,30 +88,32 @@ export function HdSale() {
     ['ky', 'Đã ký'],
   ];
   const reload = () => setRev(x => x + 1);
-  return <Layout title="Hóa đơn của tôi" actions={<div className="flex items-center gap-2">
+  return <Layout title="Hóa đơn của tôi" actions={<div className="flex flex-wrap items-center gap-2">
+    <Select className="w-56" placeholder="Tất cả số HĐ" options={((hdOpts as any[]) || []).map(x => [x.hd, `HĐ ${x.hd}${x.ngay ? ' · ' + fmtDate(x.ngay) : ''} · ${x.n} mã`] as [string, string])} value={hd} onChange={setHd} />
     {a.seesTeam && (saleOpts || []).length > 1 && <Select className="w-48" placeholder={a.isCskh && !a.isLead ? 'Các sale tôi hỗ trợ' : 'Cả nhóm'} options={(saleOpts || []).map((x: any) => [x.id, x.full_name] as [string, string])} value={sale} onChange={setSale} />}
     <Button onClick={() => go('/acc/mine')}>Đối soát xe của tôi</Button></div>}>
     <Tabs value={tab} onChange={go2} tabs={tabs} />
     <div className="mt-4">
-      {tab === 'ready' && <Ready sale={sale} rev={rev} onChanged={reload} />}
-      {tab === 'duyet' && <SaleList statuses={['da_nhap']} sale={sale} rev={rev} onOpen={setOpen} empty="Không có bản nháp nào chờ bạn" hint="Mở yêu cầu → xem PDF nháp → gửi khách → Chốt, hoặc Yêu cầu sửa." />}
-      {tab === 'tra' && <SaleList statuses={['tra_sua', 'cho_duyet_gia', 'soan']} sale={sale} rev={rev} onOpen={setOpen} empty="Không có yêu cầu bị trả hay chờ duyệt" hint="Trả sửa: bấm Sửa rồi gửi lại (lên phiên bản mới). Chờ duyệt giá: biên > 4%, chờ quản lý duyệt. Đang soạn: chưa gửi kế toán." />}
-      {tab === 'dang' && <SaleList statuses={['cho_nhap', 'xac_nhan_ky']} sale={sale} rev={rev} onOpen={setOpen} empty="Không có yêu cầu đang ở phía kế toán" hint="Đã gửi → kế toán export MISA → có nháp sẽ chuyển sang tab Chờ tôi duyệt. Đã chốt → chờ kế toán ký." />}
-      {tab === 'ky' && <SaleList statuses={['da_ky']} sale={sale} rev={rev} onOpen={setOpen} empty="Chưa có HĐ đã ký" hint="Mở yêu cầu để xem / in PDF nháp và PDF đã ký." />}
+      {tab === 'ready' && <Ready sale={sale} hd={hd} rev={rev} onChanged={reload} />}
+      {tab === 'duyet' && <SaleList statuses={['da_nhap']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có bản nháp nào chờ bạn" hint="Mở yêu cầu → xem PDF nháp → gửi khách → Chốt, hoặc Yêu cầu sửa." />}
+      {tab === 'tra' && <SaleList statuses={['tra_sua', 'cho_duyet_gia', 'soan']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có yêu cầu bị trả hay chờ duyệt" hint="Trả sửa: bấm Sửa rồi gửi lại (lên phiên bản mới). Chờ duyệt giá: biên > 4%, chờ quản lý duyệt. Đang soạn: chưa gửi kế toán." />}
+      {tab === 'dang' && <SaleList statuses={['cho_nhap', 'xac_nhan_ky']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có yêu cầu đang ở phía kế toán" hint="Đã gửi → kế toán export MISA → có nháp sẽ chuyển sang tab Chờ tôi duyệt. Đã chốt → chờ kế toán ký." />}
+      {tab === 'ky' && <SaleList statuses={['da_ky']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Chưa có HĐ đã ký" hint="Mở yêu cầu để xem / in PDF nháp và PDF đã ký." />}
     </div>
     {open && <InvoiceDetail id={open} acc={false} onClose={close} onChanged={reload} />}
   </Layout>;
 }
-function SaleList({ statuses, sale, rev, onOpen, empty, hint }: { statuses: string[]; sale: string; rev: number; onOpen: (id: string) => void; empty: string; hint: string }) {
-  const { data, loading } = useInv(statuses, { sale }, [rev]);
+function SaleList({ statuses, sale, hd, rev, onOpen, empty, hint }: { statuses: string[]; sale: string; hd: string; rev: number; onOpen: (id: string) => void; empty: string; hint: string }) {
+  const { data, loading } = useInv(statuses, { sale, hd }, [rev]);
   return <><p className="mb-3 text-sm text-ink-600">{hint}</p><Card bodyClass="p-0"><InvRows rows={data || []} loading={loading} onOpen={onOpen} empty={empty} sale /></Card></>;
 }
 
 /** Sẵn sàng xuất: khách → đơn → mã khai báo */
-function Ready({ sale, rev, onChanged }: { sale: string; rev: number; onChanged: () => void }) {
+const hdOf = (t: any) => String(t.so_hd_vao || '').replace(/^0+/, '') || (String(t.ma_hang || '').match(/^[A-Za-z]+\d+-0*(\d+)-\d{4}/) || [])[1] || '';
+function Ready({ sale, hd, rev, onChanged }: { sale: string; hd: string; rev: number; onChanged: () => void }) {
   const { busy, run } = useAction(); const [q, setQ] = useState(''); const [f, setF] = useState(''); const [kh, setKh] = useState('');
   const { data, loading, reload } = useLoad(() => db.rpc<any>('out_items_page', { p: { mode: 'mine', sale, sort: 'kh', offset: 0, limit: 500 } }), [sale, rev]);
-  const items: any[] = data?.rows || [];
+  const items: any[] = (data?.rows || []).filter((t: any) => !hd || hdOf(t) === hd.replace(/^0+/, ''));
   const [pickMd, setPickMd] = useState<Record<string, boolean>>({}); const [pickIt, setPickIt] = useState<Record<string, any>>({}); const [exp, setExp] = useState<Record<string, boolean>>({});
   const [bulk, setBulk] = useState<any[] | null>(null); const [edit, setEdit] = useState<any[] | null>(null); const [dirty, setDirty] = useState<any[] | null>(null);
   const done = () => { setPickMd({}); setPickIt({}); reload(); onChanged(); };
@@ -166,7 +171,8 @@ function Ready({ sale, rev, onChanged }: { sale: string; rev: number; onChanged:
               <input type="checkbox" className="h-5 w-5" disabled={!ok.length || md === 'Chưa có ID đơn'} checked={!!pickMd[md]} onChange={e => setPickMd(p => ({ ...p, [md]: e.target.checked }))} />
               <button className="min-w-0 flex-1 text-left" onClick={() => setExp(x => ({ ...x, [md]: !x[md] }))}>
                 <div className="text-sm"><b className="text-ink-900">{md}</b> <span className="text-ink-500">· {ts.length} mã {isOpen ? '▴' : '▾'}</span></div>
-                <div className="text-[11px] text-ink-500">{money(tien(ts))}{ts[0]?.so_hd_vao ? ` · HĐ vào ${ts[0].so_hd_vao} · ${fmtDate(ts[0].ngay_vao)}` : ''}</div></button>
+                <div className="text-[11px] text-ink-500">{money(tien(ts))}{ts[0]?.so_hd_vao ? ` · HĐ vào ${Array.from(new Set(ts.map(hdOf).filter(Boolean))).join(', ')} · ${fmtDate(ts[0].ngay_vao)}` : ''}</div>
+                <div className="mt-0.5 flex flex-wrap gap-1">{ts.slice(0, 8).map(t => <span key={t.id} className={cx('rounded px-1.5 py-px font-mono text-[11px]', locked(t) ? 'bg-red-50 text-red-700' : 'bg-brand-50 text-brand-800')}>{t.ma_hang}{t.part > 1 ? ` (${t.part})` : ''}</span>)}{ts.length > 8 && <span className="text-[11px] text-ink-400">+{ts.length - 8} mã</span>}</div></button>
               {lk > 0 && <Badge color="red">{lk} mã lệch — khóa</Badge>}{warn && <Badge color="amber">Biên {warn}</Badge>}{noGia && <Badge color="red">Thiếu giá</Badge>}
               <Button size="sm" disabled={!ok.length || md === 'Chưa có ID đơn'} onClick={() => setBulk(ok)}>Xuất theo đơn</Button></div>
             {isOpen && <div className="bg-ink-50/60 px-4 pb-2 pl-12">{ts.map(t => { const b = bien(t);

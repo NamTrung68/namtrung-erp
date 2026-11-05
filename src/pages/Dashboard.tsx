@@ -12,7 +12,7 @@ export default function Dashboard() {
   const a = useApp();
   const [scope, setScope] = useState<'team' | 'me'>(a.isLead ? 'team' : 'me');
   const { data: d, loading, error } = useLoad(() => db.rpc<any>('dashboard'), []);
-  const { data: kpi } = useLoad(() => a.isSales || a.isLead ? db.rpc<any[]>('kpi_report', { p_from: today(), p_to: today() }) : Promise.resolve([]), []);
+  const { data: kpi } = useLoad(() => (a.isSales || a.isLead) && !a.cskhOnly ? db.rpc<any[]>('kpi_report', { p_from: today(), p_to: today() }) : Promise.resolve([]), []);
   const kpiRows = ((kpi as any[]) || []).filter(r => scope === 'team' || r.profile_id === a.me.id);
   const { data: due, reload: reloadDue } = useLoad(() => {
     if (!a.isSales && !a.isLead) return Promise.resolve([]);

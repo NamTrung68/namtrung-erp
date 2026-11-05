@@ -15,7 +15,7 @@ interface Ctx {
   /** Sale người dùng (CSKH) đang hỗ trợ */
   mySales: string[];
   opts: (cat: string) => [string, string][]; label: (cat: string, code: string | null | undefined) => string; lk: (cat: string, code: string) => Lookup | undefined;
-  has: (...roles: string[]) => boolean; isAdmin: boolean; isSales: boolean; isLead: boolean; isCskh: boolean; seesTeam: boolean; canHR: boolean; canDocs: boolean;
+  has: (...roles: string[]) => boolean; isAdmin: boolean; isSales: boolean; isLead: boolean; isCskh: boolean; seesTeam: boolean; cskhOnly: boolean; canHR: boolean; canDocs: boolean;
   reload: () => Promise<void>; personName: (id: string | null | undefined) => string; refreshMe: () => Promise<void>;
 }
 const AppCtx = createContext<Ctx | null>(null);
@@ -54,6 +54,8 @@ export function AppProvider({ initial, children }: { initial: Awaited<ReturnType
     isLead: isAdmin || has('tn_kd', 'tp_kd') || state.me.is_manager,
     // Bản 28: CSKH hỗ trợ sale — xem / thao tác dữ liệu kinh doanh của sale được giao, không duyệt
     isCskh: has('cskh'),
+    // Bản 29: CSKH thuần (không kiêm sale / quản lý) — không vào Hỗ trợ khách, Báo cáo ngày, Báo cáo và KPI, Bảng Phong Thần
+    cskhOnly: has('cskh') && !isAdmin && !has('sale', 'tn_kd', 'tp_kd', 'ke_toan', 'hcns') && !state.me.is_manager,
     seesTeam: isAdmin || has('tn_kd', 'tp_kd', 'cskh') || state.me.is_manager,
     canHR: isAdmin || has('hcns', 'ke_toan'),
     canDocs: isAdmin || has('ke_toan') || (state.me.level_rank ?? 0) >= 3,
