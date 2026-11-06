@@ -139,3 +139,42 @@ test('bản 25: HĐ ký → dòng nháp (mã khai báo) → đơn/khách/sale; l
   assert.equal(matchHd(rows, lines, new Set(['L1']))[0].line, null, 'dòng nháp đã thuộc mã hàng khác thì không ghép lại');
   assert.equal(bestTruck(rows, new Map([['T', lines], ['X', []]])), 'T');
 });
+
+// Bản 32: file xe đảo cột ID ĐƠN ↔ USERNAME ở vài dòng cuối (dữ liệu giả, đúng hình dạng file thật)
+test('file xe lệch cột ID ĐƠN ↔ USERNAME — lấy đơn theo mã khai báo, đảo lại username', () => {
+  const H = ['HÌNH ẢNH', 'THƯƠNG HIỆU', 'ID ĐƠN', 'USERNAME KHÁCH', 'SALE', 'MÃ KHAI BÁO', 'Tên KHAI BÁO KH yêu cầu', 'HS Code', 'SỐ KIỆN', 'SỐ LƯỢNG', 'DVT', 'GIÁ TRÊN TỜ KHAI'];
+  const row = (don: any, kh: any, kb: string, ten: string) => ['', '', don, kh, 'Sale A', kb, ten, '', '', 10, 'Chiếc', 1000];
+  const sys = parseKhaiBao([['NẠP KHI KÊ KHAI'], H,
+    row(2406, 'khachdung', 'MD2406-1', 'Hàng 1'),
+    row(2604, '0866445988', 'MD2604-1', 'Hàng 2'),          // username là số điện thoại — giữ nguyên
+    row('khachA', 2689, 'MD2689-1', 'Hàng 3'),               // đảo cột
+    row('khach2603', 2329, 'MD2329-2', 'Hàng 4'),            // đảo cột, username có số → trước đây đọc thành MD2603
+    row('khach123', 'MD2707', 'MD2707-1', 'Hàng 5'),         // đảo cột, username có số → trước đây đọc thành MD123
+    row(2445, 2445, 'MD2445-1', 'Hàng 6'),                   // username = số đơn → coi là thiếu
+    row('', '', 'MD2445-3', 'Hàng 7'),                       // dòng tiếp của đơn trên, không mang username sai xuống
+    row(2800, '', 'MD2800-1', 'Hàng 8'),                     // sang đơn mới thiếu username → không lấy username đơn trên
+  ]);
+  const by = (kb: string) => sys.find(s => s.ma_dong === kb)!;
+  assert.deepEqual([by('MD2406-1').md, by('MD2406-1').ma_kh, by('MD2406-1').flags], ['MD2406', 'khachdung', []]);
+  assert.deepEqual([by('MD2604-1').md, by('MD2604-1').ma_kh], ['MD2604', '0866445988']);
+  assert.deepEqual([by('MD2689-1').md, by('MD2689-1').ma_kh, by('MD2689-1').flags], ['MD2689', 'khachA', ['dao_cot']]);
+  assert.deepEqual([by('MD2329-2').md, by('MD2329-2').ma_kh], ['MD2329', 'khach2603']);
+  assert.deepEqual([by('MD2707-1').md, by('MD2707-1').ma_kh], ['MD2707', 'khach123']);
+  assert.deepEqual([by('MD2445-1').md, by('MD2445-1').ma_kh, by('MD2445-1').flags], ['MD2445', '', ['user_la_don']]);
+  assert.deepEqual([by('MD2445-3').md, by('MD2445-3').ma_kh, by('MD2445-3').flags], ['MD2445', '', ['thieu_user']]);
+  assert.deepEqual([by('MD2800-1').md, by('MD2800-1').ma_kh, by('MD2800-1').flags], ['MD2800', '', ['thieu_user']]);
+  // cột MÃ KHAI BÁO đứng trước USERNAME không bị nhận nhầm là cột mã khách
+  const H2 = ['ID ĐƠN', 'MÃ KHAI BÁO', 'USERNAME KHÁCH', 'SALE', 'Tên KHAI BÁO', 'SỐ LƯỢNG', 'DVT', 'GIÁ TRÊN TỜ KHAI'];
+  const s2 = parseKhaiBao([H2, [2406, 'MD2406-1', 'khachdung', 'Sale A', 'Hàng 1', 10, 'Chiếc', 1000]]);
+  assert.equal(s2[0].ma_kh, 'khachdung');
+  // đối soát: thiếu username → cảnh báo (không chặn); lệch cột → ghi chú + cảnh báo đầu trang
+  const apt = parseApt([['STT', 'Mã hàng', '', '', '', '', 'Đơn hàng', 'Sale', '', '', 'MÃ KHAI BÁO', 'Mã hàng ', 'Tên hàng (mô tả chi tiết)', 'Lượng', 'ĐVT', 'Đơn giá tính thuế', 'TS NK(%)', 'TS MT', 'Đơn giá bán', 'Thuế suất VAT(%)'],
+    [1, '', '', '', '', '', 'DH1', 'a', '', '', 'MD2689-1', 'HH1', 'Hàng 3', 10, 'Chiếc', '', 0, '', 971, 0.08],
+    [2, '', '', '', '', '', 'DH2', 'a', '', '', 'MD2800-1', 'HH2', 'Hàng 8', 10, 'Chiếc', '', 0, '', 971, 0.08]]);
+  const r = reconcile(apt.rows, sys, []);
+  const l1 = r.lines.find(l => l.ma_dong === 'MD2689-1')!, l2 = r.lines.find(l => l.ma_dong === 'MD2800-1')!;
+  assert.equal(l1.ma_kh, 'khachA'); assert.ok(l1.notes.some(n => n.includes('đảo cột')));
+  assert.equal(l2.status, 'ok'); assert.ok(l2.issues.some(x => x.startsWith('Thiếu username')));
+  assert.equal(r.stats.thieu_user, 1);
+  assert.ok(r.warnings.some(w => w.startsWith('File xe lệch cột ở 3 dòng')));
+});

@@ -76,7 +76,19 @@ export function assign(score: number[][], thr: number): Map<number, [number, num
 // ---------------- đọc file ----------------
 export interface AptRow { apt_stt: number; apt_mahang: string; don: string; sale_apt: string; md_apt: string; dau_khoi: boolean; ma_kb: string; hh: string; ten: string;
   sl: number | null; dvt: string; nk: number; gia_nhap: number | null; vat: number; note: string; kt: string; note2: string; gia_note: number | null; gia_khach_sale_ghi: number | null }
-export interface SysRow { sys_row: number; ten: string; sale: string; md: string; ma_dong: string; sl: number | null; dvt: string; gia_khach: number | null; nk: number; hs: string; ma_kh: string; ma_dong_file: string }
+/** Bản 32 — cờ đọc file xe: dao_cot = ID ĐƠN ↔ USERNAME bị đảo (đã tự đảo lại) · md_lech = ID ĐƠN khác mã khai báo (lấy theo mã khai báo)
+ *  don_sai = ô ID ĐƠN không phải số đơn · user_la_don = username trùng số đơn (coi là thiếu) · thieu_user = không có username khách */
+export type SysFlag = 'dao_cot' | 'md_lech' | 'don_sai' | 'user_la_don' | 'thieu_user';
+export const SYS_FLAG: Record<SysFlag, string> = {
+  dao_cot: 'File xe đảo cột ID ĐƠN ↔ USERNAME — ERP đã tự đảo lại', md_lech: 'ID ĐƠN trên file xe khác mã khai báo — lấy đơn theo mã khai báo',
+  don_sai: 'Ô ID ĐƠN không phải số đơn — lấy đơn theo mã khai báo', user_la_don: 'USERNAME trùng số đơn (nghi lệch cột) — cần điền username đúng',
+  thieu_user: 'Thiếu username khách — điền trước khi lưu',
+};
+/** Ô có dạng số đơn: 2689 · MD2689 · md 2689 (không nhận username lẫn số như tiendat2603) */
+export const isDonCode = (v: any) => /^(MD)?\s*\d+(\.0+)?$/i.test(clean(v));
+/** Username trùng chính số đơn (2689 của MD2689) → dấu hiệu file xe lệch cột */
+export const khLaDon = (kh: any, md: any) => { const d = String(md || '').replace(/\D/g, '').replace(/^0+/, ''); return !!d && new RegExp(`^(MD)?\\s*0*${d}$`, 'i').test(clean(kh)); };
+export interface SysRow { sys_row: number; ten: string; sale: string; md: string; ma_dong: string; sl: number | null; dvt: string; gia_khach: number | null; nk: number; hs: string; ma_kh: string; ma_dong_file: string; flags?: SysFlag[] }
 export interface TkRow { tk_row: number; dh: string; sale: string; md_header: string; ten: string; hs: string; sl: number; dvt: string; nh: number | null; nk: number; tnk: number; vat: number | null }
 
 const notePrice = (v: any) => { const t = stripAcc(clean(v)).toLowerCase(); if (!t) return null; const m = t.match(/^\s*(?:xuat\s*gia\s*:?)?\s*(\d[\d.,]*)/); return m ? vnNum(m[1]) : null; };
@@ -152,19 +164,30 @@ export function parseKhaiBao(rows: any[][]): SysRow[] {
     don: f(h => h === 'ID DON') >= 0 ? f(h => h === 'ID DON') : ci(h => h.includes('DON HANG'), 'ID ĐƠN'), kb: f(h => h === 'MA KHAI BAO'),
     sl: ci(h => h.startsWith('SO LUONG'), 'SỐ LƯỢNG'), dvt: ci(h => h === 'DVT' || h.startsWith('DON VI TINH'), 'DVT'), gia: ci(h => h.startsWith('GIA TREN TO KHAI'), 'GIÁ TRÊN TỜ KHAI'),
     nk: f(h => h.startsWith('THUE NK')), hs: f(h => h.startsWith('HS CODE')), mahang: f(h => h === 'MA HANG'),
-    makh: f(h => h.startsWith('USERNAME') || h.startsWith('MA KH') || h.includes('MA KHACH') || h === 'USER' || h.includes('TAI KHOAN KH') || h.includes('MA HE THONG')) };
+    // Bản 32: "MÃ KHAI BÁO" cũng bắt đầu bằng "MA KH" → loại ra, không nhận nhầm là cột mã khách
+    makh: f(h => !h.startsWith('MA KHAI') && (h.startsWith('USERNAME') || h.startsWith('MA KH') || h.includes('MA KHACH') || h === 'USER' || h.includes('TAI KHOAN KH') || h.includes('MA HE THONG'))) };
   const out: SysRow[] = []; let saleCur = '', md = '', kh = ''; const cnt: Record<string, number> = {};
   rows.slice(hi + 1).forEach((r, k) => {
     const ten = clean(r?.[m.ten]); if (!ten) return;
     const kb = m.kb >= 0 ? normKb(r[m.kb]) : '';
-    if (clean(r[m.don])) md = normMd(r[m.don]); else if (kb) md = kbMd(kb);
+    // Bản 32: chống lệch cột. ID ĐƠN chỉ nhận dạng số đơn (2689 / MD2689); MÃ KHAI BÁO là chuẩn để suy ra đơn.
+    let donV = clean(r[m.don]); let khV = m.makh >= 0 ? clean(r[m.makh]) : ''; const flags: SysFlag[] = [];
+    if (donV && !isDonCode(donV) && khV && isDonCode(khV) && (!kb || normMd(khV) === kbMd(kb))) { [donV, khV] = [khV, donV]; flags.push('dao_cot'); }
+    const mdDon = isDonCode(donV) ? normMd(donV) : '';
+    const mdNew = kb ? kbMd(kb) : mdDon;
+    if (kb && mdDon && mdDon !== kbMd(kb)) flags.push('md_lech');
+    if (donV && !mdDon && !flags.includes('dao_cot')) flags.push('don_sai');
+    const doiDon = !!mdNew && mdNew !== md;
+    if (mdNew) md = mdNew;
     if (clean(r[m.sale])) saleCur = clean(r[m.sale]);
-    if (m.makh >= 0 && clean(r[m.makh])) kh = clean(r[m.makh]); else if (clean(r[m.don])) kh = '';
+    if (khV && isDonCode(khV) && normMd(khV) === md) { khV = ''; flags.push('user_la_don'); } // username = chính số đơn → coi là thiếu
+    if (khV) kh = khV; else if (donV || doiDon) kh = ''; // sang đơn mới không mang username của đơn trên xuống
+    if (!kh && !flags.includes('user_la_don')) flags.push('thieu_user');
     cnt[md] = (cnt[md] || 0) + 1;
     const mdf = m.mahang >= 0 ? clean(r[m.mahang]) : '';
     out.push({ sys_row: hi + 2 + k, ten, sale: saleCur, md, ma_dong: kb || (/^MD\d+-\d+$/i.test(mdf) ? normKb(mdf) : `${md}-${cnt[md]}`), ma_dong_file: kb || mdf,
       sl: vnNum(r[m.sl]), dvt: clean(r[m.dvt]), gia_khach: vnNum(r[m.gia]), nk: m.nk >= 0 ? pct(r[m.nk]) : 0, hs: m.hs >= 0 ? clean(r[m.hs]).replace(/\.0+$/, '') : '',
-      ma_kh: kh });
+      ma_kh: kh, flags });
   });
   if (!out.length) throw new Error('File khai báo: không có dòng hàng nào');
   return out;
@@ -305,6 +328,11 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
       if (kind === 'don') notes.push(`Ghép theo đơn ${s?.md} + SL: mã APT ${a?.ma_kb || 'trống'} ↔ mã xe ${s?.ma_dong} (lệch mã).`);
       if (kind === 'ma_lech_sl') add(2, `Lệch số lượng: xe ${s?.sl}, APT ${a?.sl} — 1 đơn = 1 xe, kiểm sai số.`);
     }
+    // Bản 32: cờ đọc file xe — lệch cột tự sửa thì ghi chú; thiếu username thì cảnh báo (không chặn)
+    (s?.flags || []).forEach(fl => {
+      if (fl === 'thieu_user' || fl === 'user_la_don') { if (luong === 'A' || luong === 'B') add(2, `${SYS_FLAG[fl]} (dòng ${s!.sys_row} file xe).`); }
+      else notes.push(`${SYS_FLAG[fl]} (dòng ${s!.sys_row}).`);
+    });
     if (s && a && s.dvt && a.dvt && norm(s.dvt) !== norm(a.dvt)) notes.push(`ĐVT hệ thống "${s.dvt}" → HĐ dùng "${a.dvt}".`);
     const vat = t?.vat ?? (a ? a.vat : null);
     if (vat !== null && vat !== undefined && vat > 0 && Math.abs(vat - 0.08) > 0.001) notes.push(`VAT ${Math.round(vat * 100)}% — thường tách HĐ riêng.`);
@@ -335,7 +363,11 @@ export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg
   sys.forEach((s, j) => { if (!usedSys.has(j)) lines.push(build(s, null, null, null)); });
   const st = { apt: apt.length, sys: sys.length, tk: tk.length, matched_sys: mSys.size, matched_tk: tmap.size, khop_ma: kinds.ma || 0, ghep_don: kinds.don || 0, lech_sl: kinds.ma_lech_sl || 0,
     ok: lines.filter(l => l.status === 'ok').length, blocked: lines.filter(l => l.status === 'blocked').length, info: lines.filter(l => l.status === 'info').length,
-    tt_apt: lines.reduce((x, l) => x + (l.apt_stt ? l.tt_apt : 0), 0), apt_header_total: null as number | null };
+    tt_apt: lines.reduce((x, l) => x + (l.apt_stt ? l.tt_apt : 0), 0), apt_header_total: null as number | null,
+    thieu_user: lines.filter(l => l.apt_stt && l.md && !l.ma_kh && (l.luong === 'A' || l.luong === 'B')).length };
+  // Bản 32: báo ngay trên màn phân tích các dòng file xe bị lệch cột đã tự sửa
+  const fix = sys.filter(s => s.flags?.some(f => f === 'dao_cot' || f === 'md_lech' || f === 'don_sai'));
+  if (fix.length) warnings.push(`File xe lệch cột ở ${fix.length} dòng (dòng ${fix.slice(0, 12).map(s => s.sys_row).join(', ')}${fix.length > 12 ? '…' : ''}): ERP đã lấy đơn theo MÃ KHAI BÁO${fix.some(s => s.flags?.includes('dao_cot')) ? ' và đảo lại ID ĐƠN ↔ USERNAME' : ''} — kiểm lại username bên dưới.`);
   return { lines, stats: st, warnings };
 }
 

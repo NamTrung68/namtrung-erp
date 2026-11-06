@@ -4,12 +4,13 @@
 //  · Quản lý (#/hd/ql): duyệt giá biên > 4%, báo cáo tồn HĐ đầu vào theo sale
 import React, { useMemo, useState } from 'react';
 import { Layout } from '../../components/Layout';
-import { Badge, Button, Card, cx, Empty, Input, Loading, Select, Stat, Tabs, ask, toast, useAction, useLoad } from '../../components/ui';
+import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Select, Stat, Tabs, ask, toast, useAction, useLoad } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { fmtDate, fmtDateTime, money, num } from '../../lib/format';
 import { downloadMau, MAU, type MauKind } from '../../lib/mau';
 import { Money } from '../acc/common';
+import { khLaDon } from '../../lib/doisoat';
 import { ImportTruck } from '../acc/Acc';
 import { BIEN_CAM, BIEN_DUYET, ImportSo, InvoiceDetail, InvoiceEditor, LechModal, OST, SignBox, TonReport, TraCuu, exportMisaFile, nextStep } from '../out/Out';
 import { BulkInvoices } from '../out/Bulk';
@@ -50,7 +51,7 @@ function InvRows({ rows, loading, onOpen, empty, action, sale = false, sel, onSe
       <div className="w-28 shrink-0"><div className="text-sm font-semibold text-ink-900">{v.code}{v.version > 1 && <span className="ml-1 text-[11px] font-normal text-ink-500">v{v.version}</span>}</div>
         <div className="text-[11px] text-ink-400">{fmtDateTime(v.status_at)}</div></div>
       <div className="min-w-[180px] flex-1"><div className="line-clamp-1 text-sm text-ink-800">{v.buyer_name || '—'}</div>
-        <div className="text-[11px] text-ink-500">{v.mds || ''}{v.tax_code ? ' · MST ' + v.tax_code : ''}{!sale ? ' · ' + (a.personName(v.sale_id) || '') : ''}</div>
+        <div className="text-[11px] text-ink-500">{v.mds || ''}{v.tax_code ? ' · MST ' + v.tax_code : ''}{(!sale || a.isAdmin || a.seesTeam) && v.sale_id ? <> · Sale <span className="font-medium text-ink-700">{a.personName(v.sale_id) || '—'}</span></> : ''}</div>
         {v.mas && <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">{v.hds && <span className="rounded bg-ink-900 px-1.5 py-px font-semibold text-white">HĐ {v.hds}</span>}{String(v.mas).split(', ').slice(0, 6).map((m: string) => <span key={m} className="rounded bg-brand-50 px-1.5 py-px font-mono text-brand-800">{m}</span>)}{String(v.mas).split(', ').length > 6 && <span className="text-ink-400">+{String(v.mas).split(', ').length - 6} mã</span>}</div>}</div>
       <div className="w-28 text-right text-sm font-semibold tabular-nums">{money(tong)}{v.bien_max != null && Number(v.bien_max) > BIEN_DUYET && <div className="text-[11px] font-semibold text-amber-700">biên {pctTxt(Number(v.bien_max))}</div>}</div>
       <div className="w-48">{v.misa_at && v.status === 'cho_nhap' && !(v.misa && v.misa.st !== 'da_xoa') ? <Badge color="amber">Đã export — chờ PDF nháp</Badge> : <SBadge s={v.status} />}<MisaTag v={v} />
@@ -112,9 +113,29 @@ function SaleList({ statuses, sale, hd, rev, onOpen, empty, hint }: { statuses: 
   return <><p className="mb-3 text-sm text-ink-600">{hint}</p><Card bodyClass="p-0"><InvRows rows={data || []} loading={loading} onOpen={onOpen} empty={empty} sale /></Card></>;
 }
 
+/** Bản 32: dòng thiếu ID đơn / username (hoặc username trùng số đơn = file xe lệch cột) → gom nhóm riêng để điền */
+const thieuKh = (t: any) => !t.md || (!t.customer_id && !t.username) || (!t.customer_id && khLaDon(t.username, t.md));
+const THIEU = '!thieu';
+const khKey = (t: any) => (thieuKh(t) ? THIEU : t.customer_id || t.username || '—');
+const khName = (t: any) => (thieuKh(t) ? '⚠ Thiếu ID đơn / username khách — cần điền' : t.khach || t.username || 'Chưa gắn khách');
+/** Sửa ID đơn + username cho các dòng của 1 đơn (kế toán, sale / CSKH / trưởng nhóm trong phạm vi) */
+function FixKh({ ts, onClose, onDone }: { ts: any[]; onClose: () => void; onDone: () => void }) {
+  const { busy, run } = useAction(); const t0 = ts[0] || {};
+  const [md, setMd] = useState<string>(t0.md || ''); const [user, setUser] = useState<string>(t0.username && !khLaDon(t0.username, t0.md) ? t0.username : '');
+  const save = () => run(async () => { const n = await db.rpc<number>('out_items_fix_kh', { p_ids: ts.map(t => t.id), p_md: md || null, p_username: user || null }); toast.ok(`Đã sửa ${n} dòng`); onDone(); });
+  return <Modal open onClose={onClose} title={`Điền đơn / khách · ${ts.length} mã`} footer={<Button variant="primary" loading={busy} disabled={!md.trim() || !user.trim()} onClick={save}>Lưu</Button>}>
+    <div className="mb-2 space-y-0.5 text-xs text-ink-600">{ts.slice(0, 6).map(t => <div key={t.id} className="line-clamp-1"><b>{t.ma_kb || t.ma_hang}</b> · {t.ten}</div>)}{ts.length > 6 && <div>+{ts.length - 6} mã</div>}</div>
+    {t0.username && khLaDon(t0.username, t0.md) && <div className="mb-2 rounded-lg bg-red-50 px-2 py-1 text-xs text-red-700">Username đang là “{t0.username}” — trùng số đơn (file xe lệch cột). Nhập username thật của khách.</div>}
+    <div className="grid grid-cols-2 gap-2"><Field label="ID đơn (MD)"><Input value={md} placeholder="VD: MD2689" onChange={e => setMd(e.target.value.toUpperCase())} /></Field>
+      <Field label="Username khách"><Input value={user} placeholder="username hệ thống" onChange={e => setUser(e.target.value)} /></Field></div>
+    <div className="mt-2 text-xs text-ink-500">ERP gắn khách + pháp nhân theo username; dòng nháp đối soát sửa theo để nạp lại file không đè giá trị sai.</div>
+  </Modal>;
+}
+
 /** Sẵn sàng xuất: khách → đơn → mã khai báo */
 const hdOf = (t: any) => String(t.so_hd_vao || '').replace(/^0+/, '') || (String(t.ma_hang || '').match(/^[A-Za-z]+\d+-0*(\d+)-\d{4}/) || [])[1] || '';
 function Ready({ sale, hd, rev, onChanged }: { sale: string; hd: string; rev: number; onChanged: () => void }) {
+  const a = useApp(); const showSale = a.isAdmin || a.seesTeam || a.has('ke_toan'); const [fix, setFix] = useState<any[] | null>(null);
   const { busy, run } = useAction(); const [q, setQ] = useState(''); const [f, setF] = useState(''); const [kh, setKh] = useState('');
   const { data, loading, reload } = useLoad(() => db.rpc<any>('out_items_page', { p: { mode: 'mine', sale, sort: 'kh', offset: 0, limit: 500 } }), [sale, rev]);
   const items: any[] = (data?.rows || []).filter((t: any) => !hd || hdOf(t) === hd.replace(/^0+/, ''));
@@ -127,13 +148,13 @@ function Ready({ sale, hd, rev, onChanged }: { sale: string; hd: string; rev: nu
       if (f === 'cu' && (ageDays(t.ngay_vao) ?? 0) <= 3) continue;
       if (f === 'bien' && !(() => { const b = bien(t); return b === null || b < BIEN_CAM || b > BIEN_DUYET || locked(t); })()) continue;
       if (qq && ![t.md, t.ten, t.ma_hang, t.ma_kb, t.khach, t.username].some(x => String(x || '').toLowerCase().includes(qq))) continue;
-      const k = t.customer_id || t.username || '—'; if (kh && k !== kh) continue;
-      const g = m.get(k) || { key: k, khach: t.khach || t.username || 'Chưa gắn khách', user: t.username || '', customer_id: t.customer_id || null, don: new Map() };
+      const k = khKey(t); if (kh && k !== kh) continue;
+      const g = m.get(k) || { key: k, khach: khName(t), user: k === THIEU ? '' : t.username || '', customer_id: t.customer_id || null, don: new Map() };
       const md = t.md || 'Chưa có ID đơn'; g.don.set(md, [...(g.don.get(md) || []), t]); m.set(k, g);
     }
-    return Array.from(m.values()).sort((x, y) => x.khach.localeCompare(y.khach));
+    return Array.from(m.values()).sort((x, y) => (x.key === THIEU ? -1 : y.key === THIEU ? 1 : x.khach.localeCompare(y.khach)));
   }, [items, q, f, kh]);
-  const khOpts = useMemo(() => Array.from(new Map(items.map(t => [t.customer_id || t.username || '—', t.khach || t.username || 'Chưa gắn khách'])).entries()).sort((x, y) => x[1].localeCompare(y[1])) as [string, string][], [items]);
+  const khOpts = useMemo(() => Array.from(new Map(items.map(t => [khKey(t), khName(t)])).entries()).sort((x, y) => x[1].localeCompare(y[1])) as [string, string][], [items]);
   const donItems = (md: string) => items.filter(t => (t.md || 'Chưa có ID đơn') === md && t.ton > 0.0001 && !locked(t));
   const tien = (ts: any[]) => ts.reduce((x, t) => x + Number(t.ton) * Number(t.gia_khach || 0), 0);
   const chosenMd = Object.keys(pickMd).filter(k => pickMd[k]); const chosenIt = Object.values(pickIt);
@@ -163,22 +184,27 @@ function Ready({ sale, hd, rev, onChanged }: { sale: string; hd: string; rev: nu
       <div className="mt-1 grid gap-0.5 sm:grid-cols-2">{dirty.slice(0, 60).map((d: any) => <div key={d.md}><b>{d.md}</b> — {d.ly_do}</div>)}</div></details>}
     {loading && !items.length ? <Loading /> : !groups.length ? <Card><Empty>Không có hàng chờ xuất HĐ. Hàng xuất hiện ở đây khi kế toán nạp HĐ chính thức APT.</Empty></Card> :
     <div className="space-y-3 pb-20">{groups.map(g => { const ds: [string, any[]][] = Array.from(g.don.entries()) as any; const oldest = Math.max(...ds.flatMap(([, ts]) => ts.map(t => ageDays(t.ngay_vao) ?? 0)));
-      return <div key={g.key} className="rounded-2xl border border-ink-200 bg-white shadow-soft">
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 px-4 py-2.5">
-          <div className="min-w-0 flex-1"><div className="font-semibold text-ink-900">{g.khach}</div><div className="text-[11px] text-ink-500">{g.user}{g.user ? ' · ' : ''}{ds.length} đơn sẵn sàng · {money(tien(ds.flatMap(([, ts]) => ts)))}</div></div>
+      const sales = showSale ? Array.from(new Set(ds.flatMap(([, ts]) => ts.map(t => a.personName(t.sale_id) || 'Chưa có sale')))) : [];
+      return <div key={g.key} className={cx('rounded-2xl border bg-white shadow-soft', g.key === THIEU ? 'border-red-300' : 'border-ink-200')}>
+        <div className={cx('flex flex-wrap items-center gap-2 border-b border-ink-100 px-4 py-2.5', g.key === THIEU && 'bg-red-50/70')}>
+          <div className="min-w-0 flex-1"><div className={cx('font-semibold', g.key === THIEU ? 'text-red-800' : 'text-ink-900')}>{g.khach}</div><div className="text-[11px] text-ink-500">{g.user}{g.user ? ' · ' : ''}{ds.length} đơn sẵn sàng · {money(tien(ds.flatMap(([, ts]) => ts)))}{g.key === THIEU ? ' · bấm “Điền đơn / khách” ở từng đơn' : ''}</div>
+            {sales.length > 0 && g.key !== THIEU && <div className="text-[11px] text-ink-500">Sale: <span className="font-medium text-ink-700">{sales.join(', ')}</span></div>}</div>
           {oldest > 3 && <Badge color={oldest > 15 ? 'red' : 'amber'}>Tồn {oldest} ngày</Badge>}</div>
         <div className="divide-y divide-ink-100">{ds.map(([md, ts]) => { const ok = ts.filter(t => !locked(t)); const lk = ts.length - ok.length; const isOpen = !!exp[md] || ts.length === 1 && false;
           const bs = ts.map(bien).filter((x): x is number => x !== null); const warn = bs.some(b => b < BIEN_CAM) ? 'dưới 2%' : bs.some(b => b > BIEN_DUYET) ? 'trên 4% — sẽ chờ duyệt' : '';
           const noGia = ts.some(t => !Number(t.gia_khach));
           return <div key={md}>
             <div className="flex flex-wrap items-center gap-3 px-4 py-2">
-              <input type="checkbox" className="h-5 w-5" disabled={!ok.length || md === 'Chưa có ID đơn'} checked={!!pickMd[md]} onChange={e => setPickMd(p => ({ ...p, [md]: e.target.checked }))} />
+              <input type="checkbox" className="h-5 w-5" disabled={!ok.length || md === 'Chưa có ID đơn' || g.key === THIEU} checked={!!pickMd[md]} onChange={e => setPickMd(p => ({ ...p, [md]: e.target.checked }))} />
               <button className="min-w-0 flex-1 text-left" onClick={() => setExp(x => ({ ...x, [md]: !x[md] }))}>
                 <div className="text-sm"><b className="text-ink-900">{md}</b> <span className="text-ink-500">· {ts.length} mã {isOpen ? '▴' : '▾'}</span></div>
-                <div className="text-[11px] text-ink-500">{money(tien(ts))}{ts[0]?.so_hd_vao ? ` · HĐ vào ${Array.from(new Set(ts.map(hdOf).filter(Boolean))).join(', ')} · ${fmtDate(ts[0].ngay_vao)}` : ''}</div>
+                <div className="text-[11px] text-ink-500">{money(tien(ts))}{ts[0]?.so_hd_vao ? ` · HĐ vào ${Array.from(new Set(ts.map(hdOf).filter(Boolean))).join(', ')} · ${fmtDate(ts[0].ngay_vao)}` : ''}
+                  {g.key === THIEU && <span className="text-red-700"> · {ts[0]?.username ? (khLaDon(ts[0].username, ts[0].md) ? `username “${ts[0].username}” trùng số đơn` : 'username ' + ts[0].username) : 'chưa có username'}</span>}
+                  {showSale && <span> · Sale <span className="font-medium text-ink-700">{a.personName(ts[0]?.sale_id) || 'chưa có'}</span></span>}</div>
                 <div className="mt-0.5 flex flex-wrap gap-1">{ts.slice(0, 8).map(t => <span key={t.id} className={cx('rounded px-1.5 py-px font-mono text-[11px]', locked(t) ? 'bg-red-50 text-red-700' : 'bg-brand-50 text-brand-800')}>{t.ma_hang}{t.part > 1 ? ` (${t.part})` : ''}</span>)}{ts.length > 8 && <span className="text-[11px] text-ink-400">+{ts.length - 8} mã</span>}</div></button>
               {lk > 0 && <Badge color="red">{lk} mã lệch — khóa</Badge>}{warn && <Badge color="amber">Biên {warn}</Badge>}{noGia && <Badge color="red">Thiếu giá</Badge>}
-              <Button size="sm" disabled={!ok.length || md === 'Chưa có ID đơn'} onClick={() => setBulk(ok)}>Xuất theo đơn</Button></div>
+              {g.key === THIEU ? <Button size="sm" variant="danger" onClick={() => setFix(ts)}>Điền đơn / khách</Button>
+                : <Button size="sm" disabled={!ok.length || md === 'Chưa có ID đơn'} onClick={() => setBulk(ok)}>Xuất theo đơn</Button>}</div>
             {isOpen && <div className="bg-ink-50/60 px-4 pb-2 pl-12">{ts.map(t => { const b = bien(t);
               return <label key={t.id} className={cx('flex items-start gap-3 border-t border-ink-100 py-1.5 text-xs', locked(t) && 'opacity-60')}>
                 <input type="checkbox" className="mt-0.5 h-4 w-4" disabled={locked(t)} checked={!!pickIt[t.id]} onChange={e => setPickIt(p => { const x = { ...p }; if (e.target.checked) x[t.id] = t; else delete x[t.id]; return x; })} />
@@ -197,6 +223,7 @@ function Ready({ sale, hd, rev, onChanged }: { sale: string; hd: string; rev: nu
       <button className="text-xs text-ink-500 underline" onClick={() => { setPickMd({}); setPickIt({}); }}>Bỏ chọn</button></div>}
     {bulk && <BulkInvoices items={bulk} onClose={() => { setBulk(null); done(); }} onDone={() => reload()} />}
     {edit && <InvoiceEditor items={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); done(); }} />}
+    {fix && <FixKh ts={fix} onClose={() => setFix(null)} onDone={() => { setFix(null); done(); }} />}
   </>;
 }
 

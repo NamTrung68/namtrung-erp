@@ -7,7 +7,7 @@ import { db, fetchAll } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { readTable, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
-import { aptPriceList, aptPriceMsg, MATCH_KIND, type MatchKind, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, normMd, parseApt, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile } from '../../lib/doisoat';
+import { aptPriceList, aptPriceMsg, MATCH_KIND, type MatchKind, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, normMd, parseApt, SYS_FLAG, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile } from '../../lib/doisoat';
 import { driveReady, saveToDrive } from '../../lib/drive';
 import { bienTone, deXuat, dueTxt, GiaApt, lineName, LuongBadge, Money, pctTxt, REPLY, REPLY_SUB, ST, StatusBadge, useAccCfg } from './common';
 import { downloadMau, type MauKind } from '../../lib/mau';
@@ -70,9 +70,10 @@ export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: 
   const [res, setRes] = useState<any>(null); const [err, setErr] = useState('');
   const [xt, setXt] = useState<string>((truck?.md_xuat_thang || []).join(', ')); const [test, setTest] = useState(false);
   const [target, setTarget] = useState<any>(truck || null); // nạp lại vào xe cũ khi phát hiện trùng
+  const [khFill, setKhFill] = useState<Record<string, string>>({}); // bản 32: username điền tay theo mã đơn trước khi lưu
   const xtList = () => Array.from(new Set(xt.split(/[^A-Za-z0-9]+/).map(normMd).filter(Boolean)));
   const analyze = async () => {
-    setErr(''); setRes(null);
+    setErr(''); setRes(null); setKhFill({});
     try {
       if (!files.kb || !files.apt) throw new Error('Chọn đủ file khai báo hệ thống và file check APT');
       const [kbRows, aptRows, tkRows] = await Promise.all([readTable(files.kb), readTable(files.apt), files.tkn ? readTable(files.tkn) : Promise.resolve(null)]);
@@ -97,7 +98,10 @@ export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: 
     } catch (e: any) { setErr(e.message || String(e)); }
   };
   const save = () => run(async () => {
-    const lines = res.lines.map((l: any) => ({ ...l, sale_id: sm.find(l.sale_name)?.id || sm.find(l.sale_apt)?.id || null, sale_acc: sm.find(l.sale_name)?.name || null }));
+    const noUser = new Set([SYS_FLAG.thieu_user, SYS_FLAG.user_la_don]);
+    const lines = res.lines.map((l: any) => { const u = (l.md && khFill[l.md] || '').trim();
+      return { ...l, ...(u ? { ma_kh: u, issues: l.issues.filter((x: string) => ![...noUser].some(n => x.startsWith(n))) } : {}),
+        sale_id: sm.find(l.sale_name)?.id || sm.find(l.sale_apt)?.id || null, sale_acc: sm.find(l.sale_name)?.name || null }; });
     const nm = name || 'Xe ' + fmtDate(date);
     const id = await db.rpc<string>('acc_truck_save', { p_truck: target?.id || null, p_info: { name: nm, truck_date: date, stats: res.stats, warnings: res.warnings,
       is_test: target ? undefined : test, md_xuat_thang: xtList(),
@@ -140,13 +144,30 @@ export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: 
         <Stat label="Theo dõi riêng" value={res.stats.info} sub="hợp quy · xuất thẳng · Lanchi" />
       </div>
       {res.unmapped.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Tên sale chưa ghép nhân sự: <b>{res.unmapped.join(', ')}</b>. Dòng của các tên này chỉ kế toán thấy — vào tab “Ghép tên sale” rồi nạp lại.</div>}
-      {res.warnings.map((w: string, i: number) => <div key={i} className="rounded-lg bg-ink-50 p-2 text-xs text-ink-600">• {w}</div>)}
+      {res.warnings.map((w: string, i: number) => <div key={i} className={cx('rounded-lg p-2 text-xs', w.startsWith('File xe lệch cột') ? 'bg-amber-50 font-semibold text-amber-900' : 'bg-ink-50 text-ink-600')}>• {w}</div>)}
+      <ThieuUser lines={res.lines} fill={khFill} setFill={setKhFill} saleName={(l: any) => sm.find(l.sale_name)?.name || l.sale_name} />
       <div className="max-h-[40vh] overflow-auto rounded-xl border border-ink-200"><Table head={['STT', 'Sale', 'MD', 'Tên hàng', 'Giá TK → APT', 'Biên APT', 'Biên NT', 'Luồng', 'Trạng thái', 'Vấn đề']}>
         {res.lines.filter((l: any) => l.status !== 'ok' || l.gia_de_xuat).map((l: any) => <tr key={l.line_key}><Td>{l.apt_stt}</Td><Td className="whitespace-nowrap">{sm.find(l.sale_name)?.name || l.sale_name}</Td><Td>{l.md}</Td>
           <Td className="min-w-[200px] text-xs">{lineName(l).slice(0, 80)}</Td><Td className="whitespace-nowrap text-right text-xs"><Money v={l.gia_von} /> → <Money v={l.gia_ap_dung} /></Td>
           <Td className="text-right text-xs">{pctTxt(l.bien_apt)}</Td><Td className={cx('text-right text-xs', bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max, cfg.bien_chan_max))}>{pctTxt(l.bien_nt)}</Td><Td><LuongBadge l={l.luong} /></Td><Td><StatusBadge s={l.status} /></Td><Td className="min-w-[260px] text-xs text-red-700">{l.issues.join(' · ') || <span className="text-ink-500">{l.notes[0]}</span>}</Td></tr>)}</Table></div>
     </div>}
   </Modal>;
+}
+
+/** Bản 32 — đơn thiếu username khách trên file xe: cảnh báo + điền ngay trước khi lưu (gắn đúng khách, pháp nhân xuất HĐ) */
+function ThieuUser({ lines, fill, setFill, saleName }: { lines: any[]; fill: Record<string, string>; setFill: (f: Record<string, string>) => void; saleName: (l: any) => string }) {
+  const ds = useMemo(() => { const m = new Map<string, any[]>();
+    lines.filter(l => l.apt_stt && l.md && !l.ma_kh && (l.luong === 'A' || l.luong === 'B')).forEach(l => m.set(l.md, [...(m.get(l.md) || []), l]));
+    return Array.from(m.entries()); }, [lines]);
+  if (!ds.length) return null;
+  const con = ds.filter(([md]) => !(fill[md] || '').trim()).length;
+  return <div className={cx('rounded-xl border p-3', con ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50')}>
+    <div className={cx('text-sm font-semibold', con ? 'text-red-800' : 'text-emerald-800')}>{con ? `⚠ ${con}/${ds.length} đơn thiếu username khách — điền để ERP gắn đúng khách và pháp nhân xuất HĐ` : `✓ Đã điền username cho ${ds.length} đơn`}</div>
+    <div className="mt-0.5 text-xs text-ink-600">Không điền vẫn lưu được, nhưng hàng sẽ nằm ở nhóm “Thiếu đơn / khách” cho tới khi có username.</div>
+    <div className="mt-2 grid gap-1.5 sm:grid-cols-2">{ds.map(([md, ls]) => <label key={md} className="flex items-center gap-2 text-xs">
+      <span className="w-40 shrink-0"><b>{md}</b> · {ls.length} mã<div className="text-ink-500">{saleName(ls[0])}</div></span>
+      <Input className="h-8" placeholder="username khách" value={fill[md] || ''} onChange={e => setFill({ ...fill, [md]: e.target.value })} /></label>)}</div>
+  </div>;
 }
 
 // ============ Chi tiết 1 xe ============

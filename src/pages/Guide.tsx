@@ -171,6 +171,13 @@ Dòng bị chặn mà cần mở (có lý do chính đáng) → người đượ
 3. Ghép xong, dòng HĐ nhận lại: mã khai báo, đơn, khách, sale, giá khách từ dòng nháp.
 4. Hệ thống **đối chiếu chi tiết từng dòng**: số lượng, đơn giá, thuế suất (không so tổng HĐ).
 5. Kết quả xem trước được lưu đúng như đã xem. Nạp lại cùng HĐ: dòng đã sửa tay giữ nguyên, dòng đổi ghép thì xóa liên kết cũ rồi ghép lại.
+6. **Tên hàng lưu vào bảng gốc là tên trên HĐ chính thức** (file kế toán nạp); tên nháp chỉ dùng để ghép.
+7. Ô **Thiếu username khách** (đỏ): đơn chưa có username, hoặc username trùng số đơn (file xe lệch cột) → điền ngay trên dòng rồi lưu. Không điền vẫn lưu được, hàng nằm ở nhóm **⚠ Thiếu ID đơn / username khách** trong "Sẵn sàng xuất" — sale / CSKH / kế toán bấm **Điền đơn / khách**.
+
+### File xe lệch cột (bản 32)
+- ERP lấy đơn theo **MÃ KHAI BÁO** (MD2689-1 → đơn MD2689), không tin ô ID ĐƠN khi hai ô khác nhau.
+- Dòng bị đảo **ID ĐƠN ↔ USERNAME** được tự đảo lại và báo vàng trên màn phân tích.
+- Nạp lại file xe đã sửa → đơn + username mới tự sang bảng gốc HĐ (trừ dòng đã lập phiếu hoặc kế toán sửa tay). File mới để trống username thì giữ username đã điền.
 
 ### Xử lý dòng lỗi (khu "Dòng HĐ cần kế toán xử lý")
 - **Lệch nháp → khóa**: kiểm với APT; đúng thì **chấp nhận kèm lý do**, sai thì yêu cầu APT sửa.
