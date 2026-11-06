@@ -33,6 +33,7 @@ import Account from './pages/Account';
 import Acc from './pages/acc/Acc';
 import { AccApprove, AccMine } from './pages/acc/Mine';
 import { HdKeToan, HdQuanLy, HdSale } from './pages/hd/Hd';
+import PhapNhan from './pages/hd/PhapNhan';
 import { HdGuide, SystemGuide } from './pages/Guide';
 
 const routes: Record<string, React.FC> = {
@@ -44,7 +45,7 @@ const routes: Record<string, React.FC> = {
   '/hr/attendance': Attendance, '/hr/leave': Leave, '/hr/approvals': Approvals,
   '/hr/payroll': Payroll, '/hr/payslips': Payslips, '/hr/payslip': PayslipView,
   '/admin/users': Users, '/admin/settings': Settings, '/admin/data': DataAdmin,
-  '/account': Account, '/acc': Acc, '/acc/mine': AccMine, '/acc/approve': AccApprove, '/out': OutRedirect, '/hd': HdSale, '/hd/kt': HdKeToan, '/hd/ql': HdQuanLy, '/hd/guide': HdGuide, '/guide': SystemGuide,
+  '/account': Account, '/acc': Acc, '/acc/mine': AccMine, '/acc/approve': AccApprove, '/out': OutRedirect, '/hd': HdSale, '/hd/kt': HdKeToan, '/hd/ql': HdQuanLy, '/hd/guide': HdGuide, '/hd/phap-nhan': PhapNhan, '/guide': SystemGuide,
 };
 
 // Bản 28: trang cũ "Xuất HĐ đầu ra" (#/out) đã ẩn — mọi link cũ (thông báo, đánh dấu) chuyển về màn hình mới, giữ ?inv=

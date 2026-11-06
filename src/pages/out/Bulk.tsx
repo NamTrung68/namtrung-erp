@@ -27,17 +27,25 @@ export function PricePick({ item, onPick, onClose }: { item: any; onPick: (gia: 
 
 interface G { key: string; md: string | null; items: any[]; customer_id: string | null; khach: string; username: string;
   on: boolean; b: { name: string; mst: string; addr: string; email: string; pay: string; note: string }; src: string; lines: { item: any; sl: string; gia: string }[];
-  res?: string; ok?: boolean }
+  res?: string; ok?: boolean; buyers: any[]; bid: string }
 
 export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose: () => void; onDone: () => void }) {
   const a = useApp(); const [gs, setGs] = useState<G[] | null>(null); const [run, setRun] = useState(false); const [step, setStep] = useState(''); const [pp, setPp] = useState<{ g: number; l: number } | null>(null);
   useEffect(() => {
     const m = new Map<string, any[]>(); items.forEach(t => { const k = t.md ? 'md:' + t.md : 'row:' + t.id; m.set(k, [...(m.get(k) || []), t]); });
     const cids = Array.from(new Set(items.map(t => t.customer_id).filter(Boolean)));
-    (cids.length ? db.rpc<Record<string, any>>('out_buyer_suggest', { p_customers: cids }) : Promise.resolve({} as Record<string, any>)).catch(() => ({} as Record<string, any>)).then(sug => {
+    const users = Array.from(new Set(items.map(t => t.username).filter(Boolean)));
+    // Bản 33: danh sách pháp nhân của khách (theo khách ERP hoặc username) để chọn
+    Promise.all([(cids.length ? db.rpc<Record<string, any>>('out_buyer_suggest', { p_customers: cids }) : Promise.resolve({} as Record<string, any>)).catch(() => ({} as Record<string, any>)),
+      db.rpc<any[]>('out_buyers_for', { p_customers: cids, p_usernames: users }).catch(() => [] as any[])]).then(([sug, bl]) => {
       setGs(Array.from(m.entries()).map(([key, its]) => { const c = its.find(t => t.customer_id)?.customer_id || null; const s = c ? sug[c] : null;
-        return { key, md: its[0].md || null, items: its, customer_id: c, khach: its.find(t => t.khach)?.khach || '', username: its.find(t => t.username)?.username || '',
-          on: true, src: s?.src || '', b: { name: s && !s.weak ? s.name || '' : '', mst: s?.tax_code || '', addr: s?.address || '', email: s?.email || '', pay: s?.payment || 'TM/CK', note: '' },
+        const un = String(its.find(t => t.username)?.username || '').toLowerCase();
+        const buyers = (bl || []).filter(x => (c && x.customer_id === c) || (!x.customer_id && un && String(x.username || '').toLowerCase() === un));
+        const b0 = !s && buyers.length ? buyers[0] : null; // khách chưa có ERP nhưng username có pháp nhân
+        const bid = s?.buyer_id || (b0 ? b0.id : buyers.find(x => x.name === s?.name && (x.tax_code || '') === (s?.tax_code || ''))?.id) || '';
+        return { key, md: its[0].md || null, items: its, customer_id: c, khach: its.find(t => t.khach)?.khach || '', username: its.find(t => t.username)?.username || '', buyers, bid,
+          on: true, src: b0 ? 'pháp nhân theo username' : s?.src || '', b: b0 ? { name: b0.name, mst: b0.tax_code || '', addr: b0.address || '', email: b0.email || '', pay: 'TM/CK', note: '' }
+            : { name: s && !s.weak ? s.name || '' : '', mst: s?.tax_code || '', addr: s?.address || '', email: s?.email || '', pay: s?.payment || 'TM/CK', note: '' },
           lines: its.map(t => ({ item: t, sl: String(+Number(t.ton).toFixed(4)), gia: t.gia_khach ? String(Math.round(t.gia_khach)) : '' })) };
       }).sort((x, y) => (x.md || 'zz').localeCompare(y.md || 'zz')));
     });
@@ -92,7 +100,7 @@ export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose
       <Button variant="primary" loading={run} disabled={!stats?.ready} onClick={() => save(true)}>Gửi kế toán ({stats?.ready || 0} phiếu)</Button></>}>
     {!gs ? <div className="py-10 text-center text-sm text-ink-500">Đang lấy thông tin khách…</div> :
     <div className="space-y-3">
-      <p className="text-xs text-ink-500">Mỗi ID đơn = 1 phiếu. Thông tin đơn vị nhận HĐ tự điền theo phiếu gần nhất của khách → danh sách đơn vị → hồ sơ khách; gõ MST để tra. Phiếu có ô đỏ phải bổ sung mới lập được; muốn gộp / tách khác thì bỏ tick và lập phiếu riêng.</p>
+      <p className="text-xs text-ink-500">Mỗi ID đơn = 1 phiếu. Pháp nhân ★ mặc định của khách tự điền sẵn — bấm pháp nhân khác để đổi, hoặc nhập tay; gõ MST để tra. Phiếu có ô đỏ phải bổ sung mới lập được; muốn gộp / tách khác thì bỏ tick và lập phiếu riêng.</p>
       {gs.map((g, i) => { const c = check(g); const tt = g.lines.reduce((x, l) => x + Math.round(Number(l.sl || 0) * Number(l.gia || 0)), 0);
         const thue = g.lines.reduce((x, l) => x + Math.round(Math.round(Number(l.sl || 0) * Number(l.gia || 0)) * Number(l.item.vat ?? 0)), 0);
         return <div key={g.key} className={cx('rounded-2xl border p-3', g.ok ? 'border-emerald-300 bg-emerald-50/50' : c.err.length ? 'border-red-200' : 'border-ink-200')}>
@@ -101,11 +109,19 @@ export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose
             <b className="text-sm">{g.md || 'Chưa có ID đơn'}</b><span className="text-sm text-ink-700">{g.khach || g.username || ''}{g.khach && g.username ? <span className="text-ink-400"> · {g.username}</span> : null}</span>
             <span className="ml-auto text-sm">Tổng <b className="text-brand-700">{money(tt + thue)}</b></span>
           </div>
+          {!g.ok && <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-ink-500">Pháp nhân:</span>
+            {g.buyers.map(x => <button key={x.id} disabled={run} title={[x.tax_code, x.address].filter(Boolean).join(' · ')} onClick={() => set(i, y => ({ ...y, bid: x.id, src: 'pháp nhân đã chọn', b: { ...y.b, name: x.name, mst: x.tax_code || '', addr: x.address || '', email: x.email || '' } }))}
+              className={cx('max-w-[340px] truncate rounded-lg border px-2 py-1', g.bid === x.id ? 'border-brand-500 bg-brand-600 font-semibold text-white' : 'border-brand-200 bg-brand-50 text-brand-800 hover:border-brand-500')}>
+              {x.is_default ? '★ ' : ''}{x.name}{x.tax_code ? ' · ' + x.tax_code : ''}</button>)}
+            <button disabled={run} onClick={() => set(i, y => ({ ...y, bid: '', src: 'nhập tay', b: { ...y.b, name: '', mst: '', addr: '', email: '' } }))}
+              className={cx('rounded-lg border px-2 py-1', g.bid === '' && g.src === 'nhập tay' ? 'border-ink-500 bg-ink-100 font-semibold' : 'border-ink-200 hover:border-ink-400')}>+ Pháp nhân khác (nhập tay)</button>
+            {!g.buyers.length && <span className="text-amber-700">Khách chưa có pháp nhân nào trong danh sách — nhập tay; kế toán chuẩn hóa ở menu Pháp nhân nhận HĐ</span>}</div>}
           {!g.ok && <div className="mt-2 grid gap-2 sm:grid-cols-[2fr_1fr]">
-            <input className={cx(inp, !g.b.name.trim() && 'border-red-300')} placeholder="Tên đơn vị mua hàng *" value={g.b.name} onChange={e => set(i, x => ({ ...x, b: { ...x.b, name: e.target.value } }))} />
-            <input className={cx(inp, !g.b.mst.trim() && 'border-amber-300')} placeholder="MST / CCCD" value={g.b.mst} onChange={e => set(i, x => ({ ...x, b: { ...x.b, mst: e.target.value.replace(/\s/g, '') } }))} onBlur={() => lookup(i)} />
-            <input className={inp} placeholder="Địa chỉ" value={g.b.addr} onChange={e => set(i, x => ({ ...x, b: { ...x.b, addr: e.target.value } }))} />
-            <input className={inp} placeholder="Email nhận HĐ" value={g.b.email} onChange={e => set(i, x => ({ ...x, b: { ...x.b, email: e.target.value } }))} />
+            <input className={cx(inp, !g.b.name.trim() && 'border-red-300')} placeholder="Tên đơn vị mua hàng *" value={g.b.name} onChange={e => set(i, x => ({ ...x, bid: '', b: { ...x.b, name: e.target.value } }))} />
+            <input className={cx(inp, !g.b.mst.trim() && 'border-amber-300')} placeholder="MST / CCCD" value={g.b.mst} onChange={e => set(i, x => ({ ...x, bid: '', b: { ...x.b, mst: e.target.value.replace(/\s/g, '') } }))} onBlur={() => lookup(i)} />
+            <input className={inp} placeholder="Địa chỉ" value={g.b.addr} onChange={e => set(i, x => ({ ...x, bid: '', b: { ...x.b, addr: e.target.value } }))} />
+            <input className={inp} placeholder="Email nhận HĐ" value={g.b.email} onChange={e => set(i, x => ({ ...x, bid: '', b: { ...x.b, email: e.target.value } }))} />
             {g.src && <div className="text-[11px] text-ink-500 sm:col-span-2">Thông tin lấy theo: {g.src}</div>}
           </div>}
           <div className="mt-2 divide-y divide-ink-100 rounded-xl border border-ink-100">{g.lines.map((l, j) => { const t = l.item; const low = Number(l.gia) > 0 && t.dg_nhap && Number(l.gia) / Number(t.dg_nhap) - 1 < 0.02 - 0.000001;

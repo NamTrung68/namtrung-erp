@@ -120,3 +120,12 @@ MISA đã xác nhận (06/11/2026): `viewrefid` trả base64 của file PDF · m
 Mẫu HĐ: dùng mẫu HĐ **thường** (ký hiệu dạng 1C26T…); mẫu máy tính tiền (ký tự thứ 5 = M) bị chặn.
 
 Kiểm thử: `tests/misa.test.ts`, `tests/misa-guard.test.ts`, `supabase/tests/99m_v31.sql`.
+
+## Bản 33 — Menu Pháp nhân nhận HĐ (06/11/2026)
+
+- Kế toán – Hóa đơn → **Pháp nhân nhận HĐ** (`#/hd/phap-nhan`, Kế toán / Admin / BGĐ): nhóm theo username khách; sửa thẳng tên, MST, địa chỉ, email, username trên dòng → Lưu (hoặc “Lưu N dòng đã sửa”); ★ đặt mặc định; xóa; thêm.
+- Ô lọc chuẩn hóa: username chưa có khách ERP · MST sai dạng · thiếu địa chỉ · cùng MST khác tên · khách chưa có ★.
+- **Xuất Excel** (đúng cột file mẫu) → sửa → **Nạp Excel**: xem trước Mới / Cập nhật / Không đổi / Lỗi trước khi lưu; cùng username + MST thì cập nhật, không xóa pháp nhân đang có.
+- Đổi username = chuyển pháp nhân sang khách khác; khách cũ tự lấy pháp nhân còn lại làm ★.
+- Phiếu **Lập nhanh theo ID đơn**: mỗi đơn có hàng nút pháp nhân của khách (theo khách ERP hoặc username chưa gắn) — ★ chọn sẵn, bấm để đổi, hoặc “Pháp nhân khác (nhập tay)”.
+- Hàm mới: `out_buyers_page`, `out_buyer_save`, `out_buyer_delete`, `out_buyers_for`. Test: `supabase/tests/99n_v33.sql`.
