@@ -51,3 +51,17 @@ select public.out_buyer_delete(array[(select id from public.out_buyers where tax
 reset role;
 select pg_temp.check((select count(*) = 0 from public.out_buyers where tax_code = '0109999999'), 'đã xóa');
 select 'V33 TESTS PASSED' as result;
+
+-- Bản 34: 2 username chưa gắn khách có cùng pháp nhân (tên + MST) → không báo trùng; nạp đổi tên trùng dòng có sẵn → không hỏng cả lô
+select pg_temp.as_user('kt@nt.vn'); set role authenticated;
+select pg_temp.check((select (r->>'moi')::int = 2 and jsonb_array_length(r->'loi') = 0 from (select public.out_buyers_import_v2('[{"username":"pn_u1","name":"CÔNG TY CHUNG","tax_code":"0108888888"},{"username":"pn_u2","name":"CÔNG TY CHUNG","tax_code":"0108888888"}]') r) z), '2 username cùng pháp nhân');
+select public.out_buyer_save(null, '{"username":"pn_khach1","name":"TÊN CŨ","tax_code":"0107777777"}');
+select public.out_buyers_import_v2('[{"username":"pn_khach1","name":"TÊN MỚI","tax_code":"0107777777"}]');
+reset role;
+select pg_temp.check((select count(*) = 2 from public.out_buyers where username in ('pn_u1','pn_u2') and tax_code = '0108888888'), 'lưu đủ 2 username');
+select pg_temp.check((select count(*) = 1 and min(name) = 'TÊN MỚI' from public.out_buyers where tax_code = '0107777777'), 'đổi tên theo file');
+-- dòng trùng y hệt 2 lần trong 1 file → lần 2 là cập nhật, không lỗi
+select pg_temp.as_user('kt@nt.vn'); set role authenticated;
+select pg_temp.check((select jsonb_array_length(r->'loi') = 0 from (select public.out_buyers_import_v2('[{"username":"pn_u3","name":"X","tax_code":"0106666666"},{"username":"pn_u3","name":"X","tax_code":"0106666666"}]') r) z), 'dòng lặp trong file');
+reset role;
+select 'V34 TESTS PASSED' as result;

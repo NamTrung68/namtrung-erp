@@ -128,10 +128,14 @@ function ImportBuyers({ current, onClose, onDone }: { current: Row[]; onClose: (
         return { ...x, st: errs.length ? 'loi' : !old ? 'moi' : ch.length ? 'sua' : 'giu', errs, ch };
       })); } catch (e: any) { setErr(e.message || String(e)); } };
   const ok = (res || []).filter(x => x.st === 'moi' || x.st === 'sua');
-  const save = () => run(async () => { let n = 0;
-    for (let i = 0; i < ok.length; i += 300) { setStep(`Đang nạp ${Math.min(i + 300, ok.length)}/${ok.length}…`);
-      n += await db.rpc<number>('out_buyers_import', { p_rows: ok.slice(i, i + 300).map(x => ({ tax_code: x.tax_code, name: x.name, address: x.address, email: x.email, username: x.username })) }); }
-    setStep(''); toast.ok(`Đã nạp ${n} pháp nhân`); onDone(); });
+  const [loi, setLoi] = useState<any[] | null>(null);
+  const save = () => run(async () => { let moi = 0, sua = 0; const bad: any[] = [];
+    for (let i = 0; i < ok.length; i += 300) { setStep(`Đang nạp ${Math.min(i + 300, ok.length)}/${ok.length}…`); const part = ok.slice(i, i + 300);
+      const r = await db.rpc<any>('out_buyers_import_v2', { p_rows: part.map(x => ({ tax_code: x.tax_code, name: x.name, address: x.address, email: x.email, username: x.username })) });
+      moi += r.moi || 0; sua += r.sua || 0; (r.loi || []).forEach((e: any) => bad.push(e)); }
+    setStep('');
+    if (bad.length) { setLoi(bad); toast.err(`Đã lưu ${moi + sua}/${ok.length} (${moi} mới, ${sua} cập nhật) — ${bad.length} dòng bị bỏ qua, xem danh sách`); }
+    else { toast.ok(`Đã nạp ${moi} mới, ${sua} cập nhật`); onDone(); } });
   const cnt = (s: string) => (res || []).filter(x => x.st === s).length;
   const ST: Record<string, [string, string]> = { moi: ['Mới', 'green'], sua: ['Cập nhật', 'blue'], giu: ['Không đổi', 'gray'], loi: ['Lỗi — bỏ qua', 'red'] };
   return <Modal open onClose={() => !busy && onClose()} size="xl" title="Nạp Excel pháp nhân nhận HĐ"
@@ -141,6 +145,9 @@ function ImportBuyers({ current, onClose, onDone }: { current: Row[]; onClose: (
       <button className="text-xs font-semibold text-brand-700 underline" onClick={() => downloadMau('buyers')}>⬇ File mẫu</button>
       <span className="text-xs text-ink-500">Cột: MST, Tên đơn vị, Địa chỉ, Mail nhận HĐ, Username. Cùng username + MST = cập nhật; không xóa pháp nhân đang có.</span></div>
     {err && <div className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+    {loi && <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"><b>{loi.length} dòng chưa lưu được</b> (các dòng khác đã lưu) — sửa trên menu hoặc trong file rồi nạp lại:
+      <div className="mt-1 max-h-40 overflow-auto">{loi.map((e, i) => <div key={i}>• {e.username || '—'} · {e.tax_code} · {e.name}: {e.error}</div>)}</div>
+      <button className="mt-1 font-semibold underline" onClick={onDone}>Đóng và xem danh sách</button></div>}
     {!all && <Loading />}
     {res && <>
       <div className="mb-2 flex flex-wrap gap-2 text-xs">{(['moi', 'sua', 'giu', 'loi'] as const).map(s => <Badge key={s} color={ST[s][1]}>{ST[s][0]}: {cnt(s)}</Badge>)}</div>
