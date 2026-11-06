@@ -31,3 +31,8 @@ test('bật API chỉ khi đã chọn mẫu HĐ; lô 1–30', () => {
   assert.equal(batchOf({ accounting: { misa: { batch: 99 } } }), 30);
   assert.equal(batchOf({}), 10);
 });
+
+test('mẫu HĐ máy tính tiền (ký tự 5 = M) không bật API', () => {
+  assert.equal(misaOn({ accounting: { misa: { enabled: true, template_id: 't', inv_series: '1C26MYY' } } }), false);
+  assert.equal(misaOn({ accounting: { misa: { enabled: true, template_id: 't', inv_series: '1C26TYY' } } }), true);
+});

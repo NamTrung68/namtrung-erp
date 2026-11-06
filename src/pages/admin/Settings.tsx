@@ -381,13 +381,16 @@ function AccCfg() {
   </div>;
 }
 
+/** Ký hiệu HĐ: ký tự thứ 5 = M → HĐ khởi tạo từ máy tính tiền (Nam Trung không dùng) */
+const isMtt = (series?: string) => String(series || '').charAt(4).toUpperCase() === 'M';
 /** Bản 31 — API MISA meInvoice (tạo HĐ nháp). Bí mật nằm ở Supabase Secrets, không nhập ở đây. */
 function MisaCfg({ s, v }: { s: any; v: any }) {
   const m = v.misa || {}; const setM = (x: any) => s.set('misa')({ ...m, ...x }); const { busy, run } = useAction();
   const { data: st, error: stErr, reload } = useLoad(() => misaCall<any>('status'), []);
   const [tpls, setTpls] = useState<any[] | null>(null);
   const test = () => run(async () => { const r = await misaCall<any>('test', { with_code: m.with_code !== false }); setTpls(r.templates || []); reload(); }, 'Kết nối MISA OK');
-  const ready = !!(m.template_id && m.inv_series);
+  const mtt = isMtt(m.inv_series);
+  const ready = !!(m.template_id && m.inv_series) && !mtt;
   return <Card title="MISA meInvoice — tạo HĐ nháp bằng API (bản 31)">
     <p className="mb-2 text-xs text-ink-500">Chạy song song với cách làm tay: chưa bật thì ERP chạy như cũ (Excel → nhập MISA → tải PDF). Bật rồi, khối ② có thêm nút <b>⚡ Tạo nháp MISA</b>; ERP chỉ tạo <b>nháp</b>, không ký, không phát hành.</p>
     <div className="mb-3 text-sm">Máy chủ: {stErr ? <Badge color="red">{stErr}</Badge> : !st ? <Badge>đang kiểm tra…</Badge> : st.configured ? <Badge color="green">Đã có đủ bí mật MISA</Badge>
@@ -396,14 +399,15 @@ function MisaCfg({ s, v }: { s: any; v: any }) {
     <div className="grid gap-3 sm:grid-cols-2">
       <Field label="Loại HĐ" hint="Ký hiệu 1C… = có mã CQT; 1K… = không mã"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={m.with_code !== false} onChange={e => setM({ with_code: e.target.checked })} /> HĐ có mã của cơ quan thuế</label></Field>
       <Field label="Mẫu HĐ MISA" hint={m.inv_series ? `Đang dùng: ${m.inv_series}${m.template_name ? ' · ' + m.template_name : ''}` : 'Bấm Kiểm tra kết nối để lấy danh sách mẫu'}>
-        <div className="flex gap-2">{tpls ? <Select options={tpls.filter(t => !t.inactive).map(t => [t.id, `${t.series} · ${t.name || t.no || ''}`] as [string, string])} value={m.template_id || ''}
-          onChange={id => { const t = tpls.find(x => x.id === id); setM({ template_id: id, inv_series: t?.series || '', template_name: t?.name || '' }); }} />
+        <div className="flex gap-2">{tpls ? <Select options={tpls.filter(t => !t.inactive).sort((x, y) => Number(isMtt(x.series)) - Number(isMtt(y.series))).map(t => [t.id, `${t.series} · ${t.name || t.no || ''}${isMtt(t.series) ? ' — KHÔNG DÙNG' : ''}`] as [string, string])} value={m.template_id || ''}
+          onChange={id => { const t = tpls.find(x => x.id === id); setM({ template_id: id, inv_series: t?.series || '', template_name: t?.name || '', with_code: String(t?.series || '').charAt(1).toUpperCase() !== 'K' }); }} />
           : <Input disabled value={m.inv_series || ''} placeholder="chưa chọn" />}<Button loading={busy} onClick={test}>Kiểm tra kết nối</Button></div></Field>
       <Field label="Số HĐ mỗi lô gửi" hint="Mặc định 10, tối đa 30"><NumInput value={m.batch ?? 10} onChange={x => setM({ batch: Math.max(1, Math.min(30, Number(x) || 10)) })} /></Field>
       <Field label="Tự dò HĐ đã ký" hint="15 phút/lần, 7h–21h: nháp đã phát hành → tự ghi số HĐ + mã tra cứu, chuyển Đã ký"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={m.auto_sync !== false} onChange={e => setM({ auto_sync: e.target.checked })} /> Bật</label></Field>
     </div>
+    {mtt && <div className="mt-3 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">Mẫu <b>{m.inv_series}</b> là HĐ <b>khởi tạo từ máy tính tiền</b> (ký tự thứ 5 = M). Nam Trung xuất HĐ thường → chọn mẫu ký hiệu dạng <b>1C26T…</b>. Chưa đổi thì không bật được API.</div>}
     <label className={cx('mt-3 flex items-center gap-2 rounded-xl border px-3 py-2 text-sm', m.enabled ? 'border-emerald-300 bg-emerald-50' : 'border-ink-200')}>
-      <input type="checkbox" disabled={!ready && !m.enabled} checked={!!m.enabled} onChange={e => setM({ enabled: e.target.checked })} />
+      <input type="checkbox" disabled={!ready && !m.enabled} checked={!!m.enabled && !mtt} onChange={e => setM({ enabled: e.target.checked })} />
       <b>Bật tạo nháp bằng API</b>{!ready && <span className="text-xs text-ink-500">— chọn mẫu HĐ trước</span>}</label>
     <Button className="mt-3" variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>
     <details className="mt-3 text-xs text-ink-600"><summary className="cursor-pointer font-semibold">Cài đặt khi MISA cấp ClientID (Admin, 1 lần)</summary>

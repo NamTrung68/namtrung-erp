@@ -7,7 +7,7 @@ import { today } from './format';
 export interface MisaCfg { enabled?: boolean; template_id?: string; template_name?: string; inv_series?: string; with_code?: boolean; batch?: number; auto_sync?: boolean; last_sync_at?: string; last_sync_pub?: number }
 export const misaCfgOf = (settings: any): MisaCfg => settings?.accounting?.misa || {};
 /** Đã bật API MISA (có ClientID, đã chọn mẫu HĐ, kế toán bật) */
-export const misaOn = (settings: any) => { const m = misaCfgOf(settings); return !!(m.enabled && m.template_id && m.inv_series); };
+export const misaOn = (settings: any) => { const m = misaCfgOf(settings); return !!(m.enabled && m.template_id && m.inv_series && String(m.inv_series).charAt(4).toUpperCase() !== 'M'); };
 export const batchOf = (settings: any) => Math.max(1, Math.min(30, Number(misaCfgOf(settings).batch) || 10));
 
 export async function misaCall<T = any>(action: string, body: Record<string, any> = {}): Promise<T> {

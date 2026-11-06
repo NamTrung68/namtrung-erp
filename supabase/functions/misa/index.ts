@@ -63,10 +63,17 @@ async function misaRaw(path: MisaPath, opt: { method?: 'GET' | 'POST' | 'DELETE'
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ClientID: env('MISA_CLIENT_ID'), TaxCode: env('MISA_TAX_CODE') };
   if (path === '/invoiceweb/token') headers.ClientSecret = env('MISA_CLIENT_SECRET');
   else headers.Authorization = 'Bearer ' + (opt.token || '');
-  let res: Response;
-  try {
-    res = await fetch(url, { method: opt.method || 'POST', headers, body: opt.body === undefined ? undefined : JSON.stringify(opt.body), signal: AbortSignal.timeout(45_000) });
-  } catch (e) { throw new MisaError('Không kết nối được MISA: ' + errText(e), 'Network'); }
+  let res: Response | null = null;
+  // MISA giới hạn 200 request/phút: bị chặn (HTTP 429) thì chờ 5s, 15s rồi thử lại
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      res = await fetch(url, { method: opt.method || 'POST', headers, body: opt.body === undefined ? undefined : JSON.stringify(opt.body), signal: AbortSignal.timeout(45_000) });
+    } catch (e) { throw new MisaError('Không kết nối được MISA: ' + errText(e), 'Network'); }
+    if (res.status !== 429 || attempt === 2) break;
+    await new Promise(r => setTimeout(r, attempt === 0 ? 5_000 : 15_000));
+  }
+  if (!res) throw new MisaError('Không kết nối được MISA', 'Network');
+  if (res.status === 429) throw new MisaError('MISA đang giới hạn số lần gọi (200 lần/phút) — đợi 1 phút rồi bấm Thử lại phiếu lỗi', 'RateLimit');
   const text = await res.text();
   let j: any = null; try { j = JSON.parse(text); } catch { /* không phải JSON */ }
   if (!j || typeof j !== 'object') throw new MisaError(`MISA trả HTTP ${res.status}: ${text.slice(0, 500)}`, 'HTTP' + res.status, text);
@@ -82,19 +89,25 @@ async function misaRaw(path: MisaPath, opt: { method?: 'GET' | 'POST' | 'DELETE'
 }
 
 // ---------- Token: lưu phía máy chủ, chỉ lấy mới khi chưa có / MISA báo hết hạn ----------
-let memToken = '';
+let memToken = ''; let memGot = 0;
+const TOKEN_TTL_MS = 13 * 86400_000; // MISA xác nhận: token sống 14 ngày, chưa có hàm refresh → chủ động lấy mới sau 13 ngày
 const tokenOf = (d: any): string => {
   d = asJson(d);
   if (typeof d === 'string') return d;
   return String(pick(d, 'token', 'access_token', 'accessToken') || '');
 };
 async function getToken(force = false): Promise<string> {
-  if (!force && memToken) return memToken;
-  if (!force) { const { data } = await admin.rpc('misa_token_get'); if (data?.token) return (memToken = data.token); }
+  if (!force && memToken && Date.now() - memGot < TOKEN_TTL_MS) return memToken;
+  if (!force) {
+    const { data } = await admin.rpc('misa_token_get');
+    const got = data?.got_at ? Date.parse(data.got_at) : 0;
+    if (data?.token && Date.now() - got < TOKEN_TTL_MS) { memGot = got; return (memToken = data.token); }
+  }
   const d = await misaRaw('/invoiceweb/token', { body: { TaxCode: env('MISA_TAX_CODE'), UserName: env('MISA_USERNAME'), Password: env('MISA_PASSWORD') } });
   const t = tokenOf(d);
   if (!t) throw new MisaError('MISA không trả token', 'NoToken', JSON.stringify(d).slice(0, 500));
   await admin.rpc('misa_token_put', { p_token: t });
+  memGot = Date.now();
   return (memToken = t);
 }
 const TOKEN_ERR = /TokenExpired|UnAuthorize|InvalidToken|HTTP401/i;
@@ -136,6 +149,7 @@ async function actCreate(db: SupabaseClient, ids: string[], recreate: boolean) {
   if (!Array.isArray(ids) || !ids.length) throw new Error('Chọn ít nhất 1 phiếu');
   if (ids.length > 30) throw new Error('Tối đa 30 HĐ mỗi lô');
   const c = await cfg(); const wc = withCodeQ(c);
+  if (String(c.inv_series || '').charAt(4).toUpperCase() === 'M') throw new Error(`Mẫu HĐ đang chọn (${c.inv_series}) là HĐ khởi tạo từ máy tính tiền — vào Cấu hình chọn mẫu HĐ thường (ký hiệu dạng 1C26T…)`);
   const out = new Map<string, any>();
   const fails: any[] = [];
   const del = async (hd: string, ref: string, note: string) => {
@@ -171,7 +185,18 @@ async function actCreate(db: SupabaseClient, ids: string[], recreate: boolean) {
   // 2) Tạo cả lô
   let inserted: any[] = [];
   if (toInsert.length) {
-    try { await misa('/invoiceweb/insert', { body: toInsert.map(x => x.payload) }); inserted = toInsert; }
+    try {
+      const ins = asJson(await misa('/invoiceweb/insert', { body: toInsert.map(x => x.payload) }));
+      // MISA xác nhận: 1 HĐ lỗi thì chỉ HĐ đó bị từ chối → hỏi lại MISA HĐ nào thật sự đã vào
+      let got: Map<string, any> | null = null; try { got = (await getlist(toInsert.map(x => x.ref_id), c)).map; } catch { /* đọc lại lỗi: coi như đã vào hết, đối soát sau */ }
+      const insList: any[] = Array.isArray(ins) ? ins.map(asJson) : [];
+      const errOf = (ref: string) => { const r = insList.find(o => o && typeof o === 'object' && String(pick(o, 'RefID') || '').toLowerCase() === ref.toLowerCase());
+        const m = r ? [pick(r, 'ErrorCode', 'errorCode'), pick(r, 'DescriptionErrorCode', 'descriptionErrorCode', 'Description', 'Error', 'error', 'Errors')].filter(Boolean).map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' — ') : '';
+        return m || 'MISA không tạo HĐ này. Phản hồi MISA: ' + JSON.stringify(ins).slice(0, 600); };
+      inserted = got ? toInsert.filter(x => got!.has(String(x.ref_id).toLowerCase())) : toInsert;
+      toInsert.filter(x => !inserted.includes(x)).forEach(x => { const m = errOf(String(x.ref_id));
+        fails.push({ hd_id: x.hd_id, ok: false, loi_ma: 'InsertRejected', loi_text: m }); out.set(x.invoice_id, { invoice_id: x.invoice_id, code: x.code, ok: false, error: m }); });
+    }
     catch (e) {
       // lỗi cả lô: hỏi lại MISA từng RefID xem HĐ nào đã vào
       let got = new Map<string, any>(); try { got = (await getlist(toInsert.map(x => x.ref_id), c)).map; } catch { /* bỏ qua */ }

@@ -116,6 +116,7 @@ Chạy **song song** với cách làm tay: chưa bật API (chưa có ClientID) 
 2. Edge Functions → *Secrets*: `MISA_CLIENT_ID`, `MISA_CLIENT_SECRET`, `MISA_TAX_CODE`, `MISA_USERNAME`, `MISA_PASSWORD` (tài khoản tích hợp không có quyền ký/phát hành). Tùy chọn `MISA_BASE_URL`.
 3. ERP → Cấu hình → Kế toán – Hóa đơn → khung MISA: *Kiểm tra kết nối* → chọn mẫu HĐ → tick *Bật* → Lưu.
 
-Còn chờ xác nhận bằng dữ liệu thật của MISA (tài liệu chưa nói rõ): định dạng base64 của `viewrefid` (ERP chỉ nhận PDF, khác thì báo kế toán tải tay), tên trường mã tra cứu trong `getlist` (đang đọc `TransactionID`), cấu trúc dữ liệu token.
+MISA đã xác nhận (06/11/2026): `viewrefid` trả base64 của file PDF · mã tra cứu trong `getlist` là `TransactionID` · token sống 14 ngày, chưa có hàm làm mới (ERP tự lấy token mới sau 13 ngày hoặc khi MISA báo token lỗi) · lô insert có HĐ lỗi thì chỉ HĐ đó bị từ chối (ERP đối chiếu `getlist` để biết HĐ nào đã vào) · giới hạn 200 request/phút (gặp HTTP 429 ERP chờ 5s/15s rồi thử lại).
+Mẫu HĐ: dùng mẫu HĐ **thường** (ký hiệu dạng 1C26T…); mẫu máy tính tiền (ký tự thứ 5 = M) bị chặn.
 
 Kiểm thử: `tests/misa.test.ts`, `tests/misa-guard.test.ts`, `supabase/tests/99m_v31.sql`.
