@@ -101,14 +101,24 @@ export function misaMap(invs: any[], personName: (id: string) => string): any[][
   return [['Số thứ tự hóa đơn', 'Mã phiếu ERP', 'Sale', 'Đơn vị mua hàng', 'Mã số thuế', 'Số dòng'], ...invs.map((v, i) => [i + 1, v.code, personName(v.sale_id), v.buyer_name, v.tax_code || '', (v.out_invoice_lines || []).length])];
 }
 /** Danh sách đơn vị nhận HĐ (sheet "Thong tin KH": MST, Tên đơn vị, Địa chỉ, mail nhận HĐ) */
-export function parseBuyers(sheets: { sheet: string; rows: any[][] }[]): { tax_code: string; name: string; address: string; email: string; username: string }[] {
+export interface BuyerRow { tax_code: string; name: string; address: string; email: string; username: string; dai_dien?: string; chuc_vu?: string; dia_chi_giao?: string; ma_hdnt?: string; ngay_hdnt?: string }
+/** Ngày dd/mm/yyyy, yyyy-mm-dd hoặc số ngày Excel → yyyy-mm-dd; trống → ''; sai → '?' */
+const dmy = (v: any): string => { if (v === null || v === undefined || v === '') return ''; if (typeof v === 'number') return new Date(Math.round((v - 25569) * 864e5)).toISOString().slice(0, 10);
+  if (v instanceof Date) return v.toISOString().slice(0, 10); const s = String(v).trim(); let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/); return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : '?'; };
+export function parseBuyers(sheets: { sheet: string; rows: any[][] }[]): BuyerRow[] {
   for (const sh of sheets) {
     const hi = sh.rows.slice(0, 10).findIndex(r => (r || []).some(x => H(x) === 'MST' || H(x).startsWith('MA SO THUE')) && (r || []).some(x => H(x).startsWith('TEN DON VI')));
     if (hi < 0) continue;
     const hd = (sh.rows[hi] || []).map(H); const f = (p: (h: string) => boolean) => hd.findIndex(h => !!h && p(h));
     const im = f(h => h === 'MST' || h.startsWith('MA SO THUE')), it = f(h => h.startsWith('TEN DON VI')), ia = f(h => h.startsWith('DIA CHI')), ie = f(h => h.includes('MAIL'));
     const iu = f(h => /^(USERNAME|USER|TAI KHOAN|MA KH)/.test(h));
-    return sh.rows.slice(hi + 1).map(r => ({ tax_code: intStr(r?.[im]).replace(/\s/g, ''), name: clean(r?.[it]), address: ia >= 0 ? clean(r?.[ia]) : '', email: ie >= 0 ? clean(r?.[ie]) : '', username: iu >= 0 ? clean(r?.[iu]) : '' }))
+    const idd = f(h => h.startsWith('NGUOI DAI DIEN') || h === 'DAI DIEN'), icv = f(h => h.startsWith('CHUC VU')), igh = f(h => h.startsWith('DIA CHI GIAO')),
+      inm = f(h => h.startsWith('MA HD NGUYEN TAC') || h.startsWith('MA HOP DONG NGUYEN TAC') || h === 'MA HDNT'), ind = f(h => h.startsWith('NGAY HD NGUYEN TAC') || h.startsWith('NGAY HOP DONG NGUYEN TAC') || h === 'NGAY HDNT');
+    const ia2 = ia === igh ? f(h => h.startsWith('DIA CHI') && !h.startsWith('DIA CHI GIAO')) : ia;
+    const o = (r: any[], i: number) => (i >= 0 ? clean(r?.[i]) : '');
+    return sh.rows.slice(hi + 1).map(r => ({ tax_code: intStr(r?.[im]).replace(/\s/g, ''), name: clean(r?.[it]), address: o(r, ia2), email: ie >= 0 ? clean(r?.[ie]) : '', username: iu >= 0 ? clean(r?.[iu]) : '',
+      dai_dien: o(r, idd), chuc_vu: o(r, icv), dia_chi_giao: o(r, igh), ma_hdnt: o(r, inm), ngay_hdnt: ind >= 0 ? dmy(r?.[ind]) : '' }))
       .filter(x => x.name && x.tax_code);
   }
   throw new Error('Không thấy sheet có cột "MST" và "Tên đơn vị"');

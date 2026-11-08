@@ -129,3 +129,28 @@ Kiểm thử: `tests/misa.test.ts`, `tests/misa-guard.test.ts`, `supabase/tests/
 - Đổi username = chuyển pháp nhân sang khách khác; khách cũ tự lấy pháp nhân còn lại làm ★.
 - Phiếu **Lập nhanh theo ID đơn**: mỗi đơn có hàng nút pháp nhân của khách (theo khách ERP hoặc username chưa gắn) — ★ chọn sẵn, bấm để đổi, hoặc “Pháp nhân khác (nhập tay)”.
 - Hàm mới: `out_buyers_page`, `out_buyer_save`, `out_buyer_delete`, `out_buyers_for`. Test: `supabase/tests/99n_v33.sql`.
+
+## Bản 35 — XML HĐ đầu vào, tra cứu MST, bộ chứng từ kèm HĐ (08/11/2026)
+
+**1. Nạp HĐ chính thức APT bằng file XML gốc** (Hóa đơn → Nạp HĐ chính thức, nút “📄 File XML gốc” — mặc định)
+- Chọn 1 hoặc nhiều file `.xml` (mỗi file 1 HĐ) → điền **Số HĐ** từng file (ERP gợi ý theo XML, sửa được) → đối chiếu nháp APT + file xe y như Excel.
+- Mã hàng ERP tự sinh = `{mã khai báo}-{số HĐ}`, VD `M3433-2-2080`. Mã này đi tiếp vào file Excel MISA / API MISA.
+- Dòng chưa ghép được nháp → mã tạm `CHUAKB-{số HĐ}-{STT}`; kế toán **ghép tay** xong ERP tự đổi sang mã chuẩn.
+- Nạp lại cùng file không tạo trùng (nhận theo số HĐ + ký hiệu + STT dòng). Dòng chiết khấu / ghi chú trong XML được bỏ qua và báo ra.
+- Nút “📊 File Excel sổ kế toán” vẫn giữ cách cũ (mã hàng MISA có sẵn).
+
+**2. Tra cứu MST khi lập yêu cầu xuất HĐ** (phiếu lập tay, lập nhanh khi “Pháp nhân khác”, thêm pháp nhân)
+- Gõ MST → ERP tra → **tự điền tên + địa chỉ theo đăng ký thuế** (có nút “Giữ thông tin cũ”), cảnh báo: MST sai số kiểm tra, không tồn tại, ngừng hoạt động (khi nhà cung cấp có trạng thái), tên đang nhập khác đăng ký thuế.
+- Gửi kế toán khi MST có cảnh báo đỏ → hỏi xác nhận. Kết quả tra lưu trên phiếu (`mst_check`), kế toán thấy nhãn “MST ✓ / ⛔” ở chi tiết phiếu.
+- Nhà cung cấp chọn ở hàm máy chủ `supabase/functions/mst` (giao diện không đổi khi đổi nguồn): **VietQR** (miễn phí, chạy ngay, *báo ngừng 01/03/2027*, không có trạng thái hoạt động) · **Xinvoice** (`XINVOICE_CLIENT_ID`, `XINVOICE_API_KEY`) · **MISA** (`MISA_MST_APPID`, `MISA_MST_USERNAME`, `MISA_MST_PASSWORD`, tùy chọn `MISA_MST_TOKEN_URL`, `MISA_MST_LOOKUP_URL`). Có bí mật MISA thì tự dùng MISA trước, lỗi thì lùi về nguồn kế tiếp; ép thứ tự bằng `MST_PROVIDER` (VD `misa,vietqr`).
+- Chưa triển khai hàm `mst` thì trình duyệt gọi thẳng VietQR. Triển khai: Edge Functions → Deploy new function tên `mst`, dán file, **tắt Verify JWT**. Kết quả nhớ 7 ngày (bảng `mst_cache`).
+
+**3. Bộ chứng từ đi kèm HĐ đã ký** (Hóa đơn của tôi → tab Đã ký; chi tiết phiếu Đã ký)
+- Mỗi HĐ: nút **ĐĐH** (đơn đặt hàng) · **BBGN** (biên bản giao nhận) · **HĐMB/HĐNT** · **⬇ Cả bộ** (.zip).
+- Hàng loạt: tìm (gõ ID đơn = cả đơn) → “Chọn tất cả đang lọc” hoặc tick → chọn loại chứng từ → **⬇ Xuất N HĐ (.zip)** (mỗi HĐ 1 thư mục; HĐ nguyên tắc 1 bản / mã).
+- Khách đã ký HĐ nguyên tắc (có **Mã HĐ nguyên tắc** trong Pháp nhân) → biên bản căn cứ HĐNT, không tạo HĐ mua bán. Chưa có → mỗi HĐ 1 HĐ mua bán số `dd/mm/yyyy/HĐMBHH/NT/{số HĐ}`.
+- Ngày mọi chứng từ = **ngày HĐ đã ký**; số đơn hàng = số HĐ; HĐNT dùng ngày ký HĐNT (trống thì đọc từ đầu mã `28/08/2026/...`).
+- Pháp nhân thêm: Người đại diện, Chức vụ, Địa chỉ giao hàng, Mã + ngày HĐ nguyên tắc (sửa trên dòng, Xuất / Nạp Excel có cột mới). Thiếu người đại diện khi xuất → ERP hỏi 1 lần, lưu vào pháp nhân (sale được điền đại diện/chức vụ, mã HĐNT chỉ kế toán).
+- Mẫu Word: `public/mau-hd/{ddh,bbgn,hdmb,hdnt}.docx` (mẫu của anh, đã gắn chỗ điền `{{...}}`). Đổi điều khoản: sửa file mẫu, giữ nguyên các `{{...}}`.
+
+Hàm mới: `out_docs_data`, `out_buyer_doc_info`, `out_invoice_mst`; sửa `out_items_import`, `out_item_relink`, `out_buyer_save`, `out_buyers_page`, `out_buyers_import_v2`. Kiểm thử: `tests/hd35.test.ts`, `supabase/tests/99o_v35.sql`.

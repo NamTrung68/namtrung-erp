@@ -4,7 +4,7 @@ async function inflate(data: Uint8Array): Promise<Uint8Array> {
   const out = new Response(new Blob([data]).stream().pipeThrough(ds));
   return new Uint8Array(await out.arrayBuffer());
 }
-async function unzip(buf: ArrayBuffer): Promise<Map<string, Uint8Array>> {
+export async function unzip(buf: ArrayBuffer): Promise<Map<string, Uint8Array>> {
   const dv = new DataView(buf); const u8 = new Uint8Array(buf); const files = new Map<string, Uint8Array>();
   let eocd = -1; for (let i = buf.byteLength - 22; i >= 0; i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
   if (eocd < 0) throw new Error('File không phải định dạng .xlsx');

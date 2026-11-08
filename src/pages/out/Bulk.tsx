@@ -1,5 +1,7 @@
 // Lập phiếu xuất HĐ hàng loạt: mỗi ID đơn (MD) = 1 phiếu; dòng chưa có ID đơn = 1 phiếu riêng
 import React, { useEffect, useMemo, useState } from 'react';
+import { MstCheck } from '../../components/MstCheck';
+import type { MstResult } from '../../lib/mst';
 import { Badge, Button, ask, cx, Modal, toast } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { useApp } from '../../state';
@@ -27,7 +29,7 @@ export function PricePick({ item, onPick, onClose }: { item: any; onPick: (gia: 
 
 interface G { key: string; md: string | null; items: any[]; customer_id: string | null; khach: string; username: string;
   on: boolean; b: { name: string; mst: string; addr: string; email: string; pay: string; note: string }; src: string; lines: { item: any; sl: string; gia: string }[];
-  res?: string; ok?: boolean; buyers: any[]; bid: string }
+  res?: string; ok?: boolean; buyers: any[]; bid: string; chk?: MstResult | null }
 
 export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose: () => void; onDone: () => void }) {
   const a = useApp(); const [gs, setGs] = useState<G[] | null>(null); const [run, setRun] = useState(false); const [step, setStep] = useState(''); const [pp, setPp] = useState<{ g: number; l: number } | null>(null);
@@ -82,8 +84,9 @@ export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose
     setRun(true); let ok = 0;
     for (let k = 0; k < list.length; k++) { const { g, i } = list[k]; setStep(`Đang lập phiếu ${k + 1}/${list.length}…`);
       try {
-        await db.rpc('out_invoice_save', { p_id: null, p_data: { customer_id: g.customer_id, buyer_name: g.b.name.trim(), tax_code: g.b.mst.trim(), address: g.b.addr.trim(), email: g.b.email.trim(), payment: g.b.pay, note: g.b.note.trim(), submit },
+        const pid = await db.rpc<string>('out_invoice_save', { p_id: null, p_data: { customer_id: g.customer_id, buyer_name: g.b.name.trim(), tax_code: g.b.mst.trim(), address: g.b.addr.trim(), email: g.b.email.trim(), payment: g.b.pay, note: g.b.note.trim(), submit },
           p_lines: g.lines.map(l => ({ item_id: l.item.id, sl: Number(l.sl), don_gia: Number(l.gia), vat: l.item.vat })) });
+        if (pid && g.chk) await db.rpc('out_invoice_mst', { p_id: pid, p_check: { ...g.chk, khop: !!g.chk.found && g.chk.name.trim().toUpperCase() === g.b.name.trim().toUpperCase() } }).catch(() => null);
         ok++; set(i, x => ({ ...x, ok: true, on: false, res: submit ? 'Đã gửi kế toán' : 'Đã lưu nháp' }));
       } catch (e: any) { set(i, x => ({ ...x, ok: false, res: e.message || String(e) })); }
     }
@@ -123,6 +126,7 @@ export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose
             <input className={inp} placeholder="Địa chỉ" value={g.b.addr} onChange={e => set(i, x => ({ ...x, bid: '', b: { ...x.b, addr: e.target.value } }))} />
             <input className={inp} placeholder="Email nhận HĐ" value={g.b.email} onChange={e => set(i, x => ({ ...x, bid: '', b: { ...x.b, email: e.target.value } }))} />
             {g.src && <div className="text-[11px] text-ink-500 sm:col-span-2">Thông tin lấy theo: {g.src}</div>}
+            {!g.bid && <MstCheck className="sm:col-span-2" mst={g.b.mst} name={g.b.name} address={g.b.addr} onApply={v => set(i, x => ({ ...x, b: { ...x.b, name: v.name, addr: v.address } }))} onResult={r => set(i, x => ({ ...x, chk: r }))} />}
           </div>}
           <div className="mt-2 divide-y divide-ink-100 rounded-xl border border-ink-100">{g.lines.map((l, j) => { const t = l.item; const low = Number(l.gia) > 0 && t.dg_nhap && Number(l.gia) / Number(t.dg_nhap) - 1 < 0.02 - 0.000001;
             return <div key={t.id} className="flex flex-wrap items-center gap-2 px-2 py-1.5 text-xs">

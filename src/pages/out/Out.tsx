@@ -1,5 +1,8 @@
 // Xuất HĐ đầu ra: kế toán nạp sổ HĐ chính thức (mã hàng MISA) → sale lập phiếu (giá + đơn vị nhận HĐ) → kế toán xuất nháp → sale xác nhận ký → kế toán ký
 import React, { useMemo, useState } from 'react';
+import { MstCheck } from '../../components/MstCheck';
+import { DocBtns } from '../hd/HdDocs';
+import { mstLevel, PROVIDER, type MstResult } from '../../lib/mst';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, Select, Stat, StatusChips, Table, Tabs, Td, Textarea, ask, toast, useAction, useLoad } from '../../components/ui';
 import { Pager, usePager } from '../../components/Pager';
@@ -362,6 +365,13 @@ function ItemEdit({ t, onClose, onDone }: { t: any; onClose: () => void; onDone:
   </Modal>;
 }
 
+/** Bản 35: kết quả tra cứu MST lưu trên phiếu (sale tra khi lập) — kế toán xem khi xuất nháp */
+export function MstTag({ c }: { c: any }) {
+  const red = !c.found || c.active === false || (c.warnings || []).some((w: string) => /sai số kiểm tra|KHÔNG xuất/.test(w));
+  return <span title={[(c.name || ''), c.address, c.status, ...(c.warnings || [])].filter(Boolean).join('\n')} className={cx('ml-1.5 rounded px-1.5 py-px text-[10px] font-semibold', red ? 'bg-red-100 text-red-700' : c.khop === false || (c.warnings || []).length ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800')}>
+    {red ? '⛔ MST cảnh báo' : c.khop === false ? 'MST ✓ · tên khác ĐK thuế' : 'MST ✓ đã tra'} · {PROVIDER[c.provider] || c.provider}</span>;
+}
+
 // ============ Lập / sửa phiếu ============
 export function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; inv?: any; onClose: () => void; onDone: () => void }) {
   const a = useApp(); const { busy, run } = useAction(); const cfg = useAccCfg();
@@ -381,7 +391,7 @@ export function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; 
     return { name: p?.buyer_name || '', mst: p?.tax_code || '', addr: p?.address || '', email: p?.email || '', pay: 'TM/CK', note: '' }; });
   const legInfo = !inv ? (items || []).map(t => t.legacy?.info).filter(Boolean)[0] : null;
   const setF = (k: string, v: string) => setB((x: any) => ({ ...x, [k]: v }));
-  const [look, setLook] = useState('');
+  const [look, setLook] = useState(''); const [mchk, setMchk] = useState<MstResult | null>(null);
   const lookup = async () => { const m = (b.mst || '').trim(); if (m.length < 10) { setLook(''); return; }
     try { const r = await db.rpc<any[]>('out_buyer_lookup', { p_mst: m }); const x = (r || [])[0];
       if (!x) { setLook('Chưa có trong danh sách — nhập tay, lưu phiếu là lưu luôn'); return; }
@@ -392,8 +402,13 @@ export function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; 
   const vats = Array.from(new Set(ls.map(l => vatTxt(l.vat))));
   const save = (submit: boolean) => run(async () => {
     if (ls.some(l => !Number(l.sl) || l.gia === '')) throw new Error('Nhập đủ số lượng và đơn giá từng dòng');
-    await db.rpc('out_invoice_save', { p_id: inv?.id || null, p_data: { customer_id: c?.id || null, buyer_name: b.name, tax_code: b.mst, address: b.addr, email: b.email, payment: b.pay, note: b.note, submit },
+    // Bản 35: MST không tồn tại / ngừng hoạt động / sai số kiểm tra → hỏi lại trước khi gửi kế toán
+    if (submit && mstLevel(mchk) === 'red' && !(await ask({ title: 'MST có cảnh báo — vẫn gửi?', message: <>{mchk!.warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}<div className="mt-2">Chỉ gửi khi đã xác minh lại với khách.</div></>, ok: 'Vẫn gửi kế toán', danger: true }))) return;
+    const savedId = await db.rpc<string>('out_invoice_save', { p_id: inv?.id || null, p_data: { customer_id: c?.id || null, buyer_name: b.name, tax_code: b.mst, address: b.addr, email: b.email, payment: b.pay, note: b.note, submit },
       p_lines: ls.map(l => ({ item_id: l.item_id, sl: Number(l.sl), don_gia: Number(l.gia), vat: l.vat })) });
+    const pid = (typeof savedId === 'string' && savedId) || inv?.id;
+    if (pid && mchk) await db.rpc('out_invoice_mst', { p_id: pid, p_check: { mst: mchk.mst, found: mchk.found, name: mchk.name, address: mchk.address, status: mchk.status, active: mchk.active, provider: mchk.provider, warnings: mchk.warnings, at: mchk.at,
+      khop: !!mchk.found && mchk.name.trim().toUpperCase() === String(b.name || '').trim().toUpperCase() } }).catch(() => null);
     onDone();
   }, submit ? 'Đã gửi kế toán xuất nháp' : 'Đã lưu phiếu');
   const after = inv && (['da_nhap', 'xac_nhan_ky', 'tra_sua'].includes(inv.status) || !!inv.misa_at);
@@ -414,6 +429,7 @@ export function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; 
         <Field className="col-span-2" label="Tên đơn vị mua hàng *"><Input value={b.name} onChange={e => setF('name', e.target.value)} placeholder="HỘ KINH DOANH … / CÔNG TY …" /></Field>
         <Field label="Mã số thuế" hint={look}><Input value={b.mst} onChange={e => setF('mst', e.target.value.replace(/\s/g, ''))} onBlur={() => lookup()} /></Field>
         <Field label="Hình thức thanh toán"><Select options={[['TM/CK', 'TM/CK'], ['CK', 'CK'], ['TM', 'TM']]} value={b.pay} onChange={v => setF('pay', v)} /></Field>
+        <MstCheck className="col-span-2" mst={b.mst} name={b.name} address={b.addr} onApply={v => setB((x: any) => ({ ...x, name: v.name, addr: v.address }))} onResult={setMchk} />
         <Field className="col-span-2" label="Địa chỉ"><Input value={b.addr} onChange={e => setF('addr', e.target.value)} /></Field>
         <Field className="col-span-2" label="Email nhận HĐ"><Input value={b.email} onChange={e => setF('email', e.target.value)} /></Field>
       </div></div>
@@ -568,11 +584,12 @@ export function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc
     <HdFilesSection v={v} files={fl} acc={acc} onChanged={done} />
     <MisaBox v={v} acc={acc} onChanged={done} />
     {s === 'da_ky' && v.ma_tra_cuu && <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký{v.so_hd ? <> HĐ số <b>{v.so_hd}</b></> : ''}{v.ngay_hd ? ' ngày ' + fmtDate(v.ngay_hd) : ''} · Mã tra cứu <TraCuu ma={v.ma_tra_cuu} /> <span className="text-xs text-emerald-700">bấm mã để xem HĐ</span></div>}
+    {s === 'da_ky' && <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-ink-200 px-3 py-2 text-sm"><b>Chứng từ kèm HĐ:</b><DocBtns v={v} /></div>}
     {acc && ['xac_nhan_ky', 'da_ky'].includes(s) && <div className="mb-3"><SignBox v={v} onDone={done} /></div>}
     {s === 'da_ky' && !v.ma_tra_cuu && !fl.some(f => f.kind === 'ky') && <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký HĐ số <b>{v.so_hd}</b> ngày {fmtDate(v.ngay_hd)} — kế toán đã gửi mail. Sale báo khách kiểm tra email.</div>}
     {s === 'da_nhap' && !fl.length && <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">Phiếu chưa có PDF nháp từ MISA (phiếu sổ cũ). Kế toán tải PDF nháp lên để sale gửi khách.</div>}
     <div className="grid gap-x-6 sm:grid-cols-2 text-sm">
-      <div><div className="text-xs font-bold uppercase text-ink-400">Đơn vị mua</div><div className="font-semibold">{v.buyer_name}</div><div>MST: {v.tax_code || '—'}</div><div>Địa chỉ: {v.address || '—'}</div><div>Email: {v.email || '—'}</div><div>Thanh toán: {v.payment}</div>
+      <div><div className="text-xs font-bold uppercase text-ink-400">Đơn vị mua</div><div className="font-semibold">{v.buyer_name}</div><div>MST: {v.tax_code || '—'}{v.mst_check && <MstTag c={v.mst_check} />}</div><div>Địa chỉ: {v.address || '—'}</div><div>Email: {v.email || '—'}</div><div>Thanh toán: {v.payment}</div>
         {v.buyer_info && <pre className="mt-1 whitespace-pre-wrap rounded bg-ink-50 p-2 text-xs">{v.buyer_info}</pre>}</div>
       <div><div className="text-xs font-bold uppercase text-ink-400">Phiếu</div><div>Sale: {a.personName(v.sale_id)}</div><div>Lập lúc {fmtDateTime(v.created_at)}</div>{v.note && <div>Ghi chú: {v.note}</div>}
         <div className="mt-1">Tiền hàng <b><Money v={t.tt} /></b> · Thuế <b><Money v={t.thue} /></b> · Tổng <b><Money v={t.tt + t.thue} /></b></div></div></div>

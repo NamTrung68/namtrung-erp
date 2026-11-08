@@ -20,6 +20,7 @@ import { exportHdChinhThuc, listHdVao } from '../../lib/hdExport';
 import { Chips, Modal } from '../../components/ui';
 import { MisaRun, MisaTag } from '../out/MisaRun';
 import { exportMisaDoiChieu, misaCall, misaCfgOf, misaOn } from '../../lib/misa';
+import { DocBtns, KyList } from './HdDocs';
 
 // ---------------- dùng chung ----------------
 const bien = (t: any) => (Number(t.gia_khach) > 0 && Number(t.dg_nhap) > 0 ? Number(t.gia_khach) / Number(t.dg_nhap) - 1 : null);
@@ -103,7 +104,7 @@ export function HdSale() {
       {tab === 'duyet' && <SaleList statuses={['da_nhap']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có bản nháp nào chờ bạn" hint="Mở yêu cầu → xem PDF nháp → gửi khách → Chốt, hoặc Yêu cầu sửa." />}
       {tab === 'tra' && <SaleList statuses={['tra_sua', 'cho_duyet_gia', 'soan']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có yêu cầu bị trả hay chờ duyệt" hint="Trả sửa: bấm Sửa rồi gửi lại (lên phiên bản mới). Chờ duyệt giá: biên > 4%, chờ quản lý duyệt. Đang soạn: chưa gửi kế toán." />}
       {tab === 'dang' && <SaleList statuses={['cho_nhap', 'xac_nhan_ky']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có yêu cầu đang ở phía kế toán" hint="Đã gửi → kế toán export MISA → có nháp sẽ chuyển sang tab Chờ tôi duyệt. Đã chốt → chờ kế toán ký." />}
-      {tab === 'ky' && <SaleList statuses={['da_ky']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Chưa có HĐ đã ký" hint="Bấm vào mã tra cứu (ô xanh) để xem / tải HĐ đã ký trên MISA — gửi khách hoặc in hợp đồng." />}
+      {tab === 'ky' && <KyTab sale={sale} hd={hd} rev={rev} onOpen={setOpen} />}
     </div>
     {open && <InvoiceDetail id={open} acc={false} onClose={close} onChanged={reload} />}
   </Layout>;
@@ -111,6 +112,14 @@ export function HdSale() {
 function SaleList({ statuses, sale, hd, rev, onOpen, empty, hint }: { statuses: string[]; sale: string; hd: string; rev: number; onOpen: (id: string) => void; empty: string; hint: string }) {
   const { data, loading } = useInv(statuses, { sale, hd, ...(statuses.includes('da_ky') ? { dir: 'desc' } : {}) }, [rev]); // đã ký: mới nhất lên đầu
   return <><p className="mb-3 text-sm text-ink-600">{hint}</p><Card bodyClass="p-0"><InvRows rows={data || []} loading={loading} onOpen={onOpen} empty={empty} sale /></Card></>;
+}
+
+/** Bản 35: Đã ký — bấm mã tra cứu xem HĐ trên MISA; cột chứng từ xuất nhanh ĐĐH / BBGN / HĐ mua bán / HĐ nguyên tắc (1 HĐ, cả đơn, nhiều HĐ) */
+function KyTab({ sale, hd, rev, onOpen }: { sale: string; hd: string; rev: number; onOpen: (id: string) => void }) {
+  const { data, loading } = useInv(['da_ky'], { sale, hd, dir: 'desc' }, [rev]);
+  return <><p className="mb-3 text-sm text-ink-600">Bấm mã tra cứu (ô xanh) để xem / tải HĐ đã ký trên MISA. Cột bên phải: <b>xuất nhanh chứng từ đi kèm</b> — Đơn đặt hàng, Biên bản giao nhận, HĐ mua bán (khách chưa ký HĐ nguyên tắc) hoặc HĐ nguyên tắc. Ngày chứng từ = ngày HĐ đã ký.</p>
+    <KyList data={data} render={(rows, sel, onSel) => <Card bodyClass="p-0"><InvRows rows={rows} loading={loading} onOpen={onOpen} empty="Chưa có HĐ đã ký" sale sel={sel} onSel={onSel}
+      action={v => <DocBtns v={v} compact />} /></Card>} /></>;
 }
 
 /** Bản 32: dòng thiếu ID đơn / username (hoặc username trùng số đơn = file xe lệch cột) → gom nhóm riêng để điền */
