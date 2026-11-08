@@ -11,7 +11,16 @@ import { db } from '../../lib/sb';
 import { downloadBlob } from '../../lib/format';
 import { DOC_NAME, docFile, docsOf, hasHdnt, makeBundle, makeDocx, soDon, type DocInv, type DocKind } from '../../lib/hdDocs';
 
-const loadDocs = async (ids: string[]): Promise<DocInv[]> => (await db.rpc<DocInv[]>('out_docs_data', { p_ids: ids })) || [];
+const loadDocs = async (ids: string[]): Promise<DocInv[]> => {
+  const invs = (await db.rpc<DocInv[]>('out_docs_data', { p_ids: ids })) || [];
+  // mã đơn (MD…) của từng HĐ — in vào "Số đơn hàng" trên ĐĐH / BBGN
+  const md: Record<string, string[]> = {};
+  for (let i = 0; i < ids.length; i += 80) {
+    let r: any = []; try { r = await db.from('out_invoice_lines').select('invoice_id,out_items(md)').in('invoice_id', ids.slice(i, i + 80)); } catch { /* thiếu mã đơn → dùng số HĐ */ }
+    (r?.data ?? r ?? []).forEach((l: any) => { const m = l.out_items?.md; if (m) (md[l.invoice_id] ||= []).push(m); });
+  }
+  return invs.map(v => ({ ...v, mds: md[v.id] || [] }));
+};
 const thieu = (v: DocInv) => !v.buyer?.dai_dien || !v.buyer?.chuc_vu;
 
 /** Bổ sung Người đại diện / Chức vụ trước khi in (lưu vào pháp nhân để lần sau tự có) */

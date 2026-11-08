@@ -9,7 +9,7 @@ export const DOC_SHORT: Record<DocKind, string> = { ddh: 'DDH', bbgn: 'BBGN', hd
 
 export interface DocLine { ten: string; dvt: string | null; sl: number; don_gia: number; vat: number | null }
 export interface DocInv {
-  id: string; code: string; so_hd: string | null; ngay_hd: string | null; buyer_name: string | null; tax_code: string | null; address: string | null; payment: string | null;
+  id: string; code: string; so_hd: string | null; mds?: string[]; ngay_hd: string | null; buyer_name: string | null; tax_code: string | null; address: string | null; payment: string | null;
   buyer?: { id?: string; dai_dien?: string | null; chuc_vu?: string | null; dia_chi_giao?: string | null; ma_hdnt?: string | null; ngay_hdnt?: string | null } | null; lines: DocLine[];
 }
 
@@ -19,6 +19,9 @@ const qty = (v: number) => Number(v).toLocaleString('vi-VN', { maximumFractionDi
 const p2 = (n: number | string) => String(n).padStart(2, '0');
 const dmy = (iso: string) => { const [y, m, d] = iso.slice(0, 10).split('-'); return `${d}/${m}/${y}`; };
 const ngayChu = (iso: string) => { const [y, m, d] = iso.slice(0, 10).split('-'); return `${p2(d)} tháng ${p2(m)} năm ${y}`; };
+/** Số đơn hàng in trên ĐĐH / BBGN = mã đơn (ID đơn) của các dòng trong HĐ, VD "MD2546, MD2547"; không có thì dùng số HĐ */
+export const maDon = (v: DocInv) => { const m = Array.from(new Set((v.mds || []).map(x => String(x || '').trim().toUpperCase()).filter(Boolean).map(x => (/^\d+$/.test(x) ? 'MD' + x : x))))
+  .sort((a, b) => a.localeCompare(b, 'en', { numeric: true })); return m.length ? m.join(', ') : soDon(v); };
 export const soDon = (v: DocInv) => String(v.so_hd || '').replace(/\D/g, '').replace(/^0+(?=\d)/, '') || v.code;
 const CHAM = '…………………………';
 /** Ngày HĐNT: điền tay, không thì đọc từ đầu mã dạng 28/08/2026/HĐNTHH/... */
@@ -41,7 +44,7 @@ export function docVars(v: DocInv, kind: DocKind) {
   const thue = v.lines.reduce((s, l) => s + Math.round(Math.round(Number(l.sl) * Number(l.don_gia)) * Number(l.vat ?? 0)), 0);
   const chu = docTien(sub + thue).replace(/\.$/, ''); const bangChu = chu.charAt(0).toLowerCase() + chu.slice(1);
   const base: Record<string, string> = {
-    so_don: soDon(v), ten_mua: v.buyer_name || '', dia_chi: v.address || '', dia_chi_giao: v.buyer?.dia_chi_giao || v.address || '', mst: v.tax_code || '',
+    so_don: maDon(v), ten_mua: v.buyer_name || '', dia_chi: v.address || '', dia_chi_giao: v.buyer?.dia_chi_giao || v.address || '', mst: v.tax_code || '',
     dai_dien: v.buyer?.dai_dien || CHAM, chuc_vu: v.buyer?.chuc_vu || CHAM, ngay: dmy(ngay), ngay_giao: dmy(ngay), ngay_chu: ngayChu(ngay),
     thanh_toan: TT[v.payment || 'TM/CK'] || v.payment || TT['TM/CK'], cong_tien: vnd(sub), tong: vnd(sub + thue), bang_chu: bangChu,
     can_cu: hasHdnt(v) ? `${v.buyer!.ma_hdnt!.trim()}${nt ? ' ký ngày ' + ngayChu(nt) : ''}` : `${soHdmb(v)} ký ngày ${ngayChu(ngay)}`,

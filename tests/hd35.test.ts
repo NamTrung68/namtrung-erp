@@ -57,7 +57,9 @@ const INV: DocInv = { id: 'x', code: 'XHD00012', so_hd: '00002759', ngay_hd: '20
 
 test('biến bộ chứng từ', () => {
   const v = docVars(INV, 'ddh');
-  assert.equal(v.so_don, '2759'); assert.equal(v.ngay, '07/11/2026'); assert.equal(v.ngay_chu, '07 tháng 11 năm 2026');
+  assert.equal(v.so_don, '2759');
+  assert.equal(docVars({ ...INV, mds: ['MD2547', 'md2546', '2547'] }, 'ddh').so_don, 'MD2546, MD2547');
+  assert.equal(docVars({ ...INV, mds: ['MD2546'] }, 'bbgn').so_don, 'MD2546'); assert.equal(v.ngay, '07/11/2026'); assert.equal(v.ngay_chu, '07 tháng 11 năm 2026');
   assert.equal(v.cong_tien, '1.350.000'); assert.equal(v.tong, (1350000 + 64000 + 55000).toLocaleString('vi-VN'));
   assert.match(v.bang_chu, /^một triệu bốn trăm sáu mươi chín nghìn đồng chẵn$/);
   assert.equal(soHdmb(INV), '07/11/2026/HĐMBHH/NT/2759');
