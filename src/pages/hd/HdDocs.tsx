@@ -107,7 +107,7 @@ export function DocBtns({ v, st, onChanged, compact }: { v: { id: string; buyer_
     } catch (e: any) { toast.err(e); } finally { setUp(false); }
   };
   const s = own || null; const hs = hsOf(s); const isNt = info ? hasHdnt(info) : null;
-  return <div className={cx('flex flex-col gap-1.5', compact && 'w-[260px]')} onClick={e => e.stopPropagation()}>
+  return <div className={cx('flex flex-col gap-1.5', compact && 'w-[214px]')} onClick={e => e.stopPropagation()}>
     <div className="flex items-center gap-1.5">
       <Tile k="ddh" busy={!!d.busy} done={s?.tai?.ddh} onClick={() => one('ddh')} />
       <Tile k="bbgn" busy={!!d.busy} done={s?.tai?.bbgn} onClick={() => one('bbgn')} />
