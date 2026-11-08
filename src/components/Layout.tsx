@@ -41,7 +41,7 @@ export const CSKH_BLOCK = ['/support', '/crm/daily', '/crm/reports', '/kpi'];
 export function canOpen(a: ReturnType<typeof useApp>, path: string): boolean {
   if (path === '/admin/users' || path === '/admin/data') return a.isAdmin; // chỉ Admin + Ban giám đốc
   if (path === '/admin/settings') return a.isAdmin || a.has('hcns', 'ke_toan');
-  if (path === '/hd/phap-nhan') return a.isAdmin || a.has('ke_toan'); // bản 33
+  if (path === '/hd/phap-nhan') return a.isAdmin || a.has('ke_toan') || a.isSales || a.isLead; // bản 36: sale / CSKH xem khách mình (máy chủ lọc theo phạm vi)
   if (a.cskhOnly && CSKH_BLOCK.includes(path)) return false; // bản 29
   return true;
 }
@@ -75,7 +75,7 @@ export function useNav() {
       { to: '/hd/ql', label: 'Duyệt giá & tồn HĐ', icon: '✅', show: a.isLead || a.has('ke_toan', 'bgd') },
       { to: '/acc/mine', label: 'Đối soát xe của tôi', icon: '🚚', show: a.isSales },
       { to: '/acc', label: 'Danh sách xe đối soát', icon: '🚚', show: a.isAdmin || a.has('ke_toan') },
-      { to: '/hd/phap-nhan', label: 'Pháp nhân nhận HĐ', icon: '🏢', show: a.isAdmin || a.has('ke_toan') },
+      { to: '/hd/phap-nhan', label: 'Pháp nhân nhận HĐ', icon: '🏢', show: a.isAdmin || a.has('ke_toan') || a.isSales || a.isLead },
       // Bản 27: ẩn khỏi menu 'Tra cứu yêu cầu · bảng gốc' (#/out) — trùng với Bàn làm việc kế toán / Hóa đơn của tôi; đường dẫn vẫn mở được từ các nút trong trang
       { to: '/acc/approve', label: 'Duyệt mở chặn HĐ', icon: '🔓', show: a.isAdmin || (a.settings.accounting?.approver_ids || []).includes(a.me.id) },
       { to: '/hd/guide', label: 'Hướng dẫn quy trình', icon: '📘', show: a.isSales || a.isLead || a.isAdmin || a.has('ke_toan', 'hcns') },

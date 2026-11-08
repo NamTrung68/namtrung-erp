@@ -1,7 +1,11 @@
-// Bản 35 — Xuất nhanh bộ chứng từ đi kèm HĐ đã ký: Đơn đặt hàng, Biên bản giao nhận, HĐ mua bán / HĐ nguyên tắc
-//  · Trên từng HĐ: bấm 1 chứng từ (tải .docx) hoặc “Cả bộ” (.zip)
+// Bản 35–36 — Bộ chứng từ đi kèm HĐ đã ký: Đơn đặt hàng, Biên bản giao nhận, HĐ mua bán / HĐ nguyên tắc
+//  · Trên từng HĐ: biểu tượng từng chứng từ (tải .docx) hoặc “Cả bộ” (.zip)
 //  · Tab Đã ký: tick nhiều HĐ (hoặc chọn tất cả đang lọc / cả đơn) → chọn loại chứng từ → tải 1 file .zip
-import React, { useMemo, useState } from 'react';
+//  · Bản 36 — vết hồ sơ: tải (tự ghi loại, ai, lúc nào) → ✉ đã gửi khách → ✍ đã nhận bản ký (file lưu Google Drive)
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useApp } from '../../state';
+import { driveReady, saveToDrive } from '../../lib/drive';
+import { compressImage } from '../../lib/image';
 import { Button, Card, cx, Input, Modal, toast, useAction } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { downloadBlob } from '../../lib/format';
@@ -44,46 +48,126 @@ function useDocs() {
   return { start, busy, modal };
 }
 
-/** Nút trên từng HĐ: ĐĐH · BBGN · HĐMB/HĐNT · Cả bộ */
-export function DocBtns({ v, compact }: { v: { id: string; buyer_name?: string; so_hd?: string }; compact?: boolean }) {
-  const d = useDocs(); const [info, setInfo] = useState<DocInv | null>(null);
-  const one = (k: DocKind) => d.start([v.id], async ([x]) => { setInfo(x); const kk = k === 'hdmb' && hasHdnt(x) ? 'hdnt' : k; downloadBlob(docFile(x, kk), await makeDocx(x, kk)); }, k !== 'ddh');
-  const all = () => d.start([v.id], async ([x]) => { setInfo(x); const kinds = docsOf(x); const { blob } = await makeBundle([x], hasHdnt(x) ? [...kinds, 'hdnt'] : kinds); downloadBlob(`Chung_tu_HD${soDon(x)}.zip`, blob); }, true);
-  const b = 'rounded-md border border-ink-200 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-ink-700 hover:border-brand-400 hover:text-brand-700 disabled:opacity-50';
-  return <div className={cx('flex flex-wrap items-center gap-1', compact && 'max-w-[220px]')} onClick={e => e.stopPropagation()}>
-    <button className={b} disabled={!!d.busy} title="Đơn đặt hàng (.docx)" onClick={() => one('ddh')}>ĐĐH</button>
-    <button className={b} disabled={!!d.busy} title="Biên bản giao nhận hàng hóa (.docx)" onClick={() => one('bbgn')}>BBGN</button>
-    <button className={b} disabled={!!d.busy} title="Khách chưa ký HĐ nguyên tắc → HĐ mua bán cho HĐ này; đã ký → tải HĐ nguyên tắc" onClick={() => one('hdmb')}>{info ? (hasHdnt(info) ? 'HĐNT' : 'HĐMB') : 'HĐMB/NT'}</button>
-    <button className={cx(b, 'border-brand-300 bg-brand-50 text-brand-800')} disabled={!!d.busy} title="Cả bộ chứng từ của HĐ này (.zip)" onClick={all}>{d.busy ? '…' : '⬇ Cả bộ'}</button>
+// ---------- Vết hồ sơ ----------
+export interface DocSt { invoice_id: string; tai: Record<string, { at: string; by: string; n: number }>; gui_at: string | null; gui_by: string | null; ky_at: string | null; ky_by: string | null; ky_url: string | null; note: string | null }
+export type HsKey = 'chua' | 'tai' | 'gui' | 'ky';
+export const hsOf = (st?: DocSt | null): HsKey => (!st ? 'chua' : st.ky_at ? 'ky' : st.gui_at ? 'gui' : Object.keys(st.tai || {}).length ? 'tai' : 'chua');
+export const HS: Record<HsKey, [string, string, string]> = {
+  chua: ['Chưa xử lý hồ sơ', '○', 'border-ink-200 bg-ink-50 text-ink-500'],
+  tai: ['Đã tải — chưa gửi khách', '⬇', 'border-sky-200 bg-sky-50 text-sky-800'],
+  gui: ['Đã gửi khách — chờ bản ký', '✉', 'border-violet-200 bg-violet-50 text-violet-800'],
+  ky: ['Đủ hồ sơ — đã có bản ký', '✓', 'border-emerald-300 bg-emerald-50 text-emerald-800'],
+};
+export async function loadDocStates(ids: string[]): Promise<Record<string, DocSt>> {
+  const out: Record<string, DocSt> = {};
+  for (let i = 0; i < ids.length; i += 80) {
+    const part = ids.slice(i, i + 80); if (!part.length) continue;
+    const rows = await db.from('out_doc_state').select('*').in('invoice_id', part) as any;
+    (rows?.data ?? rows ?? []).forEach((r: DocSt) => { out[r.invoice_id] = r; });
+  }
+  return out;
+}
+const mark = (ids: string[], act: string, kinds: string[] = [], url: string | null = null) => db.rpc('out_doc_mark', { p_ids: ids, p_act: act, p_kinds: kinds, p_url: url, p_note: null });
+
+const ICON: Record<DocKind | 'all', [string, string, string]> = {
+  ddh: ['🧾', 'ĐĐH', 'Đơn đặt hàng (.docx)'], bbgn: ['🚚', 'BBGN', 'Biên bản giao nhận hàng hóa (.docx)'],
+  hdmb: ['📜', 'HĐMB', 'HĐ mua bán cho HĐ này (khách chưa ký HĐ nguyên tắc)'], hdnt: ['🤝', 'HĐNT', 'HĐ nguyên tắc của khách'], all: ['🗂️', 'Cả bộ', 'Cả bộ chứng từ của HĐ này (.zip)'],
+};
+function Tile({ k, onClick, busy, done, hint }: { k: DocKind | 'all'; onClick: () => void; busy?: boolean; done?: { at: string; n: number } | null; hint?: string }) {
+  const [ic, l, t] = ICON[k];
+  return <button type="button" disabled={busy} onClick={onClick} title={t + (done ? `\nĐã tải ${done.n} lần · lần cuối ${new Date(done.at).toLocaleString('vi-VN')}` : '') + (hint ? '\n' + hint : '')}
+    className={cx('relative flex h-[46px] w-[46px] flex-col items-center justify-center rounded-xl border text-center transition hover:-translate-y-0.5 hover:shadow-md disabled:opacity-50',
+      k === 'all' ? 'border-brand-300 bg-gradient-to-b from-brand-50 to-white' : done ? 'border-emerald-300 bg-emerald-50/70' : 'border-ink-200 bg-white hover:border-brand-400')}>
+    <span className="text-[19px] leading-none">{busy ? '⏳' : ic}</span><span className={cx('mt-0.5 text-[9.5px] font-bold leading-none', k === 'all' ? 'text-brand-800' : 'text-ink-700')}>{l}</span>
+    {done && <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-0.5 text-[9px] font-bold text-white">✓</span>}
+  </button>;
+}
+
+/** Biểu tượng chứng từ + trạng thái hồ sơ trên từng HĐ. st = vết hồ sơ (undefined → tự tải) */
+export function DocBtns({ v, st, onChanged, compact }: { v: { id: string; buyer_name?: string; so_hd?: string; tax_code?: string }; st?: DocSt | null; onChanged?: () => void; compact?: boolean }) {
+  const a = useApp(); const d = useDocs(); const [info, setInfo] = useState<DocInv | null>(null);
+  const [own, setOwn] = useState<DocSt | null | undefined>(st); const [menu, setMenu] = useState(false); const [up, setUp] = useState(false); const fileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { setOwn(st); }, [st]);
+  const refresh = async () => { if (onChanged) onChanged(); const m = await loadDocStates([v.id]).catch(() => ({} as Record<string, DocSt>)); setOwn(m[v.id] || null); };
+  useEffect(() => { if (st === undefined) refresh(); }, [v.id]);
+  const log = (kinds: string[]) => mark([v.id], 'tai', kinds).then(refresh).catch(() => null);
+  const one = (k: DocKind) => d.start([v.id], async ([x]) => { setInfo(x); const kk = k === 'hdmb' && hasHdnt(x) ? 'hdnt' : k; downloadBlob(docFile(x, kk), await makeDocx(x, kk)); log([kk]); }, k !== 'ddh');
+  const all = () => d.start([v.id], async ([x]) => { setInfo(x); const kinds: DocKind[] = hasHdnt(x) ? [...docsOf(x), 'hdnt'] : docsOf(x); const { blob } = await makeBundle([x], kinds); downloadBlob(`Chung_tu_HD${soDon(x)}.zip`, blob); log(kinds); }, true);
+  const act = async (x: string, url: string | null = null) => { setMenu(false); try { await mark([v.id], x, [], url); toast.ok(x === 'gui' ? 'Đã đánh dấu: đã gửi khách' : x === 'ky' ? 'Đã lưu: hồ sơ có bản ký' : 'Đã bỏ đánh dấu'); refresh(); } catch (e: any) { toast.err(e); } };
+  const upload = async (f: File) => {
+    setUp(true);
+    try {
+      if (!driveReady(a.settings.drive)) throw new Error('Chưa cấu hình Google Drive — nhờ Admin bật ở Cấu hình');
+      const blob = f.type.startsWith('image/') ? await compressImage(f, 1600, 200) : f;
+      if (blob.size > 15 * 1024 * 1024) throw new Error('File quá 15MB — scan lại độ phân giải thấp hơn');
+      const ext = f.type.startsWith('image/') ? 'jpg' : (f.name.split('.').pop() || 'pdf');
+      const so = String(v.so_hd || '').replace(/\D/g, '').replace(/^0+(?=\d)/, '') || v.id.slice(0, 8);
+      const url = await saveToDrive(a.settings.drive, blob, `BanKy_HD${so}_${new Date().toISOString().slice(0, 10)}.${ext}`, `Ke toan/Chung tu da ky/${new Date().toISOString().slice(0, 7)}`);
+      await act('ky', url);
+    } catch (e: any) { toast.err(e); } finally { setUp(false); }
+  };
+  const s = own || null; const hs = hsOf(s); const isNt = info ? hasHdnt(info) : null;
+  return <div className={cx('flex flex-col gap-1.5', compact && 'w-[260px]')} onClick={e => e.stopPropagation()}>
+    <div className="flex items-center gap-1.5">
+      <Tile k="ddh" busy={!!d.busy} done={s?.tai?.ddh} onClick={() => one('ddh')} />
+      <Tile k="bbgn" busy={!!d.busy} done={s?.tai?.bbgn} onClick={() => one('bbgn')} />
+      <Tile k={isNt ? 'hdnt' : 'hdmb'} busy={!!d.busy} done={s?.tai?.hdmb || s?.tai?.hdnt} onClick={() => one('hdmb')} hint="Khách đã ký HĐ nguyên tắc → tải HĐ nguyên tắc; chưa ký → HĐ mua bán" />
+      <Tile k="all" busy={!!d.busy} onClick={all} />
+    </div>
+    <div className="relative flex items-center gap-1">
+      <span className={cx('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold', HS[hs][2])} title={s ? [s.gui_at && 'Gửi: ' + new Date(s.gui_at).toLocaleString('vi-VN') + ' · ' + a.personName(s.gui_by || ''), s.ky_at && 'Bản ký: ' + new Date(s.ky_at).toLocaleString('vi-VN') + ' · ' + a.personName(s.ky_by || '')].filter(Boolean).join('\n') : ''}>
+        <span>{HS[hs][1]}</span>{HS[hs][0]}</span>
+      {s?.ky_url && <a href={s.ky_url} target="_blank" rel="noreferrer" title="Mở bản ký đã lưu" className="text-[13px]">📎</a>}
+      <button type="button" className="ml-auto rounded-md px-1.5 text-[13px] font-bold text-ink-500 hover:bg-ink-100" title="Cập nhật trạng thái hồ sơ" onClick={() => setMenu(!menu)}>{up ? '⏳' : '⋯'}</button>
+      <input ref={fileRef} type="file" accept="application/pdf,image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) upload(f); }} />
+      {menu && <><div className="fixed inset-0 z-30" onClick={() => setMenu(false)} />
+        <div className="absolute right-0 top-6 z-40 w-60 overflow-hidden rounded-xl border border-ink-200 bg-white text-xs shadow-xl">
+          {[!s?.gui_at && ['gui', '✉ Đã gửi bộ chứng từ cho khách'], ['up', '✍ Tải bản đã ký / scan lên (Drive)'], !s?.ky_at && ['ky', '✔ Đã nhận bản ký (không lưu file)'],
+            s?.gui_at && !s?.ky_at && ['bo_gui', '↶ Bỏ đánh dấu đã gửi'], s?.ky_at && ['bo_ky', '↶ Bỏ đánh dấu đã ký']].filter(Boolean).map(x => { const [k, l] = x as [string, string];
+            return <button key={k} className="block w-full px-3 py-2 text-left hover:bg-brand-50" onClick={() => (k === 'up' ? (setMenu(false), fileRef.current?.click()) : act(k))}>{l}</button>; })}
+        </div></>}
+    </div>
     {d.modal}</div>;
 }
 
 /** Thanh xuất hàng loạt cho danh sách HĐ đã ký */
-export function DocsBar({ rows, sel, setSel }: { rows: any[]; sel: Record<string, boolean>; setSel: (x: Record<string, boolean>) => void }) {
+export function DocsBar({ rows, sel, setSel, onChanged }: { rows: any[]; sel: Record<string, boolean>; setSel: (x: Record<string, boolean>) => void; onChanged?: () => void }) {
   const [kinds, setKinds] = useState<DocKind[]>(() => { try { const k = JSON.parse(localStorage.getItem('nt_doc_kinds') || 'null'); return Array.isArray(k) && k.length ? k : ['ddh', 'bbgn', 'hdmb']; } catch { return ['ddh', 'bbgn', 'hdmb']; } });
   const tog = (k: DocKind) => { const n = kinds.includes(k) ? kinds.filter(x => x !== k) : [...kinds, k]; setKinds(n); try { localStorage.setItem('nt_doc_kinds', JSON.stringify(n)); } catch { /* */ } };
-  const d = useDocs(); const ids = rows.filter(r => sel[r.id]).map(r => r.id);
+  const d = useDocs(); const ids = rows.filter(r => sel[r.id]).map(r => r.id); const { busy, run } = useAction();
   const go = () => { if (!ids.length) return toast.info('Tick HĐ cần xuất (hoặc “Chọn tất cả”)'); if (!kinds.length) return toast.info('Chọn ít nhất 1 loại chứng từ');
     d.start(ids, async invs => { const { blob, n } = await makeBundle(invs, kinds); if (!n) { toast.info('Không có chứng từ nào cần tạo (HĐ mua bán chỉ cho khách chưa ký HĐ nguyên tắc)'); return; }
-      downloadBlob(`Chung_tu_${invs.length}HD_${new Date().toISOString().slice(0, 10)}.zip`, blob); toast.ok(`Đã tạo ${n} file chứng từ cho ${invs.length} HĐ`); }, kinds.some(k => k !== 'ddh')); };
+      downloadBlob(`Chung_tu_${invs.length}HD_${new Date().toISOString().slice(0, 10)}.zip`, blob); toast.ok(`Đã tạo ${n} file chứng từ cho ${invs.length} HĐ`);
+      for (const v of invs) await mark([v.id], 'tai', kinds.filter(k => (k === 'hdmb' ? !hasHdnt(v) : k === 'hdnt' ? hasHdnt(v) : true))).catch(() => null);
+      onChanged?.(); }, kinds.some(k => k !== 'ddh')); };
   const allOn = rows.length > 0 && rows.every(r => sel[r.id]);
   return <Card className="mb-3" bodyClass="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
     <label className="flex items-center gap-1.5 font-semibold"><input type="checkbox" className="h-4 w-4" checked={allOn} onChange={e => setSel(e.target.checked ? Object.fromEntries(rows.map(r => [r.id, true])) : {})} /> Chọn tất cả đang lọc ({rows.length})</label>
-    <span className="text-ink-300">|</span><span className="text-ink-500">Chứng từ:</span>
-    {(['ddh', 'bbgn', 'hdmb', 'hdnt'] as DocKind[]).map(k => <button key={k} onClick={() => tog(k)} className={cx('rounded-full border px-2 py-0.5 font-semibold', kinds.includes(k) ? 'border-brand-500 bg-brand-50 text-brand-800' : 'border-ink-200 text-ink-500')}>
-      {kinds.includes(k) ? '✓ ' : ''}{DOC_NAME[k]}{k === 'hdmb' ? ' (khách chưa ký HĐNT)' : k === 'hdnt' ? ' (1 bản / khách)' : ''}</button>)}
-    <Button size="sm" variant="primary" className="ml-auto" loading={!!d.busy} disabled={!ids.length} onClick={go}>⬇ Xuất {ids.length || ''} HĐ (.zip)</Button>
-    {d.busy && <span className="text-brand-700">{d.busy}</span>}{d.modal}</Card>;
+    <span className="text-ink-300">|</span>
+    {(['ddh', 'bbgn', 'hdmb', 'hdnt'] as DocKind[]).map(k => <button key={k} onClick={() => tog(k)} title={DOC_NAME[k]} className={cx('flex items-center gap-1 rounded-full border px-2.5 py-1 font-semibold', kinds.includes(k) ? 'border-brand-500 bg-brand-50 text-brand-800' : 'border-ink-200 text-ink-400')}>
+      <span className="text-sm">{ICON[k][0]}</span>{DOC_NAME[k]}{k === 'hdmb' ? ' (chưa ký HĐNT)' : k === 'hdnt' ? ' (1 bản/khách)' : ''}{kinds.includes(k) ? ' ✓' : ''}</button>)}
+    <div className="ml-auto flex items-center gap-2">
+      <Button size="sm" disabled={!ids.length} loading={busy} onClick={() => run(async () => { await mark(ids, 'gui'); onChanged?.(); }, `Đã đánh dấu ${ids.length} HĐ: đã gửi khách`)}>✉ Đã gửi khách</Button>
+      <Button size="sm" variant="primary" loading={!!d.busy} disabled={!ids.length} onClick={go}>⬇ Xuất {ids.length || ''} HĐ (.zip)</Button></div>
+    {d.busy && <span className="w-full text-brand-700">{d.busy}</span>}{d.modal}</Card>;
 }
 
-/** Tab "Đã ký" của sale: lọc + chọn nhiều + cột chứng từ */
-export function KyList({ data, render }: { data: any[] | null | undefined; render: (rows: any[], sel: Record<string, boolean>, onSel: (id: string, on: boolean) => void) => React.ReactNode }) {
-  const [q, setQ] = useState(''); const [sel, setSel] = useState<Record<string, boolean>>({});
-  const rows = useMemo(() => { const qq = q.trim().toLowerCase(); return (data || []).filter(v => !qq || [v.code, v.buyer_name, v.tax_code, v.mds, v.hds, v.so_hd, v.mas].some(x => String(x || '').toLowerCase().includes(qq))); }, [data, q]);
+/** Tab "Đã ký" của sale: lọc theo trạng thái hồ sơ + chọn nhiều + cột chứng từ */
+export function KyList({ data, render }: { data: any[] | null | undefined; render: (rows: any[], sel: Record<string, boolean>, onSel: (id: string, on: boolean) => void, st: Record<string, DocSt>, reload: () => void) => React.ReactNode }) {
+  const [q, setQ] = useState(''); const [sel, setSel] = useState<Record<string, boolean>>({}); const [hs, setHs] = useState<HsKey | ''>('');
+  const [st, setSt] = useState<Record<string, DocSt>>({}); const [rev, setRev] = useState(0); const reload = () => setRev(x => x + 1);
+  const ids = useMemo(() => (data || []).map(v => v.id), [data]);
+  useEffect(() => { let on = true; loadDocStates(ids).then(m => on && setSt(m)).catch(() => null); return () => { on = false; }; }, [ids.join(), rev]);
+  const base = useMemo(() => { const qq = q.trim().toLowerCase(); return (data || []).filter(v => !qq || [v.code, v.buyer_name, v.tax_code, v.mds, v.hds, v.so_hd, v.mas].some(x => String(x || '').toLowerCase().includes(qq))); }, [data, q]);
+  const cnt = useMemo(() => { const c: Record<string, number> = { chua: 0, tai: 0, gui: 0, ky: 0 }; base.forEach(v => { c[hsOf(st[v.id])]++; }); return c; }, [base, st]);
+  const rows = useMemo(() => base.filter(v => !hs || hsOf(st[v.id]) === hs), [base, hs, st]);
   return <>
     <div className="mb-2 flex flex-wrap items-center gap-2"><Input className="max-w-sm" placeholder="🔎 Tìm số HĐ, ID đơn (cả đơn), tên / MST khách…" value={q} onChange={e => setQ(e.target.value)} />
       <span className="text-xs text-ink-500">Gõ ID đơn → “Chọn tất cả đang lọc” để xuất chứng từ cả đơn.</span></div>
-    <DocsBar rows={rows} sel={sel} setSel={setSel} />
-    {render(rows, sel, (id, on) => setSel(x => ({ ...x, [id]: on })))}
+    <div className="mb-2 flex flex-wrap gap-1.5 text-xs">
+      <button onClick={() => setHs('')} className={cx('rounded-full border px-3 py-1 font-semibold', !hs ? 'border-ink-900 bg-ink-900 text-white' : 'border-ink-200 bg-white text-ink-700')}>Tất cả {base.length}</button>
+      {(Object.keys(HS) as HsKey[]).map(k => <button key={k} onClick={() => setHs(k)} className={cx('rounded-full border px-3 py-1 font-semibold', hs === k ? 'ring-2 ring-brand-400' : '', HS[k][2])}>{HS[k][1]} {HS[k][0]} · {cnt[k]}</button>)}</div>
+    <DocsBar rows={rows} sel={sel} setSel={setSel} onChanged={reload} />
+    {render(rows, sel, (id, on) => setSel(x => ({ ...x, [id]: on })), st, reload)}
   </>;
 }

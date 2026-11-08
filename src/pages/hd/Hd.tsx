@@ -21,6 +21,7 @@ import { Chips, Modal } from '../../components/ui';
 import { MisaRun, MisaTag } from '../out/MisaRun';
 import { exportMisaDoiChieu, misaCall, misaCfgOf, misaOn } from '../../lib/misa';
 import { DocBtns, KyList } from './HdDocs';
+import { MstChip } from '../../components/MstCheck';
 
 // ---------------- dùng chung ----------------
 const bien = (t: any) => (Number(t.gia_khach) > 0 && Number(t.dg_nhap) > 0 ? Number(t.gia_khach) / Number(t.dg_nhap) - 1 : null);
@@ -47,14 +48,20 @@ function InvRows({ rows, loading, onOpen, empty, action, sale = false, sel, onSe
   if (loading && !rows.length) return <Loading />;
   if (!rows.length) return empty ? <div className="px-4 py-6 text-center text-sm text-ink-400">{empty}</div> : null;
   return <div className="divide-y divide-ink-100">{rows.map(v => { const [who, what] = nextStep(v); const tong = Number(v.tien_hang || 0) + Number(v.tien_thue || 0);
-    return <div key={v.id} className={cx('flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 hover:bg-ink-50', sel?.[v.id] && 'bg-brand-50/60')} onClick={() => onOpen(v.id)}>
+    return <div key={v.id} className={cx('flex cursor-pointer flex-wrap items-center gap-x-5 gap-y-1.5 px-4 py-3 hover:bg-ink-50', sel?.[v.id] && 'bg-brand-50/60')} onClick={() => onOpen(v.id)}>
       {onSel && <input type="checkbox" className="h-5 w-5" checked={!!sel?.[v.id]} onClick={e => e.stopPropagation()} onChange={e => onSel(v.id, e.target.checked)} />}
-      <div className="w-28 shrink-0"><div className="text-sm font-semibold text-ink-900">{v.code}{v.version > 1 && <span className="ml-1 text-[11px] font-normal text-ink-500">v{v.version}</span>}</div>
+      <div className="w-28 shrink-0"><div className="text-[15px] font-bold text-ink-900">{v.code}{v.version > 1 && <span className="ml-1 text-[11px] font-normal text-ink-500">v{v.version}</span>}</div>
         <div className="text-[11px] text-ink-400">{fmtDateTime(v.status_at)}</div></div>
-      <div className="min-w-[180px] flex-1"><div className="line-clamp-1 text-sm text-ink-800">{v.buyer_name || '—'}</div>
-        <div className="text-[11px] text-ink-500">{v.mds || ''}{v.tax_code ? ' · MST ' + v.tax_code : ''}{(!sale || a.isAdmin || a.seesTeam) && v.sale_id ? <> · Sale <span className="font-medium text-ink-700">{a.personName(v.sale_id) || '—'}</span></> : ''}</div>
-        {v.mas && <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">{v.hds && <span className="rounded bg-ink-900 px-1.5 py-px font-semibold text-white">HĐ {v.hds}</span>}{String(v.mas).split(', ').slice(0, 6).map((m: string) => <span key={m} className="rounded bg-brand-50 px-1.5 py-px font-mono text-brand-800">{m}</span>)}{String(v.mas).split(', ').length > 6 && <span className="text-ink-400">+{String(v.mas).split(', ').length - 6} mã</span>}</div>}</div>
-      <div className="w-28 text-right text-sm font-semibold tabular-nums">{money(tong)}{v.bien_max != null && Number(v.bien_max) > BIEN_DUYET && <div className="text-[11px] font-semibold text-amber-700">biên {pctTxt(Number(v.bien_max))}</div>}</div>
+      {/* Bản 36: tên đơn vị to hơn; MST nổi bật (⧉ copy · 🔍 lấy thông tin); ID đơn + sale thành nhãn; mã hàng rõ hơn */}
+      <div className="min-w-[220px] flex-1">
+        <div className="line-clamp-1 text-[15px] font-semibold leading-snug text-ink-900">{v.buyer_name || '—'}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+          {v.tax_code && <MstChip mst={v.tax_code} />}
+          {v.mds && String(v.mds).split(/,\s*/).slice(0, 4).map((md: string) => <span key={md} className="rounded-md bg-ink-100 px-1.5 py-0.5 font-semibold text-ink-700">{md}</span>)}
+          {v.mds && String(v.mds).split(/,\s*/).length > 4 && <span className="text-ink-400">+{String(v.mds).split(/,\s*/).length - 4} đơn</span>}
+          {(!sale || a.isAdmin || a.seesTeam) && v.sale_id ? <span className="text-ink-500">Sale <b className="font-semibold text-ink-800">{a.personName(v.sale_id) || '—'}</b></span> : null}</div>
+        {v.mas && <div className="mt-1 flex flex-wrap items-center gap-1 text-[11.5px]">{v.hds && <span className="rounded-md bg-ink-900 px-1.5 py-0.5 font-semibold text-white">HĐ {v.hds}</span>}{String(v.mas).split(', ').slice(0, 6).map((m: string) => <span key={m} className="rounded-md bg-brand-50 px-1.5 py-0.5 font-mono text-brand-800">{m}</span>)}{String(v.mas).split(', ').length > 6 && <span className="text-ink-400">+{String(v.mas).split(', ').length - 6} mã</span>}</div>}</div>
+      <div className="w-32 text-right text-[15px] font-bold tabular-nums text-ink-900">{money(tong)}{v.bien_max != null && Number(v.bien_max) > BIEN_DUYET && <div className="text-[11px] font-semibold text-amber-700">biên {pctTxt(Number(v.bien_max))}</div>}</div>
       <div className="w-48">{v.misa_at && v.status === 'cho_nhap' && !(v.misa && v.misa.st !== 'da_xoa') ? <Badge color="amber">Đã export — chờ PDF nháp</Badge> : <SBadge s={v.status} />}<MisaTag v={v} />
         {v.status === 'da_ky' && v.ma_tra_cuu && <div className="mt-1"><TraCuu ma={v.ma_tra_cuu} /></div>}
         {who && <div className="mt-0.5 text-[11px] text-ink-500"><b className={who === 'Sale' ? 'text-brand-700' : 'text-amber-700'}>{who}</b>: {what}</div>}</div>
@@ -117,9 +124,9 @@ function SaleList({ statuses, sale, hd, rev, onOpen, empty, hint }: { statuses: 
 /** Bản 35: Đã ký — bấm mã tra cứu xem HĐ trên MISA; cột chứng từ xuất nhanh ĐĐH / BBGN / HĐ mua bán / HĐ nguyên tắc (1 HĐ, cả đơn, nhiều HĐ) */
 function KyTab({ sale, hd, rev, onOpen }: { sale: string; hd: string; rev: number; onOpen: (id: string) => void }) {
   const { data, loading } = useInv(['da_ky'], { sale, hd, dir: 'desc' }, [rev]);
-  return <><p className="mb-3 text-sm text-ink-600">Bấm mã tra cứu (ô xanh) để xem / tải HĐ đã ký trên MISA. Cột bên phải: <b>xuất nhanh chứng từ đi kèm</b> — Đơn đặt hàng, Biên bản giao nhận, HĐ mua bán (khách chưa ký HĐ nguyên tắc) hoặc HĐ nguyên tắc. Ngày chứng từ = ngày HĐ đã ký.</p>
-    <KyList data={data} render={(rows, sel, onSel) => <Card bodyClass="p-0"><InvRows rows={rows} loading={loading} onOpen={onOpen} empty="Chưa có HĐ đã ký" sale sel={sel} onSel={onSel}
-      action={v => <DocBtns v={v} compact />} /></Card>} /></>;
+  return <><p className="mb-3 text-sm text-ink-600">Bấm mã tra cứu (ô xanh) để xem / tải HĐ đã ký trên MISA. Cột bên phải: 🧾 Đơn đặt hàng · 🚚 Biên bản giao nhận · 📜 HĐ mua bán / 🤝 HĐ nguyên tắc · 🗂️ Cả bộ — ô có ✓ là đã tải. Dưới biểu tượng là <b>trạng thái hồ sơ</b>; bấm ⋯ để đánh dấu đã gửi khách hoặc tải bản đã ký lên. Ngày chứng từ = ngày HĐ đã ký.</p>
+    <KyList data={data} render={(rows, sel, onSel, st, reload) => <Card bodyClass="p-0"><InvRows rows={rows} loading={loading} onOpen={onOpen} empty="Chưa có HĐ đã ký" sale sel={sel} onSel={onSel}
+      action={v => <DocBtns v={v} st={st[v.id] || null} onChanged={reload} compact />} /></Card>} /></>;
 }
 
 /** Bản 32: dòng thiếu ID đơn / username (hoặc username trùng số đơn = file xe lệch cột) → gom nhóm riêng để điền */

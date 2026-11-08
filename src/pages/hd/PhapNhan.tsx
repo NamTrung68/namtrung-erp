@@ -8,7 +8,7 @@ import { readXlsx, writeXlsx } from '../../lib/xlsx';
 import { parseBuyers } from '../../lib/xuathd';
 import { downloadMau } from '../../lib/mau';
 import { today } from '../../lib/format';
-import { MstCheck } from '../../components/MstCheck';
+import { CopyBtn, MstCheck, MstChip } from '../../components/MstCheck';
 
 /** MST hợp lệ: 10 số, 10-3 số, hoặc CCCD 12 số (giống kiểm tra trước khi gửi MISA) */
 export const mstOk = (s: string) => /^(\d{10}|\d{10}-\d{3}|\d{12})$/.test(String(s || '').trim());
@@ -35,7 +35,7 @@ export default function PhapNhan() {
   const [rev, setRev] = useState(0); const reload = () => setRev(x => x + 1);
   useEffect(() => { const t = setTimeout(() => setQq(q), 300); return () => clearTimeout(t); }, [q]);
   const { data, loading, error } = useLoad(() => db.rpc<any>('out_buyers_page', { p: { q: qq, flag, sale, limit: 2000 } }), [qq, flag, sale, rev]);
-  const rows: Row[] = data?.rows || []; const counts = data?.counts || {};
+  const rows: Row[] = data?.rows || []; const counts = data?.counts || {}; const acc: boolean = data ? !!data.acc : a.isAdmin || a.has('ke_toan');
   const [edit, setEdit] = useState<Record<string, Draft>>({}); const [adding, setAdding] = useState<Draft | null>(null); const [imp, setImp] = useState(false);
   const groups = useMemo(() => { const m = new Map<string, Row[]>(); rows.forEach(r => { const k = r.customer_id || 'u:' + lc(r.username); m.set(k, [...(m.get(k) || []), r]); }); return Array.from(m.values()); }, [rows]);
   const dirty = (r: Row) => { const d = edit[r.id]; if (!d) return false; const o = toDraft(r); return (Object.keys(o) as (keyof Draft)[]).some(k => (d[k] || '').trim() !== (o[k] || '').trim()); };
@@ -64,8 +64,9 @@ export default function PhapNhan() {
   const sales = useMemo(() => Array.from(new Set(rows.map(r => r.sale_id).filter(Boolean))) as string[], [rows]);
   const inp = 'h-8 w-full rounded-lg border bg-white px-2 text-xs focus:border-brand-500 focus:outline-none';
   return <Layout title="Pháp nhân nhận HĐ" actions={<div className="flex flex-wrap gap-2">
-    <Button onClick={() => setImp(true)}>⇪ Nạp Excel</Button><Button loading={busy} onClick={exportX}>⬇ Xuất Excel</Button>
+    {acc && <Button onClick={() => setImp(true)}>⇪ Nạp Excel</Button>}<Button loading={busy} onClick={exportX}>⬇ Xuất Excel</Button>
     <Button variant="primary" onClick={() => setAdding({ ...EMPTY })}>+ Thêm pháp nhân</Button></div>}>
+    {!acc && <p className="mb-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-900">Bạn đang xem <b>pháp nhân của khách mình phụ trách</b>. Sửa tên / MST / địa chỉ / email / người đại diện cho chuẩn rồi bấm Lưu — bấm <b>🔍</b> cạnh MST để lấy thông tin đăng ký thuế. Mã HĐ nguyên tắc do kế toán điền.</p>}
     <p className="mb-3 text-sm text-ink-600">Mỗi <b>username</b> khách có thể có nhiều pháp nhân nhận HĐ; <b>★</b> là pháp nhân tự điền khi sale lập phiếu. Sửa thẳng trên ô rồi bấm <b>Lưu</b>. Đổi username = chuyển pháp nhân sang khách khác (ERP tự gắn theo username). Muốn sửa hàng loạt: <b>Xuất Excel</b> → sửa → <b>Nạp Excel</b> (cùng username + MST thì cập nhật, không tạo trùng).</p>
     <div className="mb-3 flex flex-wrap gap-2">{FLAGS.map(([k, l, c]) => { const n = k ? counts[k] : counts.tat_ca;
       return <button key={k} onClick={() => setFlag(k)} className={cx('rounded-xl border px-3 py-1.5 text-left text-xs', flag === k ? 'border-brand-500 bg-brand-50' : 'border-ink-200 bg-white hover:border-brand-300')}>
@@ -91,7 +92,8 @@ export default function PhapNhan() {
             <button title={r.is_default ? 'Pháp nhân mặc định' : 'Đặt làm mặc định'} disabled={!r.customer_id || r.is_default || busy} onClick={() => setDefault(r)}
               className={cx('self-center text-lg leading-none', r.is_default ? 'text-amber-500' : 'text-ink-300 hover:text-amber-400 disabled:hover:text-ink-300')}>{r.is_default ? '★' : '☆'}</button>
             <input className={cx(inp, !val(r, 'name').trim() ? 'border-red-300' : 'border-ink-200', 'font-semibold')} value={val(r, 'name')} onChange={e => setE(r, 'name', e.target.value)} title="Tên đơn vị" />
-            <input className={cx(inp, mstOk(m) ? 'border-ink-200' : 'border-red-300 bg-red-50')} value={m} onChange={e => setE(r, 'tax_code', e.target.value.replace(/\s/g, ''))} title="MST / CCCD" />
+            <div className="flex items-center gap-0.5"><input className={cx(inp, 'font-mono font-semibold', mstOk(m) ? 'border-ink-200' : 'border-red-300 bg-red-50')} value={m} onChange={e => setE(r, 'tax_code', e.target.value.replace(/\s/g, ''))} title="MST / CCCD" />
+              {mstOk(m) && <><CopyBtn text={m} title="Copy MST" /><MstChip btnOnly mst={m} onApply={v => setEdit(x => ({ ...x, [r.id]: { ...(x[r.id] || toDraft(r)), name: v.name, address: v.address } }))} /></>}</div>
             <input className={cx(inp, val(r, 'address').trim() ? 'border-ink-200' : 'border-amber-300')} value={val(r, 'address')} onChange={e => setE(r, 'address', e.target.value)} placeholder="Địa chỉ" />
             <input className={cx(inp, emailOk(val(r, 'email')) ? 'border-ink-200' : 'border-red-300')} value={val(r, 'email')} onChange={e => setE(r, 'email', e.target.value)} placeholder="Email nhận HĐ" />
             <input className={cx(inp, 'border-ink-200')} value={val(r, 'username')} onChange={e => setE(r, 'username', e.target.value)} placeholder="Username" title="Đổi username = chuyển sang khách khác" />
@@ -101,8 +103,8 @@ export default function PhapNhan() {
             <div className="grid gap-1.5 sm:grid-cols-2 lg:col-start-2 lg:col-end-8 lg:grid-cols-[1.3fr_1fr_1.7fr_130px_2fr]">
               <input className={cx(inp, 'border-ink-200')} value={val(r, 'dai_dien')} onChange={e => setE(r, 'dai_dien', e.target.value)} placeholder="Người đại diện (VD: Ông Trương Văn Dương)" title="Người đại diện — in trên hợp đồng / biên bản" />
               <input className={cx(inp, 'border-ink-200')} value={val(r, 'chuc_vu')} onChange={e => setE(r, 'chuc_vu', e.target.value)} placeholder="Chức vụ" title="Chức vụ người đại diện" />
-              <input className={cx(inp, 'border-ink-200', val(r, 'ma_hdnt') && 'border-emerald-300 bg-emerald-50/50 font-semibold')} value={val(r, 'ma_hdnt')} onChange={e => setE(r, 'ma_hdnt', e.target.value)} placeholder="Mã HĐ nguyên tắc (nếu đã ký)" title="Có mã HĐNT → bộ chứng từ dùng HĐNT, không cần HĐ mua bán từng HĐ" />
-              <input type="date" className={cx(inp, 'border-ink-200')} value={val(r, 'ngay_hdnt')} onChange={e => setE(r, 'ngay_hdnt', e.target.value)} title="Ngày ký HĐ nguyên tắc (trống: đọc từ mã dạng 28/08/2026/...)" />
+              <input disabled={!acc} className={cx(inp, 'border-ink-200 disabled:bg-ink-50 disabled:text-ink-600', val(r, 'ma_hdnt') && 'border-emerald-300 bg-emerald-50/50 font-semibold')} value={val(r, 'ma_hdnt')} onChange={e => setE(r, 'ma_hdnt', e.target.value)} placeholder={acc ? 'Mã HĐ nguyên tắc (nếu đã ký)' : 'Chưa có HĐ nguyên tắc'} title={acc ? 'Có mã HĐNT → bộ chứng từ dùng HĐNT, không cần HĐ mua bán từng HĐ' : 'Mã HĐ nguyên tắc do kế toán điền'} />
+              <input disabled={!acc} type="date" className={cx(inp, 'border-ink-200 disabled:bg-ink-50')} value={val(r, 'ngay_hdnt')} onChange={e => setE(r, 'ngay_hdnt', e.target.value)} title="Ngày ký HĐ nguyên tắc (trống: đọc từ mã dạng 28/08/2026/...)" />
               <input className={cx(inp, 'border-ink-200')} value={val(r, 'dia_chi_giao')} onChange={e => setE(r, 'dia_chi_giao', e.target.value)} placeholder="Địa chỉ giao hàng (trống = địa chỉ ĐKKD)" /></div>
             <div className="flex flex-wrap gap-1 text-[11px] lg:col-start-2 lg:col-end-8">
               {r.trung_mst && <Badge color="red">Cùng MST {r.tax_code} có tên khác — chuẩn hóa</Badge>}
@@ -125,8 +127,8 @@ export default function PhapNhan() {
         <MstCheck className="sm:col-span-2" mst={adding.tax_code} name={adding.name} address={adding.address} onApply={v => setAdding(x => x && ({ ...x, name: v.name, address: v.address }))} />
         <label className="text-xs text-ink-600">Người đại diện<Input value={adding.dai_dien} onChange={e => setAdding({ ...adding, dai_dien: e.target.value })} placeholder="VD: Ông Trương Văn Dương" /></label>
         <label className="text-xs text-ink-600">Chức vụ<Input value={adding.chuc_vu} onChange={e => setAdding({ ...adding, chuc_vu: e.target.value })} placeholder="VD: Giám đốc / Chủ hộ kinh doanh" /></label>
-        <label className="text-xs text-ink-600">Mã HĐ nguyên tắc (nếu đã ký)<Input value={adding.ma_hdnt} onChange={e => setAdding({ ...adding, ma_hdnt: e.target.value })} placeholder="VD: 28/08/2026/HĐNTHH/NT/JINVPP" /></label>
-        <label className="text-xs text-ink-600">Ngày ký HĐNT<Input type="date" value={adding.ngay_hdnt} onChange={e => setAdding({ ...adding, ngay_hdnt: e.target.value })} /></label>
+        <label className="text-xs text-ink-600">Mã HĐ nguyên tắc (nếu đã ký{acc ? '' : ' — kế toán điền'})<Input disabled={!acc} value={adding.ma_hdnt} onChange={e => setAdding({ ...adding, ma_hdnt: e.target.value })} placeholder="VD: 28/08/2026/HĐNTHH/NT/JINVPP" /></label>
+        <label className="text-xs text-ink-600">Ngày ký HĐNT<Input disabled={!acc} type="date" value={adding.ngay_hdnt} onChange={e => setAdding({ ...adding, ngay_hdnt: e.target.value })} /></label>
         <label className="text-xs text-ink-600 sm:col-span-2">Địa chỉ giao hàng (trống = địa chỉ trên)<Input value={adding.dia_chi_giao} onChange={e => setAdding({ ...adding, dia_chi_giao: e.target.value })} /></label></div>
       <p className="mt-2 text-xs text-ink-500">Username khớp khách ERP thì gắn ngay; chưa có khách thì ERP tự gắn khi khách có username đó. Khách chưa có ★ → pháp nhân này thành mặc định.</p></Modal>}
     {imp && <ImportBuyers current={rows} onClose={() => setImp(false)} onDone={() => { setImp(false); reload(); }} />}

@@ -10,10 +10,10 @@ grant execute on all functions in schema pg_temp to authenticated;
 
 update public.customers set sys_username = 'pn_khach1' where id = (select id from public.customers where owner_id = (select id from public.profiles where email='a@nt.vn') order by created_at limit 1);
 
--- Sale không sửa được; kế toán thêm 2 pháp nhân cho 1 username → pháp nhân đầu là ★
-select pg_temp.as_user('a@nt.vn'); set role authenticated;
-select pg_temp.expect_error($$select public.out_buyer_save(null, '{"username":"pn_khach1","name":"X","tax_code":"0101234567"}')$$, 'Chỉ Kế toán');
-select pg_temp.expect_error($$select public.out_buyers_page('{}')$$, 'Chỉ Kế toán');
+-- Bản 36: sale khác (không phụ trách khách) không sửa / không thấy; kế toán thêm 2 pháp nhân cho 1 username → pháp nhân đầu là ★
+select pg_temp.as_user('b@nt.vn'); set role authenticated;
+select pg_temp.expect_error($$select public.out_buyer_save(null, '{"username":"pn_khach1","name":"X","tax_code":"0101234567"}')$$, 'không phải khách bạn phụ trách');
+select pg_temp.expect_error($$select case when (public.out_buyers_page('{}')->>'acc')::boolean then null else 1/0 end$$, 'division by zero');
 reset role; select pg_temp.as_user('kt@nt.vn'); set role authenticated;
 select public.out_buyer_save(null, '{"username":"pn_khach1","name":"CÔNG TY A","tax_code":"0101234567","address":"Hà Nội","email":"a@a.vn"}');
 select public.out_buyer_save(null, '{"username":"pn_khach1","name":"HỘ KINH DOANH B","tax_code":"001191048160","address":"HN"}');

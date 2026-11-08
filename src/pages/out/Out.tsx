@@ -1,6 +1,6 @@
 // Xuất HĐ đầu ra: kế toán nạp sổ HĐ chính thức (mã hàng MISA) → sale lập phiếu (giá + đơn vị nhận HĐ) → kế toán xuất nháp → sale xác nhận ký → kế toán ký
 import React, { useMemo, useState } from 'react';
-import { MstCheck } from '../../components/MstCheck';
+import { MstCheck, MstChip } from '../../components/MstCheck';
 import { DocBtns } from '../hd/HdDocs';
 import { mstLevel, PROVIDER, type MstResult } from '../../lib/mst';
 import { Layout } from '../../components/Layout';
@@ -508,7 +508,7 @@ function Invoices({ acc, openId }: { acc: boolean; openId?: string | null }) {
         <MisaTag v={v} />
         <div className="mt-1 line-clamp-2 text-sm font-medium text-ink-900">{v.buyer_name || v.buyer_info}</div>
         {v.mds && <div className="text-xs font-semibold text-ink-700">ID đơn: {v.mds}{v.vat10 && <span className="ml-2 rounded bg-amber-100 px-1 text-[11px] text-amber-800">có VAT 10%</span>}</div>}
-        <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-ink-600">{v.tax_code && <span>MST {v.tax_code}</span>}<span>{v.so_dong} dòng</span><span>Tổng <b><Money v={Number(v.tien_hang) + Number(v.tien_thue)} /></b></span>
+        <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-ink-600">{v.tax_code && <MstChip mst={v.tax_code} size="sm" />}<span>{v.so_dong} dòng</span><span>Tổng <b><Money v={Number(v.tien_hang) + Number(v.tien_thue)} /></b></span>
           {acc && <span>{a.personName(v.sale_id)}</span>}{v.so_hd && <span>HĐ {v.so_hd}</span>}{v.sua_sau_nhap && <span className="font-semibold text-red-600">sửa sau nháp</span>}</div>
         <div className="mt-1.5 border-t border-ink-100 pt-1.5"><NextStep v={v} /></div></button>)}
       <Pager p={pg} total={total} /></div>}
@@ -518,7 +518,7 @@ function Invoices({ acc, openId }: { acc: boolean; openId?: string | null }) {
           {acc && <Td><input type="checkbox" checked={!!pick[v.id]} onClick={e => e.stopPropagation()} onChange={e => setPick(p => { const x = { ...p }; if (e.target.checked) x[v.id] = v; else delete x[v.id]; return x; })} /></Td>}
           <Td className="whitespace-nowrap font-semibold">{v.code}{flags(v)}</Td>
           <Td className="max-w-[130px] text-xs font-semibold">{v.mds || <span className="font-normal text-ink-300">—</span>}{v.vat10 && <div className="text-[10px] font-semibold text-amber-700">có VAT 10%</div>}</Td>
-          <Td className="whitespace-nowrap text-xs">{a.personName(v.sale_id)}</Td><Td className="max-w-[260px] text-xs"><div className="line-clamp-2">{v.buyer_name || v.buyer_info}</div></Td><Td className="text-xs">{v.tax_code}</Td>
+          <Td className="whitespace-nowrap text-xs">{a.personName(v.sale_id)}</Td><Td className="max-w-[260px] text-xs"><div className="line-clamp-2">{v.buyer_name || v.buyer_info}</div></Td><Td className="whitespace-nowrap">{v.tax_code ? <MstChip mst={v.tax_code} size="sm" /> : '—'}</Td>
           <Td className="text-right">{v.so_dong}</Td><Td className="text-right"><Money v={v.tien_hang} /></Td><Td className="text-right text-xs"><Money v={v.tien_thue} /></Td>
           <Td><OBadge s={v.status} />{(v.nhap_v || v.ky_v) && <div className="mt-1"><FileBadge v={v} /></div>}<MisaTag v={v} /></Td>
           <Td className="min-w-[180px]"><NextStep v={v} /><div className="text-[10px] text-ink-400">từ {fmtDateTime(v.status_at)}</div></Td>
@@ -589,7 +589,7 @@ export function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc
     {s === 'da_ky' && !v.ma_tra_cuu && !fl.some(f => f.kind === 'ky') && <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký HĐ số <b>{v.so_hd}</b> ngày {fmtDate(v.ngay_hd)} — kế toán đã gửi mail. Sale báo khách kiểm tra email.</div>}
     {s === 'da_nhap' && !fl.length && <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">Phiếu chưa có PDF nháp từ MISA (phiếu sổ cũ). Kế toán tải PDF nháp lên để sale gửi khách.</div>}
     <div className="grid gap-x-6 sm:grid-cols-2 text-sm">
-      <div><div className="text-xs font-bold uppercase text-ink-400">Đơn vị mua</div><div className="font-semibold">{v.buyer_name}</div><div>MST: {v.tax_code || '—'}{v.mst_check && <MstTag c={v.mst_check} />}</div><div>Địa chỉ: {v.address || '—'}</div><div>Email: {v.email || '—'}</div><div>Thanh toán: {v.payment}</div>
+      <div><div className="text-xs font-bold uppercase text-ink-400">Đơn vị mua</div><div className="font-semibold">{v.buyer_name}</div><div className="mt-1 flex flex-wrap items-center gap-1">{v.tax_code ? <MstChip mst={v.tax_code} /> : 'MST: —'}{v.mst_check && <MstTag c={v.mst_check} />}</div><div>Địa chỉ: {v.address || '—'}</div><div>Email: {v.email || '—'}</div><div>Thanh toán: {v.payment}</div>
         {v.buyer_info && <pre className="mt-1 whitespace-pre-wrap rounded bg-ink-50 p-2 text-xs">{v.buyer_info}</pre>}</div>
       <div><div className="text-xs font-bold uppercase text-ink-400">Phiếu</div><div>Sale: {a.personName(v.sale_id)}</div><div>Lập lúc {fmtDateTime(v.created_at)}</div>{v.note && <div>Ghi chú: {v.note}</div>}
         <div className="mt-1">Tiền hàng <b><Money v={t.tt} /></b> · Thuế <b><Money v={t.thue} /></b> · Tổng <b><Money v={t.tt + t.thue} /></b></div></div></div>

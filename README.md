@@ -154,3 +154,15 @@ Kiểm thử: `tests/misa.test.ts`, `tests/misa-guard.test.ts`, `supabase/tests/
 - Mẫu Word: `public/mau-hd/{ddh,bbgn,hdmb,hdnt}.docx` (mẫu của anh, đã gắn chỗ điền `{{...}}`). Đổi điều khoản: sửa file mẫu, giữ nguyên các `{{...}}`.
 
 Hàm mới: `out_docs_data`, `out_buyer_doc_info`, `out_invoice_mst`; sửa `out_items_import`, `out_item_relink`, `out_buyer_save`, `out_buyers_page`, `out_buyers_import_v2`. Kiểm thử: `tests/hd35.test.ts`, `supabase/tests/99o_v35.sql`.
+
+## Bản 36 — Tra MST qua Xinvoice, MST nổi bật, biểu tượng + vết hồ sơ chứng từ, Pháp nhân cho Sale/CSKH (08/11/2026)
+
+- **Tra MST: Xinvoice** (dữ liệu Tổng cục Thuế, bản miễn phí, không cần khóa) gọi thẳng từ trình duyệt; VietQR chỉ còn là dự phòng khi Xinvoice mất kết nối.
+  Chỉ “NNT đang hoạt động” (kể cả “… đã được cấp GCN ĐKT”) là xanh; ngừng / tạm ngừng / chấm dứt / đóng MST / không hoạt động tại địa chỉ → **đỏ**, mọi tình trạng khác → **vàng**.
+  Giới hạn **10 lần / 30 giây cho cả văn phòng**: ERP nhớ kết quả 7 ngày dùng chung (`mst_cache_get` / `mst_cache_put`), tự giãn nhịp, vượt giới hạn thì báo “đợi ~30 giây rồi Tra lại”.
+- **MST nổi bật** ở mọi danh sách Kế toán – Hóa đơn (Hóa đơn của tôi, Bàn làm việc kế toán, chi tiết phiếu, Tạo nháp MISA): số to đậm, **⧉ copy**, **🔍 lấy thông tin** (tên, địa chỉ, tình trạng, chấm màu cảnh báo, copy tên / địa chỉ).
+- **Chứng từ dạng biểu tượng**: 🧾 ĐĐH · 🚚 BBGN · 📜 HĐMB / 🤝 HĐNT · 🗂️ Cả bộ; ô đã tải có ✓ (rê chuột xem số lần, lúc nào).
+- **Vết hồ sơ** (`out_doc_state`, `out_doc_mark`): ○ Chưa xử lý → ⬇ Đã tải (tự ghi) → ✉ Đã gửi khách → ✓ Đủ hồ sơ (tải bản ký / scan lên Google Drive `Ke toan/Chung tu da ky/yyyy-mm`, lưu link 📎). Tab Đã ký lọc theo trạng thái; chọn nhiều → “✉ Đã gửi khách”. Mỗi lần đổi trạng thái ghi nhật ký `out_events`.
+- **Pháp nhân nhận HĐ** mở cho Sale / CSKH / TN / TP: máy chủ chỉ trả pháp nhân của **khách mình phụ trách** (chủ khách trong phạm vi; CSKH theo sale được hỗ trợ). Được sửa / thêm / ★ / xóa pháp nhân chưa dùng; **mã + ngày HĐNT và Nạp Excel chỉ kế toán / admin / BGĐ**. Nút 🔍 cạnh MST để tra và điền nhanh.
+
+Kiểm thử: `tests/hd36.test.ts`, `supabase/tests/99p_v36.sql`.

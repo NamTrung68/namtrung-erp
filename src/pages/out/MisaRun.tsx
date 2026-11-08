@@ -1,5 +1,6 @@
 // Bản 31 — Tạo HĐ nháp MISA bằng API: cửa sổ 2 bước (Kiểm tra → Tạo), khung MISA trong chi tiết phiếu, nhãn tình trạng
 import React, { useMemo, useState } from 'react';
+import { MstChip } from '../../components/MstCheck';
 import { Badge, Button, cx, Empty, Loading, Modal, Table, Td, ask, toast, useAction, useLoad } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { useApp } from '../../state';
@@ -49,7 +50,7 @@ export function MisaRun({ ids, recreate = false, onClose, onDone }: { ids: strin
           <tr key={e.invoice_id} className={cx('align-top', !e.ok && 'bg-red-50/50')}>
             <Td><input type="checkbox" disabled={!e.ok} checked={e.ok && !off[e.invoice_id]} onChange={x => setOff(o => ({ ...o, [e.invoice_id]: !x.target.checked }))} /></Td>
             <Td className="whitespace-nowrap text-sm font-semibold">{e.code}<div className="text-[11px] font-normal text-ink-500">{a.personName(e.sale_id)}</div></Td>
-            <Td className="max-w-[240px] text-xs"><div className="line-clamp-2 font-medium">{e.buyer_name}</div><div className="text-ink-500">MST {e.tax_code || '—'}</div></Td>
+            <Td className="max-w-[240px] text-xs"><div className="line-clamp-2 font-medium">{e.buyer_name}</div><div className="mt-0.5">{e.tax_code ? <MstChip mst={e.tax_code} size="sm" /> : 'MST —'}</div></Td>
             <Td className="text-right">{e.so_dong}</Td><Td className="text-right tabular-nums">{money(e.tien_hang)}</Td><Td className="text-right tabular-nums">{money(e.tien_thue)}</Td><Td className="text-right font-semibold tabular-nums">{money(e.tong)}</Td>
             <Td className="min-w-[260px] text-xs">{e.ok ? <span className="font-semibold text-emerald-700">✓ Đạt</span> : <div className="space-y-0.5 text-red-700">{e.errors.map((x: string) => <div key={x}>✗ {x}</div>)}</div>}
               {(e.warnings || []).map((x: string) => <div key={x} className="text-amber-700">⚠ {x}</div>)}

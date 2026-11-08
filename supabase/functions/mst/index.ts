@@ -5,7 +5,7 @@
 //
 // Bí mật tùy chọn (Supabase → Edge Functions → Secrets):
 //   VietQR   : không cần. Lưu ý VietQR báo ngừng API tra MST từ 01/03/2027.
-//   Xinvoice : XINVOICE_CLIENT_ID, XINVOICE_API_KEY  (có trạng thái hoạt động của MST)
+//   Xinvoice : bản miễn phí không cần khóa (10 lần / 30 giây); gói trả phí: XINVOICE_CLIENT_ID, XINVOICE_API_KEY
 //   MISA     : MISA_MST_APPID, MISA_MST_USERNAME, MISA_MST_PASSWORD (+ dùng MISA_TAX_CODE sẵn có)
 //              MISA_MST_TOKEN_URL / MISA_MST_LOOKUP_URL nếu MISA cung cấp địa chỉ khác mặc định
 // Triển khai: Dashboard → Edge Functions → Deploy new function → tên "mst", dán file này; TẮT "Verify JWT" (hàm tự kiểm phiên đăng nhập).
@@ -20,7 +20,7 @@ const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { sta
 
 export interface MstResult { found: boolean; mst: string; name: string; address: string; status: string; active: boolean | null; provider: string; warnings: string[]; at: string; cached?: boolean }
 type Provider = 'misa' | 'xinvoice' | 'vietqr';
-const has = (p: Provider) => p === 'vietqr' || (p === 'xinvoice' ? !!(env('XINVOICE_CLIENT_ID') && env('XINVOICE_API_KEY')) : !!(env('MISA_MST_APPID') && env('MISA_MST_USERNAME') && env('MISA_MST_PASSWORD') && env('MISA_TAX_CODE')));
+const has = (p: Provider) => p === 'vietqr' || p === 'xinvoice' || ( !!(env('MISA_MST_APPID') && env('MISA_MST_USERNAME') && env('MISA_MST_PASSWORD') && env('MISA_TAX_CODE')));
 const order = (): Provider[] => { const want = (env('MST_PROVIDER') || 'misa,xinvoice,vietqr').split(',').map(s => s.trim().toLowerCase()) as Provider[]; return want.filter(p => ['misa', 'xinvoice', 'vietqr'].includes(p) && has(p)); };
 
 function pick(o: any, ...names: string[]): any {
@@ -29,7 +29,7 @@ function pick(o: any, ...names: string[]): any {
   for (const n of names) { const k = keys.find(x => x.toLowerCase() === n.toLowerCase()); if (k !== undefined && o[k] !== null && o[k] !== '') return o[k]; }
   return undefined;
 }
-const activeOf = (st: string): boolean | null => (!st ? null : /đang hoạt động|dang hoat dong|active/i.test(st) && !/ngừng|tạm ngừng|không hoạt động|chấm dứt|đóng mst/i.test(st));
+const activeOf = (st: string): boolean | null => (!st ? null : /^NNT đang hoạt động(\s*\(đã được cấp GCN ĐKT\))?$/i.test(st.trim()) ? true : /ngừng|chấm dứt|đóng MST|không hoạt động/i.test(st) ? false : null);
 const done = (r: Omit<MstResult, 'warnings' | 'at' | 'active'> & { active?: boolean | null }): MstResult => {
   const active = r.active ?? activeOf(r.status); const w: string[] = [];
   if (!r.found) w.push('Không tìm thấy MST trên dữ liệu thuế — kiểm tra lại số');
@@ -56,7 +56,7 @@ async function viaVietqr(mst: string): Promise<MstResult> {
 
 async function viaXinvoice(mst: string): Promise<MstResult> {
   const { status, j } = await getJson('https://api.xinvoice.vn/gdt-api/tax-payer/' + encodeURIComponent(mst),
-    { headers: { Accept: 'application/json', 'client-id': env('XINVOICE_CLIENT_ID'), 'api-key': env('XINVOICE_API_KEY') } });
+    { headers: { Accept: 'application/json', ...(env('XINVOICE_CLIENT_ID') ? { 'client-id': env('XINVOICE_CLIENT_ID'), 'api-key': env('XINVOICE_API_KEY') } : {}) } });
   if (status === 404) return done({ found: false, mst, name: '', address: '', status: '', provider: 'xinvoice' });
   const d = j?.data ?? j;
   if (!d || !pick(d, 'name', 'taxID')) throw new Error('Xinvoice trả HTTP ' + status);
