@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Button, Card, Empty, Field, Input, Loading, Select, Table, Td, Tabs, Textarea, toast, useAction, useLoad, ask } from '../../components/ui';
+import { thumbPath } from '../../lib/image';
 import { Pager, usePager } from '../../components/Pager';
 import { db, fetchAll, storage } from '../../lib/sb';
 import { useApp } from '../../state';
@@ -46,7 +47,7 @@ function Selfies() {
     const list = (exp as any[]) || []; let done = 0;
     for (let i = 0; i < list.length; i += 100) {
       const chunk = list.slice(i, i + 100);
-      await storage.remove('selfies', chunk.map(x => x.selfie_path));
+      await storage.remove('selfies', chunk.flatMap(x => [x.selfie_path, thumbPath(x.selfie_path)]));
       done += await db.rpc('selfies_mark_purged', { p_ids: chunk.map(x => x.id) });
       setProg(`${done}/${list.length}`);
     }

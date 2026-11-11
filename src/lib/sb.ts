@@ -190,8 +190,11 @@ export const db = {
 const encPath = (p: string) => p.split('/').map(encodeURIComponent).join('/');
 export const storage = {
   publicUrl(bucket: string, path: string) { return `${cfg().supabaseUrl}/storage/v1/object/public/${bucket}/${encPath(path)}`; },
-  async upload(bucket: string, path: string, file: Blob, upsert = false) {
-    await raw(`/storage/v1/object/${bucket}/${encPath(path)}`, { method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': String(upsert) }, body: file });
+  /** cacheSeconds: thời gian trình duyệt được giữ file trong bộ nhớ đệm (mặc định của Supabase là 3600) */
+  async upload(bucket: string, path: string, file: Blob, upsert = false, cacheSeconds?: number) {
+    const headers: Record<string, string> = { 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': String(upsert) };
+    if (cacheSeconds) headers['cache-control'] = `max-age=${cacheSeconds}`;
+    await raw(`/storage/v1/object/${bucket}/${encPath(path)}`, { method: 'POST', headers, body: file });
     return path;
   },
   async signedUrl(bucket: string, path: string, expiresIn = 600, download?: string) {

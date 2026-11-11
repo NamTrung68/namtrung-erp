@@ -4,7 +4,7 @@ import { Layout } from '../../components/Layout';
 import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, NumInput, Select, Table, Td, Tabs, Textarea, toast, useAction, useLoad } from '../../components/ui';
 import { db, storage } from '../../lib/sb';
 import { useApp } from '../../state';
-import { compressImage } from '../../lib/image';
+import { compressImage, makeThumb, thumbPath } from '../../lib/image';
 import { addDays, fmtDate, fmtTime, monthStart, monthEnd, today } from '../../lib/format';
 
 const REQ: [string, string][] = [['quen_cham_vao', 'Xác nhận chấm công muộn (quên chấm đến)'], ['quen_cham_ra', 'Xác nhận quên chấm công về'], ['xac_nhan_cong', 'Đơn xác nhận công (quên chấm)'], ['cong_tac', 'Đơn đi công tác / gặp khách'], ['xin_muon_som', 'Xin đi muộn / về sớm']];
@@ -258,7 +258,9 @@ export function Camera({ kind, onClose, onDone }: { kind: 'in' | 'out'; onClose:
   const submit = () => run(async () => {
     if (!shot) throw new Error('Chưa chụp ảnh');
     const path = `${a.me.id}/${today().slice(0, 7)}/${Date.now()}-${kind}.jpg`;
-    await storage.upload('selfies', path, shot);
+    const WEEK = 7 * 86400; // tên file là duy nhất, không bao giờ ghi đè → cho trình duyệt giữ lâu
+    await storage.upload('selfies', path, shot, false, WEEK);
+    try { await storage.upload('selfies', thumbPath(path), await makeThumb(shot), false, WEEK); } catch { /* ảnh nhỏ lỗi không chặn chấm công */ }
     const r = await db.rpc('attendance_check', { p_kind: kind, p_selfie_path: path, p_note: note || null });
     toast.ok(`Đã chấm ${kind === 'in' ? 'vào' : 'ra'} lúc ${r.at}${r.status === 'flagged' ? ' (ngoài mạng công ty — chờ quản lý xác nhận)' : ''}`);
     onDone();
@@ -359,18 +361,36 @@ function TeamAttendance() {
   );
 }
 
-// Ảnh selfie thu nhỏ, bấm để xem to
+// Ảnh selfie thu nhỏ, bấm để xem to.
+// Tiết kiệm egress: chỉ tải bản thu nhỏ (*.t.jpg ~5 KB) thay vì ảnh gốc ~100 KB; link ký giữ 7 ngày trong localStorage
+// để trình duyệt dùng lại ảnh đã tải (link ký mới mỗi lần = trình duyệt phải tải lại từ đầu).
+// Ảnh chấm trước bản này không có bản thu nhỏ → hiện biểu tượng, bấm vào mới tải ảnh gốc.
+const THUMB_TTL = 7 * 86400;
 const thumbCache = new Map<string, Promise<string>>();
+function thumbUrl(path: string): Promise<string> {
+  const key = 'nt_th:' + path;
+  try { const c = JSON.parse(localStorage.getItem(key) || 'null'); if (c && c.exp > Date.now() + 3600_000) return Promise.resolve(c.url); } catch { /* */ }
+  return storage.signedUrl('selfies', thumbPath(path), THUMB_TTL).then(url => {
+    try { localStorage.setItem(key, JSON.stringify({ url, exp: Date.now() + THUMB_TTL * 1000 })); } catch { /* */ }
+    return url;
+  });
+}
+try { // dọn link ký đã hết hạn
+  for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i)!; if (!k.startsWith('nt_th:')) continue;
+    try { if (JSON.parse(localStorage.getItem(k)!).exp < Date.now()) localStorage.removeItem(k); } catch { localStorage.removeItem(k); } }
+} catch { /* */ }
 function SelfieThumb({ e, onOpen }: { e: any; onOpen: (url: string) => void }) {
-  const [url, setUrl] = useState<string | null>(null); const ref = useRef<HTMLButtonElement>(null);
+  const [url, setUrl] = useState<string | null>(null); const [none, setNone] = useState(false); const ref = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!e.selfie_path || e.purged_at || !ref.current) return;
     const io = new IntersectionObserver(([x]) => { if (!x.isIntersecting) return; io.disconnect();
-      if (!thumbCache.has(e.selfie_path)) thumbCache.set(e.selfie_path, storage.signedUrl('selfies', e.selfie_path, 3600));
-      thumbCache.get(e.selfie_path)!.then(setUrl, () => thumbCache.delete(e.selfie_path)); });
+      if (!thumbCache.has(e.selfie_path)) thumbCache.set(e.selfie_path, thumbUrl(e.selfie_path));
+      thumbCache.get(e.selfie_path)!.then(setUrl, () => { thumbCache.delete(e.selfie_path); setNone(true); }); });
     io.observe(ref.current); return () => io.disconnect();
   }, [e.selfie_path]);
+  const openFull = async () => { try { onOpen(await storage.signedUrl('selfies', e.selfie_path, 120)); } catch (err) { toast.err(err); } };
   if (!e.selfie_path || e.purged_at) return <span className="grid h-10 w-10 place-items-center rounded-lg bg-ink-100 text-[9px] text-ink-400" title="Ảnh đã xóa theo thời hạn lưu">—</span>;
-  return <button ref={ref} type="button" onClick={() => url && onOpen(url)} className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-ink-100 ring-1 ring-ink-200 transition hover:ring-2 hover:ring-brand-500" title="Bấm để xem ảnh lớn">
-    {url ? <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" /> : <span className="block h-full w-full animate-pulse bg-ink-200" />}</button>;
+  return <button ref={ref} type="button" onClick={openFull} className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-ink-100 ring-1 ring-ink-200 transition hover:ring-2 hover:ring-brand-500" title="Bấm để xem ảnh lớn">
+    {url ? <img src={url} alt="" className="h-full w-full object-cover" loading="lazy" onError={() => { setUrl(null); setNone(true); }} />
+      : none ? <span className="grid h-full w-full place-items-center text-base">📷</span> : <span className="block h-full w-full animate-pulse bg-ink-200" />}</button>;
 }

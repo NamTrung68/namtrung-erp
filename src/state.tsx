@@ -38,7 +38,11 @@ export function AppProvider({ initial, children }: { initial: Awaited<ReturnType
   const [state, setState] = useState(initial);
   const reload = useCallback(async () => setState(await loadContext()), []);
   const refreshMe = useCallback(async () => { const me = await db.rpc<Me>('me'); setState(s => ({ ...s, me })); }, []);
-  useEffect(() => { const t = setInterval(refreshMe, 60_000); return () => clearInterval(t); }, [refreshMe]);
+  // Làm mới hồ sơ người dùng 10 phút/lần và chỉ khi tab đang mở (trước đây 60 giây/lần kể cả khi tab ẩn → tốn băng thông Supabase)
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState !== 'hidden') refreshMe().catch(() => {}); };
+    const t = setInterval(tick, 600_000); return () => clearInterval(t);
+  }, [refreshMe]);
   const roles = state.me.roles || [];
   const has = (...r: string[]) => r.some(x => roles.includes(x));
   const isAdmin = has('admin', 'bgd');
