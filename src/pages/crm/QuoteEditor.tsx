@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, cx, Field, Input, Loading, Modal, NumInput, Select, Textarea, toast, useAction, ask, Table, Td } from '../../components/ui';
 import { db, storage } from '../../lib/sb';
-import { prepareUpload } from '../../lib/image';
+import { compressImage, prepareUpload } from '../../lib/image';
 import { go, useApp, useRoute } from '../../state';
 import { calcQuote, defaultHeader, priceFrame, QuoteHeader, QuoteLine } from '../../lib/quote-calc';
 import { fmtDate, money, num, today, addDays } from '../../lib/format';
@@ -264,9 +264,10 @@ function LineImage({ path, disabled, meId, onChange }: { path?: string | null; d
     if (!/^image\//i.test(raw.type) && !/\.(jpe?g|png|webp|gif|bmp|heic)$/i.test(raw.name)) { toast.err('Chỉ nhận file ảnh'); return; }
     setBusy(true);
     try {
-      const file = await prepareUpload(raw, 3);
+      // Ảnh sản phẩm chỉ hiện ô 100px / bản in → nén tối đa 1000px, ~100 KB (ảnh GIF động giữ nguyên)
+      const file = /gif$/i.test(raw.type) ? await prepareUpload(raw, 3) : await compressImage(raw, 1000, 100).then(b => new File([b], 'x.jpg', { type: 'image/jpeg' }), () => prepareUpload(raw, 3));
       const p = `${meId}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${/png$/i.test(file.type) ? 'png' : /webp$/i.test(file.type) ? 'webp' : /gif$/i.test(file.type) ? 'gif' : 'jpg'}`;
-      await storage.upload('quote-images', p, file); onChange(p);
+      await storage.upload('quote-images', p, file, false, 365 * 86400); onChange(p);  // tên file duy nhất → cho trình duyệt/CDN giữ 1 năm
     } catch (e: any) { toast.err(e?.message || 'Không tải được ảnh'); } finally { setBusy(false); if (ref.current) ref.current.value = ''; }
   };
   const url = quoteImgUrl(path);

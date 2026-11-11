@@ -100,7 +100,7 @@ function Audit() {
 
 const BACKUP_TABLES = ['profiles', 'org_units', 'job_levels', 'settings', 'lookups', 'customers', 'care_logs', 'customer_transfers', 'quotations', 'quotation_lines', 'quote_archive',
   'support_requests', 'support_messages', 'daily_reports', 'leave_requests', 'leave_entitlements', 'attendance_events', 'attendance_requests', 'holidays', 'tickets', 'announcements',
-  'documents', 'hr_records', 'hr_contracts', 'hr_agreements', 'hr_documents', 'inventory_items', 'exchange_rates', 'kpi_snapshots', 'payroll_periods', 'payslips', 'order_results'];
+  'documents', 'hr_records', 'hr_contracts', 'hr_agreements', 'hr_documents', 'inventory_items', 'exchange_rates', 'kpi_snapshots', 'payroll_periods', 'payslips'];  // order_results (BC Lợi nhuận) không sao lưu — nhập lại từ Excel khi cần
 function Backups() {
   const { data, loading, reload } = useLoad(() => db.rpc<any[]>('backup_list'), []); const { busy, run } = useAction(); const [dl, setDl] = useState('');
   const create = async () => { const note = await ask({ title: 'Tạo bản sao lưu', input: { label: 'Ghi chú', placeholder: 'VD: Trước khi nhập file khách tháng 11' }, ok: 'Sao lưu' }); if (note === null) return;
