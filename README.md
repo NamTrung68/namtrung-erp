@@ -166,3 +166,17 @@ Hàm mới: `out_docs_data`, `out_buyer_doc_info`, `out_invoice_mst`; sửa `out
 - **Pháp nhân nhận HĐ** mở cho Sale / CSKH / TN / TP: máy chủ chỉ trả pháp nhân của **khách mình phụ trách** (chủ khách trong phạm vi; CSKH theo sale được hỗ trợ). Được sửa / thêm / ★ / xóa pháp nhân chưa dùng; **mã + ngày HĐNT và Nạp Excel chỉ kế toán / admin / BGĐ**. Nút 🔍 cạnh MST để tra và điền nhanh.
 
 Kiểm thử: `tests/hd36.test.ts`, `supabase/tests/99p_v36.sql`.
+
+## Bản 37 — Ảnh sản phẩm trong báo giá, đơn quên chấm đến / quên chấm về (11/11/2026)
+
+Nâng cấp: chạy `supabase/migrations/0044_v37.sql` trong SQL Editor (tự sao lưu trước khi đổi).
+
+- **Báo giá → ảnh từng dòng hàng** (không bắt buộc): cột “Ảnh” trước tên hàng — bấm chọn, dán (Ctrl+V) hoặc kéo thả; ảnh tự nén ~200 KB, lưu bucket công khai `quote-images/<người lập>/…` (cột `quotation_lines.image`).
+  Bản in gửi khách có cột Ảnh 100×100 px (chỉ hiện khi có ít nhất 1 dòng có ảnh). Nhân bản / lấy mẫu từ Thư viện giữ ảnh. Ảnh **không** tính vào dấu giá → đổi ảnh không phải duyệt giá lại.
+- **Đơn công**: thêm 2 loại
+  - *Xác nhận chấm công muộn (quên chấm đến)* — nhân viên chọn ngày + giờ vào. Người duyệt thấy giờ khai, sửa theo camera nếu sai → giờ chốt là **giờ đến chính thức** (thay cả lần chấm muộn) để tính đi muộn, chuyên cần, lương.
+  - *Xác nhận quên chấm công về* — chọn ngày + giờ về; người duyệt sửa nếu sai → giờ ra chính thức (tính về sớm).
+  - Gửi được cho ngày đã qua trong 30 ngày (`attendance.forgot_back_days`), không gửi cho tháng đã chốt lương, không trùng loại/ngày. Vẫn tính chung giới hạn quên chấm / tháng và điểm chuyên cần như đơn xác nhận công cũ.
+  - Lịch sử “Chấm công của tôi” hiện giờ theo đơn đã duyệt (ghi “theo đơn”).
+
+Kiểm thử: `supabase/tests/99q_v37.sql`, `tests/e2e/v37.cjs`.

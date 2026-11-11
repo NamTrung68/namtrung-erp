@@ -47,6 +47,8 @@ export interface QuoteLine {
   vat_pct?: number | null;
   freight_pct?: number | null;
   manual_price?: number | null;
+  /** Bản 37: đường dẫn ảnh sản phẩm (bucket quote-images) — không ảnh hưởng tính giá */
+  image?: string | null;
 }
 
 export interface LineResult {

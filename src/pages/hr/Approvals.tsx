@@ -7,7 +7,8 @@ import { useApp, go } from '../../state';
 import { fmtDate, fmtDateTime, num, today, addDays } from '../../lib/format';
 import { LS, whenText } from './Leave';
 
-const KIND: Record<string, string> = { cong_tac: 'Công tác', xac_nhan_cong: 'Xác nhận công', xin_muon_som: 'Xin muộn/sớm' };
+const KIND: Record<string, string> = { cong_tac: 'Công tác', xac_nhan_cong: 'Xác nhận công', xin_muon_som: 'Xin muộn/sớm', quen_cham_vao: 'Quên chấm công đến', quen_cham_ra: 'Quên chấm công về' };
+const TIMED = ['xac_nhan_cong', 'quen_cham_vao', 'quen_cham_ra'];
 
 export default function Approvals() {
   const a = useApp(); const { run } = useAction(); const [hist, setHist] = useState(false); const [leaveFor, setLeaveFor] = useState(false); const [delOpen, setDelOpen] = useState(false);
@@ -23,7 +24,7 @@ export default function Approvals() {
   const pl = usePager('appr_leave', [hist]); const pa = usePager('appr_att', [hist]); const [confirm, setConfirm] = useState<any>(null);
   const decide = async (table: 'leave' | 'attendance', id: string, ok: boolean) => {
     // Bản 28: duyệt quên chấm → nhập giờ vào / ra thực tế (xem camera) để tính đi muộn, chuyên cần
-    if (ok && table === 'attendance') { const r = ((ar as any[]) || []).find(x => x.id === id); if (r?.kind === 'xac_nhan_cong') { setConfirm(r); return; } }
+    if (ok && table === 'attendance') { const r = ((ar as any[]) || []).find(x => x.id === id); if (TIMED.includes(r?.kind)) { setConfirm(r); return; } }
     const note = ok ? '' : await ask({ title: 'Từ chối đơn', input: { label: 'Lý do', required: true } });
     if (note === null) return;
     run(async () => { await db.rpc('decide_request', { p_table: table, p_id: id, p_approve: ok, p_note: note || null }); reload(); r2(); }, ok ? 'Đã duyệt' : 'Đã từ chối');
@@ -41,9 +42,10 @@ export default function Approvals() {
             <Td className="max-w-xs">{r.reason}{r.backup_id && <div className="text-xs text-ink-400">Hỗ trợ: {a.personName(r.backup_id)}</div>}{r.handover && <div className="text-xs text-ink-400">Bàn giao: {r.handover}</div>}</Td><Td className="whitespace-nowrap text-xs">{fmtDateTime(r.created_at)}</Td>
             <Td className="whitespace-nowrap">{r.status === 'cho_duyet' && canDecide ? <><Button size="sm" variant="success" onClick={() => decide('leave', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('leave', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pl} total={(lv as any[]).length} /></>}
       </Card>
-      <Card title="Đơn xác nhận công (quên chấm)" bodyClass="p-0" className="mb-4">
-        {!(ar as any[])?.length ? <Empty>Không có đơn</Empty> : <><Table head={['Nhân sự', 'Loại', 'Ngày', 'Lý do', 'Giờ xác nhận', '']}>{pa.slice(ar as any[]).map(r => (
+      <Card title="Đơn công (quên chấm đến · quên chấm về · xác nhận công)" bodyClass="p-0" className="mb-4">
+        {!(ar as any[])?.length ? <Empty>Không có đơn</Empty> : <><Table head={['Nhân sự', 'Loại', 'Ngày', 'Lý do', 'Giờ khai', 'Giờ chốt', '']}>{pa.slice(ar as any[]).map(r => (
           <tr key={r.id}><Td className="font-medium">{a.personName(r.profile_id)}</Td><Td>{KIND[r.kind]}{r.minutes && ` · ${r.minutes} phút`}</Td><Td>{fmtDate(r.work_date)}{r.part !== 'full' && ` (${r.part === 'am' ? 'sáng' : 'chiều'})`}</Td><Td>{r.reason}</Td>
+            <Td className="whitespace-nowrap font-semibold tabular-nums">{r.req_time ? `${r.kind === 'quen_cham_ra' ? 'Về' : 'Vào'} ${String(r.req_time).slice(0, 5)}` : ''}</Td>
             <Td className="whitespace-nowrap text-xs">{r.confirm_in ? `Vào ${String(r.confirm_in).slice(0, 5)}` : ''}{r.confirm_out ? ` · Ra ${String(r.confirm_out).slice(0, 5)}` : ''}</Td>
             <Td className="whitespace-nowrap">{r.status === 'cho_duyet' && canDecide ? <><Button size="sm" variant="success" onClick={() => decide('attendance', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('attendance', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pa} total={(ar as any[]).length} /></>}
       </Card>
@@ -74,20 +76,27 @@ function Delegate({ open, onClose, onDone }: { open: boolean; onClose: () => voi
   );
 }
 
-/** Bản 28: duyệt đơn xác nhận công (quên chấm) — người duyệt ghi giờ vào / ra thực tế theo camera */
+/** Duyệt đơn quên chấm: người duyệt chốt giờ vào / ra thực tế (xem camera). Bản 37: đơn quên chấm đến / về điền sẵn giờ nhân viên khai, sửa nếu sai */
 function ConfirmTime({ r, onClose, onDone }: { r: any; onClose: () => void; onDone: () => void }) {
-  const a = useApp(); const { busy, run } = useAction(); const [tin, setIn] = useState(''); const [tout, setOut] = useState(''); const [note, setNote] = useState('');
+  const a = useApp(); const { busy, run } = useAction(); const hm = (x: any) => (x ? String(x).slice(0, 5) : '');
+  const isIn = r.kind === 'quen_cham_vao', isOut = r.kind === 'quen_cham_ra', legacy = !isIn && !isOut;
+  const [tin, setIn] = useState(isIn ? hm(r.req_time) : ''); const [tout, setOut] = useState(isOut ? hm(r.req_time) : ''); const [note, setNote] = useState('');
   const { data: ev } = useLoad(() => db.from('attendance_events').select('kind,at').eq('profile_id', r.profile_id).eq('work_date', r.work_date).neq('status', 'rejected').order('at'), [r.id]);
   const evs = (ev as any[]) || []; const hasIn = evs.some(e => e.kind === 'in'); const t = (iso: string) => new Date(iso).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
-  return <Modal open onClose={onClose} title={`Duyệt xác nhận công · ${a.personName(r.profile_id)} · ${fmtDate(r.work_date)}`} size="sm"
-    footer={<Button variant="success" loading={busy} disabled={!hasIn && !tin} onClick={() => run(async () => {
-      await db.rpc('decide_request', { p_table: 'attendance', p_id: r.id, p_approve: true, p_note: note || null, p_in: tin || null, p_out: tout || null }); onDone(); }, 'Đã duyệt')}>Duyệt</Button>}>
+  const ok = isIn ? !!tin : isOut ? !!tout : (hasIn || !!tin);
+  return <Modal open onClose={onClose} title={`Duyệt ${(KIND[r.kind] || '').toLowerCase()} · ${a.personName(r.profile_id)} · ${fmtDate(r.work_date)}`} size="sm"
+    footer={<Button variant="success" loading={busy} disabled={!ok} onClick={() => run(async () => {
+      await db.rpc('decide_request', { p_table: 'attendance', p_id: r.id, p_approve: true, p_note: note || null, p_in: isOut ? null : tin || null, p_out: isIn ? null : tout || null }); onDone(); }, 'Đã duyệt')}>Duyệt</Button>}>
     <div className="space-y-3 text-sm">
-      <div className="rounded-lg bg-ink-50 px-3 py-2">Lý do: {r.reason}<div className="mt-1 text-xs text-ink-500">Đã chấm hôm đó: {evs.length ? evs.map(e => `${e.kind === 'in' ? 'vào' : 'ra'} ${t(e.at)}`).join(' · ') : 'không có lần chấm nào'}</div></div>
-      <p className="text-xs text-ink-600">Xem camera văn phòng rồi ghi giờ thực tế. Giờ vào dùng để tính <b>đi muộn</b> và <b>chuyên cần</b> như một lần chấm công bình thường.</p>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label={hasIn ? 'Giờ vào thực tế (đã có lần chấm vào)' : 'Giờ vào thực tế *'}><Input type="time" value={tin} onChange={e => setIn(e.target.value)} /></Field>
-        <Field label="Giờ ra thực tế (nếu quên chấm ra)"><Input type="time" value={tout} onChange={e => setOut(e.target.value)} /></Field></div>
+      <div className="rounded-lg bg-ink-50 px-3 py-2">Lý do: {r.reason}
+        {r.req_time && <div className="mt-1">Nhân viên khai giờ {isOut ? 'về' : 'vào'}: <b className="tabular-nums">{hm(r.req_time)}</b></div>}
+        <div className="mt-1 text-xs text-ink-500">Đã chấm hôm đó: {evs.length ? evs.map(e => `${e.kind === 'in' ? 'vào' : 'ra'} ${t(e.at)}`).join(' · ') : 'không có lần chấm nào'}</div></div>
+      <p className="text-xs text-ink-600">{isIn ? <>Giờ vào bạn chốt là <b>giờ đến chính thức</b> (thay cả lần chấm muộn nếu có) — dùng tính <b>đi muộn</b>, chuyên cần và lương. Sai thì sửa lại theo camera.</>
+        : isOut ? <>Giờ về bạn chốt là <b>giờ ra chính thức</b> — dùng tính <b>về sớm</b> và lương. Sai thì sửa lại.</>
+        : <>Xem camera văn phòng rồi ghi giờ thực tế. Giờ vào dùng để tính <b>đi muộn</b> và <b>chuyên cần</b> như một lần chấm công bình thường.</>}</p>
+      <div className={legacy ? 'grid grid-cols-2 gap-3' : ''}>
+        {!isOut && <Field label={isIn ? 'Giờ vào làm (chốt) *' : hasIn ? 'Giờ vào thực tế (đã có lần chấm vào)' : 'Giờ vào thực tế *'}><Input type="time" value={tin} onChange={e => setIn(e.target.value)} /></Field>}
+        {!isIn && <Field label={isOut ? 'Giờ về (chốt) *' : 'Giờ ra thực tế (nếu quên chấm ra)'}><Input type="time" value={tout} onChange={e => setOut(e.target.value)} /></Field>}</div>
       <Field label="Ghi chú"><Input value={note} onChange={e => setNote(e.target.value)} placeholder="VD: camera 08:25 vào cổng" /></Field>
     </div>
   </Modal>;

@@ -48,7 +48,7 @@ const errors = [];
   const setNum = async (label, v) => { const el = sale.locator(`label:has-text("${label}") input`).first(); await el.fill(String(v)); };
   await setNum('Ship nội địa TQ', 8400); await setNum('Cân nặng cả lô', 13890); await setNum('Đơn giá / kg', 3500); await setNum('Số khối cả lô', 19.6); await setNum('Đơn giá / m³', 900000);
   await setNum('Phí dịch vụ (%)', 1.2); await setNum('Phí ủy thác (%)', 1);
-  const row = sale.locator('tbody tr').first(); const inputs = row.locator('input');
+  const row = sale.locator('tbody tr').first(); const inputs = row.locator('input:not([type=file])');
   await row.locator('textarea').fill('Chai thủy tinh kèm nắp'); await inputs.nth(2).fill('100000'); await inputs.nth(3).fill('2'); await inputs.nth(5).fill('8');
   await sale.waitForTimeout(400);
   const txt = await sale.locator('aside').nth(1).innerText();
