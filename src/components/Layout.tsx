@@ -191,26 +191,44 @@ function SideNav({ nav, path }: { nav: [string, NavItem[]][]; path: string }) {
 
 function Bell() {
   const a = useApp(); const [open, setOpen] = useState(false); const [items, setItems] = useState<any[]>([]);
-  const lastId = useRef<number>(0);
-  const load = async (notify = false) => {
+  const lastId = useRef<number>(0); const loaded = useRef(false);
+  // Tiết kiệm băng thông Supabase (egress): danh sách đầy đủ chỉ tải khi mở trang / mở chuông;
+  // lượt kiểm tra định kỳ chỉ hỏi "có thông báo mới hơn id cuối không" (thường trả về [] rỗng),
+  // và tạm dừng khi tab bị ẩn / máy khóa màn hình.
+  const COLS = 'id,title,body,link,read_at,created_at';
+  const load = async () => {
     try {
-      const rows: any[] = await db.from('notifications').select('*').order('created_at', { asc: false }).limit(30);
-      if (notify && lastId.current) {
-        rows.filter(r => r.id > lastId.current && !r.read_at).reverse().forEach(r => {
-          toast.info(r.body || '', r.title, () => r.link && (location.hash = r.link));
-          if (!pushActive()) showSystemNotification(r.title, r.body || '', r.link); // có thông báo đẩy rồi thì không hiện trùng
-        });
-      }
+      const rows: any[] = await db.from('notifications').select(COLS).order('created_at', { asc: false }).limit(30);
       if (rows[0]) lastId.current = Math.max(lastId.current, rows[0].id);
-      setItems(rows);
+      setItems(rows); loaded.current = true;
     } catch { /* ignore */ }
   };
-  useEffect(() => { load(); ensurePush(); const t = setInterval(() => load(true), 30_000); return () => clearInterval(t); }, []);
+  const poll = async () => {
+    if (document.visibilityState === 'hidden') return;
+    if (!loaded.current) return load(); // lần tải đầu lỗi → tải lại danh sách, không hiện toast hàng loạt
+    try {
+      const fresh: any[] = await db.from('notifications').select(COLS).gt('id', lastId.current).order('id', { asc: false }).limit(30);
+      if (!fresh.length) return;
+      fresh.filter(r => !r.read_at).reverse().forEach(r => {
+        toast.info(r.body || '', r.title, () => r.link && (location.hash = r.link));
+        if (!pushActive()) showSystemNotification(r.title, r.body || '', r.link); // có thông báo đẩy rồi thì không hiện trùng
+      });
+      lastId.current = Math.max(lastId.current, fresh[0].id);
+      setItems(old => [...fresh, ...old.filter(o => !fresh.some(f => f.id === o.id))].slice(0, 30));
+    } catch { /* ignore */ }
+  };
+  useEffect(() => {
+    load(); ensurePush();
+    const t = setInterval(poll, 60_000);
+    const onVis = () => { if (document.visibilityState === 'visible') poll(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
+  }, []);
   const unread = items.filter(i => !i.read_at).length;
   const markAll = async () => { await db.from('notifications').update({ read_at: new Date().toISOString() }).is('read_at', null); load(); a.refreshMe(); };
   return (
     <div className="relative">
-      <button onClick={() => setOpen(o => !o)} className="relative rounded-xl p-2 hover:bg-ink-100" aria-label="Thông báo">
+      <button onClick={() => { if (!open) load(); setOpen(o => !o); }} className="relative rounded-xl p-2 hover:bg-ink-100" aria-label="Thông báo">
         <Icon name="bell" />{unread > 0 && <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white">{unread > 9 ? '9+' : unread}</span>}
       </button>
       {open && <div className="absolute right-0 top-11 z-50 w-[min(92vw,380px)] rounded-xl border border-ink-200 bg-white shadow-xl">
