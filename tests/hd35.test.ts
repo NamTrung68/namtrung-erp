@@ -59,7 +59,11 @@ test('biến bộ chứng từ', () => {
   const v = docVars(INV, 'ddh');
   assert.equal(v.so_don, '2759');
   assert.equal(docVars({ ...INV, mds: ['MD2547', 'md2546', '2547'] }, 'ddh').so_don, 'MD2546, MD2547');
-  assert.equal(docVars({ ...INV, mds: ['MD2546'] }, 'bbgn').so_don, 'MD2546'); assert.equal(v.ngay, '07/11/2026'); assert.equal(v.ngay_chu, '07 tháng 11 năm 2026');
+  assert.equal(docVars({ ...INV, mds: ['MD2546'] }, 'bbgn').so_don, 'MD2546'); assert.equal(v.ngay, '09/10/2026'); assert.equal(v.ngay_giao, '07/11/2026'); assert.equal(v.ngay_chu, '07 tháng 11 năm 2026');
+  // ĐĐH: ngày giao = ngày ký HĐ, ngày đặt = 30 ngày trước (tính cả 2 đầu)
+  const d30 = docVars({ ...INV, ngay_hd: '2026-10-30' }, 'ddh'); assert.equal(d30.ngay_giao, '30/10/2026'); assert.equal(d30.ngay, '01/10/2026');
+  assert.equal(docVars({ ...INV, ngay_hd: '2026-03-01' }, 'ddh').ngay, '31/01/2026'); assert.equal(docVars({ ...INV, ngay_hd: '2027-01-15' }, 'ddh').ngay, '17/12/2026');
+  assert.equal(docVars({ ...INV, ngay_hd: '2026-10-30' }, 'bbgn').ngay_chu, '30 tháng 10 năm 2026'); // chứng từ khác giữ ngày ký
   assert.equal(v.cong_tien, '1.350.000'); assert.equal(v.tong, (1350000 + 64000 + 55000).toLocaleString('vi-VN'));
   assert.match(v.bang_chu, /^một triệu bốn trăm sáu mươi chín nghìn đồng chẵn$/);
   assert.equal(soHdmb(INV), '07/11/2026/HĐMBHH/NT/2759');
