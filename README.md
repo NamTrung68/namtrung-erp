@@ -200,3 +200,19 @@ Kiểm thử: `supabase/tests/99r_v38.sql`, `tests/e2e/v38.cjs` (chạy thật h
 - Nay: trước khi xuất chứng từ, ERP đọc "Ngày … tháng … năm …" (cả mẫu song ngữ "Ngày (Date) … tháng (month) …") trong PDF HĐ đã ký lưu trên Drive → dùng ngày đó và sửa luôn ngày HĐ trên phiếu (`out_ky_fix_ngay`, ghi nhật ký `out_events`). Không đọc được PDF thì giữ ngày cũ.
 - Mẫu ĐĐH: bỏ dòng "Ngày đặt hàng"; "Ngày giao hàng" → "Ngày giao hàng dự kiến" (= ngày HĐ).
 - Nâng cấp: `supabase/migrations/0046_v39.sql`. Kiểm thử: `supabase/tests/99s_v39.sql`, `tests/hdfile.test.ts`, `tests/e2e/v38.cjs` với `PDF_FILE` (PDF có dòng ngày).
+
+## Bản 40 — Chuyển phát HĐ đã ký, theo dõi thu về bản ký (giai đoạn 1: nhập tay) (11/11/2026)
+
+Nâng cấp: chạy `supabase/migrations/0048_v40.sql` trong SQL Editor (tự sao lưu trước khi đổi). Không cần hàm máy chủ mới.
+
+- **Hóa đơn của tôi → tab Đã ký**: tick HĐ → **📦 Gửi chuyển phát** → ERP gom theo khách (1 khách = 1 phiếu `CPxxxxx`, cùng sale), gợi ý người nhận / SĐT / địa chỉ từ *Pháp nhân nhận HĐ* (rồi tới người liên hệ của khách), tick “Lưu vào pháp nhân” để lần sau tự điền.
+- **Tab 📦 Chuyển phát HĐ** (sale) và màn **Chuyển phát HĐ** `#/hd/cp` (kế toán / quản lý / BGĐ, có nút *+ Tạo phiếu gửi*): Chờ gửi → **Đã gửi** (ngày gửi, mã vận đơn) → **Khách đã nhận** (ngày nhận; báo sale + CSKH hỗ trợ nhắc khách gửi lại 1 bản; hạn thu về = ngày nhận + 7 ngày) → **Đã thu về** (từng HĐ hoặc cả phiếu). Có Báo hoàn / thất lạc (HĐ mở lại để gửi phiếu mới), Hủy, Lùi 1 bước khi bấm nhầm.
+- **Cảnh báo quá hạn**: lịch `nt_ship_remind` 8h15 sáng thứ 2 – thứ 7 báo sale + CSKH + quản lý trực tiếp, nhắc lại theo chu kỳ (mặc định 3 ngày).
+- **Bộ lọc**: trạng thái (đang theo dõi, chờ gửi, đã gửi, khách đã nhận, sắp hạn, quá hạn, đã thu về, hoàn, hủy), tìm mã phiếu / mã vận đơn / số HĐ / khách / SĐT, sale, khoảng ngày gửi / nhận / thu về / tạo; xuất Excel.
+- **Vết hồ sơ**: phiếu Đã gửi → HĐ “✉ đã gửi khách”; HĐ thu về → “✓ đã có bản ký” (bỏ xác nhận chỉ gỡ khi chưa lưu file scan). Mỗi thao tác ghi `out_ship_events` và lịch sử phiếu xuất HĐ (`out_events`, action `chuyen_phat`).
+- **Pháp nhân nhận HĐ**: thêm *Người nhận chuyển phát* + *SĐT nhận* (cột `out_buyers.nguoi_nhan`, `sdt_nhan`), bộ lọc “Thiếu SĐT / địa chỉ nhận chuyển phát”, có trong Excel xuất.
+- **Cấu hình → Kế toán – Hóa đơn → 📦 Chuyển phát HĐ** (`settings.chuyen_phat`): tên / SĐT / địa chỉ gửi, hãng mặc định, hạn thu về, chu kỳ nhắc, ngưỡng “sắp hạn”. Kế toán sửa được.
+- Quyền: sale của HĐ + cấp trên theo cây + CSKH được giao, Kế toán / Admin / BGĐ. Ghi chỉ qua hàm (`out_ship_create`, `out_ship_act`, `out_ship_thu`).
+- Giai đoạn 2 (chờ ViettelPost cấp quyền tích hợp): tạo vận đơn + tính cước qua API, nhận webhook trạng thái → tự ghi ngày gửi / ngày khách nhận (cột `out_ships.api` để sẵn).
+
+Kiểm thử: `supabase/tests/99t_v40.sql`.

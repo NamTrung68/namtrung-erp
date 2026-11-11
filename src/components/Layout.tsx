@@ -72,6 +72,7 @@ export function useNav() {
     ['Kế toán – Hóa đơn', [
       { to: '/hd/kt', label: 'Bàn làm việc kế toán', icon: '🧾', show: a.isAdmin || a.has('ke_toan') },
       { to: '/hd', label: 'Hóa đơn của tôi', icon: '📮', show: a.isSales },
+      { to: '/hd/cp', label: 'Chuyển phát HĐ', icon: '📦', show: a.isAdmin || a.isLead || a.has('ke_toan', 'bgd') }, // bản 40 — sale dùng tab trong Hóa đơn của tôi
       { to: '/hd/ql', label: 'Duyệt giá & tồn HĐ', icon: '✅', show: a.isLead || a.has('ke_toan', 'bgd') },
       { to: '/acc/mine', label: 'Đối soát xe của tôi', icon: '🚚', show: a.isSales },
       { to: '/acc', label: 'Danh sách xe đối soát', icon: '🚚', show: a.isAdmin || a.has('ke_toan') },

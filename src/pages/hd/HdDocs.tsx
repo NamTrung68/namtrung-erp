@@ -167,7 +167,7 @@ export function DocBtns({ v, st, onChanged, compact }: { v: { id: string; buyer_
 }
 
 /** Thanh xuất hàng loạt cho danh sách HĐ đã ký */
-export function DocsBar({ rows, sel, setSel, onChanged }: { rows: any[]; sel: Record<string, boolean>; setSel: (x: Record<string, boolean>) => void; onChanged?: () => void }) {
+export function DocsBar({ rows, sel, setSel, onChanged, onShip }: { rows: any[]; sel: Record<string, boolean>; setSel: (x: Record<string, boolean>) => void; onChanged?: () => void; onShip?: (ids: string[]) => void }) {
   const [kinds, setKinds] = useState<DocKind[]>(() => { try { const k = JSON.parse(localStorage.getItem('nt_doc_kinds') || 'null'); return Array.isArray(k) && k.length ? k : ['ddh', 'bbgn', 'hdmb']; } catch { return ['ddh', 'bbgn', 'hdmb']; } });
   const tog = (k: DocKind) => { const n = kinds.includes(k) ? kinds.filter(x => x !== k) : [...kinds, k]; setKinds(n); try { localStorage.setItem('nt_doc_kinds', JSON.stringify(n)); } catch { /* */ } };
   const a = useApp(); const d = useDocs(); const ids = rows.filter(r => sel[r.id]).map(r => r.id); const { busy, run } = useAction();
@@ -191,13 +191,14 @@ export function DocsBar({ rows, sel, setSel, onChanged }: { rows: any[]; sel: Re
     <button onClick={togPdf} title="HĐ đã ký (PDF) — lấy từ Drive / tự tải từ meInvoice theo mã tra cứu" className={cx('flex items-center gap-1 rounded-full border px-2.5 py-1 font-semibold', withPdf ? 'border-brand-500 bg-brand-50 text-brand-800' : 'border-ink-200 text-ink-400')}>
       <span className="text-sm">📄</span>HĐ đã ký (PDF){withPdf ? ' ✓' : ''}</button>
     <div className="ml-auto flex items-center gap-2">
+      {onShip && <Button size="sm" variant="dark" disabled={!ids.length} onClick={() => onShip(ids)} title="Tạo phiếu chuyển phát (gom theo khách) — theo dõi ngày khách nhận và thu về bản ký">📦 Gửi chuyển phát{ids.length ? ` (${ids.length})` : ''}</Button>}
       <Button size="sm" disabled={!ids.length} loading={busy} onClick={() => run(async () => { await mark(ids, 'gui'); onChanged?.(); }, `Đã đánh dấu ${ids.length} HĐ: đã gửi khách`)}>✉ Đã gửi khách</Button>
       <Button size="sm" variant="primary" loading={!!d.busy} disabled={!ids.length} onClick={go}>⬇ Xuất {ids.length || ''} HĐ (.zip)</Button></div>
     {d.busy && <span className="w-full text-brand-700">{d.busy}</span>}{d.modal}</Card>;
 }
 
 /** Tab "Đã ký" của sale: lọc theo trạng thái hồ sơ + chọn nhiều + cột chứng từ */
-export function KyList({ data, render }: { data: any[] | null | undefined; render: (rows: any[], sel: Record<string, boolean>, onSel: (id: string, on: boolean) => void, st: Record<string, DocSt>, reload: () => void) => React.ReactNode }) {
+export function KyList({ data, render, onShip }: { data: any[] | null | undefined; onShip?: (ids: string[], clear: () => void) => void; render: (rows: any[], sel: Record<string, boolean>, onSel: (id: string, on: boolean) => void, st: Record<string, DocSt>, reload: () => void) => React.ReactNode }) {
   const [q, setQ] = useState(''); const [sel, setSel] = useState<Record<string, boolean>>({}); const [hs, setHs] = useState<HsKey | ''>('');
   const [st, setSt] = useState<Record<string, DocSt>>({}); const [rev, setRev] = useState(0); const reload = () => setRev(x => x + 1);
   const ids = useMemo(() => (data || []).map(v => v.id), [data]);
@@ -211,7 +212,7 @@ export function KyList({ data, render }: { data: any[] | null | undefined; rende
     <div className="mb-2 flex flex-wrap gap-1.5 text-xs">
       <button onClick={() => setHs('')} className={cx('rounded-full border px-3 py-1 font-semibold', !hs ? 'border-ink-900 bg-ink-900 text-white' : 'border-ink-200 bg-white text-ink-700')}>Tất cả {base.length}</button>
       {(Object.keys(HS) as HsKey[]).map(k => <button key={k} onClick={() => setHs(k)} className={cx('rounded-full border px-3 py-1 font-semibold', hs === k ? 'ring-2 ring-brand-400' : '', HS[k][2])}>{HS[k][1]} {HS[k][0]} · {cnt[k]}</button>)}</div>
-    <DocsBar rows={rows} sel={sel} setSel={setSel} onChanged={reload} />
+    <DocsBar rows={rows} sel={sel} setSel={setSel} onChanged={reload} onShip={onShip ? ids => onShip(ids, () => { setSel({}); reload(); }) : undefined} />
     {render(rows, sel, (id, on) => setSel(x => ({ ...x, [id]: on })), st, reload)}
   </>;
 }

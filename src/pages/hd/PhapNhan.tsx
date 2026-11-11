@@ -18,16 +18,17 @@ const lc = (s: any) => String(s || '').trim().toLowerCase();
 const FLAGS: [string, string, string][] = [
   ['', 'Tất cả', 'ink'], ['chua_gan', 'Username chưa có khách ERP', 'amber'], ['mst_sai', 'MST sai dạng', 'red'], ['thieu_dc', 'Thiếu địa chỉ', 'amber'],
   ['trung_mst', 'Cùng MST khác tên', 'red'], ['khong_md', 'Khách chưa có ★ mặc định', 'amber'],
-  ['co_hdnt', 'Đã ký HĐ nguyên tắc', 'ink'], ['thieu_dd', 'Thiếu người đại diện', 'amber'],
+  ['co_hdnt', 'Đã ký HĐ nguyên tắc', 'ink'], ['thieu_dd', 'Thiếu người đại diện', 'amber'], ['thieu_nhan', 'Thiếu SĐT / địa chỉ nhận chuyển phát', 'amber'],
 ];
 
 interface Row { id: string; customer_id: string | null; username: string | null; own_username: string | null; name: string; tax_code: string; address: string | null; email: string | null; note: string | null;
   is_default: boolean; kh_name: string | null; kh_code: string | null; sale_id: string | null; mst_sai: boolean; thieu_dc: boolean; trung_mst: boolean; khong_md: boolean; so_phieu: number; updated_at: string | null;
-  dai_dien: string | null; chuc_vu: string | null; dia_chi_giao: string | null; ma_hdnt: string | null; ngay_hdnt: string | null }
-type Draft = { username: string; name: string; tax_code: string; address: string; email: string; note: string; dai_dien: string; chuc_vu: string; dia_chi_giao: string; ma_hdnt: string; ngay_hdnt: string };
+  dai_dien: string | null; chuc_vu: string | null; dia_chi_giao: string | null; ma_hdnt: string | null; ngay_hdnt: string | null; nguoi_nhan: string | null; sdt_nhan: string | null }
+type Draft = { username: string; name: string; tax_code: string; address: string; email: string; note: string; dai_dien: string; chuc_vu: string; dia_chi_giao: string; ma_hdnt: string; ngay_hdnt: string; nguoi_nhan: string; sdt_nhan: string };
 const toDraft = (r: Partial<Row>): Draft => ({ username: r.username || '', name: r.name || '', tax_code: r.tax_code || '', address: r.address || '', email: r.email || '', note: r.note || '',
-  dai_dien: r.dai_dien || '', chuc_vu: r.chuc_vu || '', dia_chi_giao: r.dia_chi_giao || '', ma_hdnt: r.ma_hdnt || '', ngay_hdnt: r.ngay_hdnt || '' });
+  dai_dien: r.dai_dien || '', chuc_vu: r.chuc_vu || '', dia_chi_giao: r.dia_chi_giao || '', ma_hdnt: r.ma_hdnt || '', ngay_hdnt: r.ngay_hdnt || '', nguoi_nhan: r.nguoi_nhan || '', sdt_nhan: r.sdt_nhan || '' });
 const EMPTY: Draft = toDraft({});
+const sdtOk = (s: string) => /^0\d{9,10}$/.test(String(s || '').replace(/[\s.\-()]/g, '').replace(/^\+?84/, '0'));
 
 export default function PhapNhan() {
   const a = useApp(); const { busy, run } = useAction();
@@ -41,24 +42,27 @@ export default function PhapNhan() {
   const dirty = (r: Row) => { const d = edit[r.id]; if (!d) return false; const o = toDraft(r); return (Object.keys(o) as (keyof Draft)[]).some(k => (d[k] || '').trim() !== (o[k] || '').trim()); };
   const setE = (r: Row, k: keyof Draft, v: string) => setEdit(x => ({ ...x, [r.id]: { ...(x[r.id] || toDraft(r)), [k]: v } }));
   const val = (r: Row, k: keyof Draft) => (edit[r.id] || toDraft(r))[k];
-  const save = (r: Row) => run(async () => { const d = edit[r.id]; await db.rpc('out_buyer_save', { p_id: r.id, p: d });
+  // Bản 40: người nhận / SĐT nhận chuyển phát lưu qua out_buyer_doc_info
+  const saveShip = (id: string, d: Draft, o?: Partial<Row>) => (d.nguoi_nhan.trim() !== (o?.nguoi_nhan || '') || d.sdt_nhan.trim() !== (o?.sdt_nhan || '')
+    ? db.rpc('out_buyer_doc_info', { p_id: id, p: { nguoi_nhan: d.nguoi_nhan, sdt_nhan: d.sdt_nhan } }) : Promise.resolve());
+  const save = (r: Row) => run(async () => { const d = edit[r.id]; await db.rpc('out_buyer_save', { p_id: r.id, p: d }); await saveShip(r.id, d, r);
     setEdit(x => { const y = { ...x }; delete y[r.id]; return y; }); reload(); }, 'Đã lưu pháp nhân');
   const saveAll = () => run(async () => { const list = rows.filter(dirty); let ok = 0; const errs: string[] = [];
-    for (const r of list) { try { await db.rpc('out_buyer_save', { p_id: r.id, p: edit[r.id] }); ok++; setEdit(x => { const y = { ...x }; delete y[r.id]; return y; }); } catch (e: any) { errs.push(`${r.name}: ${e.message}`); } }
+    for (const r of list) { try { await db.rpc('out_buyer_save', { p_id: r.id, p: edit[r.id] }); await saveShip(r.id, edit[r.id], r); ok++; setEdit(x => { const y = { ...x }; delete y[r.id]; return y; }); } catch (e: any) { errs.push(`${r.name}: ${e.message}`); } }
     reload(); if (errs.length) toast.err(`Lưu ${ok}/${list.length} — lỗi: ${errs.slice(0, 3).join(' · ')}`); else toast.ok(`Đã lưu ${ok} pháp nhân`); });
   const setDefault = (r: Row) => run(async () => { await db.rpc('out_buyer_set_default', { p_id: r.id }); reload(); }, `★ ${r.name} là pháp nhân mặc định`);
   const del = (r: Row) => run(async () => {
     if (!(await ask({ title: `Xóa pháp nhân “${r.name}”?`, message: <>MST {r.tax_code} · username {r.username || '—'}.{r.so_phieu ? <> Đã dùng ở <b>{r.so_phieu}</b> phiếu — phiếu cũ giữ nguyên thông tin, chỉ không gợi ý pháp nhân này nữa.</> : ''}</>, ok: 'Xóa', danger: true }))) return;
     await db.rpc('out_buyer_delete', { p_ids: [r.id] }); reload(); }, 'Đã xóa');
-  const addSave = () => run(async () => { await db.rpc('out_buyer_save', { p_id: null, p: { ...adding, is_default: false } }); setAdding(null); reload(); }, 'Đã thêm pháp nhân');
+  const addSave = () => run(async () => { const id = await db.rpc<string>('out_buyer_save', { p_id: null, p: { ...adding, is_default: false } }); if (adding && id) await saveShip(id, adding); setAdding(null); reload(); }, 'Đã thêm pháp nhân');
   const exportX = () => run(async () => {
     const all: Row[] = (await db.rpc<any>('out_buyers_page', { p: { limit: 20000 } })).rows || [];
     const head = ['MST', 'Tên đơn vị', 'Địa chỉ', 'Mail nhận HĐ', 'Username', 'Mặc định', 'Khách ERP', 'Sale', 'Số phiếu đã dùng', 'Cảnh báo', 'Ghi chú',
-      'Người đại diện', 'Chức vụ', 'Địa chỉ giao hàng', 'Mã HĐ nguyên tắc', 'Ngày HĐ nguyên tắc'];
+      'Người đại diện', 'Chức vụ', 'Địa chỉ giao hàng', 'Mã HĐ nguyên tắc', 'Ngày HĐ nguyên tắc', 'Người nhận chuyển phát', 'SĐT nhận'];
     await writeXlsx('Phap_nhan_nhan_HD_' + today(), [head, ...all.map(r => [r.tax_code || '', r.name, r.address || '', r.email || '', r.username || '', r.is_default ? '★' : '', [r.kh_code, r.kh_name].filter(Boolean).join(' · '),
       a.personName(r.sale_id || ''), r.so_phieu, [!r.customer_id && 'username chưa có khách', r.mst_sai && 'MST sai dạng', r.thieu_dc && 'thiếu địa chỉ', r.trung_mst && 'cùng MST khác tên'].filter(Boolean).join('; '), r.note || '',
-      r.dai_dien || '', r.chuc_vu || '', r.dia_chi_giao || '', r.ma_hdnt || '', r.ngay_hdnt ? r.ngay_hdnt.split('-').reverse().join('/') : ''])],
-      'Thong tin KH', true, { fmt: { 0: 'plain', 14: 'plain' } });
+      r.dai_dien || '', r.chuc_vu || '', r.dia_chi_giao || '', r.ma_hdnt || '', r.ngay_hdnt ? r.ngay_hdnt.split('-').reverse().join('/') : '', r.nguoi_nhan || '', r.sdt_nhan || ''])],
+      'Thong tin KH', true, { fmt: { 0: 'plain', 14: 'plain', 17: 'plain' } });
   }, 'Đã xuất Excel — sửa xong nạp lại ở nút “Nạp Excel”');
   const nDirty = rows.filter(dirty).length;
   const sales = useMemo(() => Array.from(new Set(rows.map(r => r.sale_id).filter(Boolean))) as string[], [rows]);
@@ -106,6 +110,11 @@ export default function PhapNhan() {
               <input disabled={!acc} className={cx(inp, 'border-ink-200 disabled:bg-ink-50 disabled:text-ink-600', val(r, 'ma_hdnt') && 'border-emerald-300 bg-emerald-50/50 font-semibold')} value={val(r, 'ma_hdnt')} onChange={e => setE(r, 'ma_hdnt', e.target.value)} placeholder={acc ? 'Mã HĐ nguyên tắc (nếu đã ký)' : 'Chưa có HĐ nguyên tắc'} title={acc ? 'Có mã HĐNT → bộ chứng từ dùng HĐNT, không cần HĐ mua bán từng HĐ' : 'Mã HĐ nguyên tắc do kế toán điền'} />
               <input disabled={!acc} type="date" className={cx(inp, 'border-ink-200 disabled:bg-ink-50')} value={val(r, 'ngay_hdnt')} onChange={e => setE(r, 'ngay_hdnt', e.target.value)} title="Ngày ký HĐ nguyên tắc (trống: đọc từ mã dạng 28/08/2026/...)" />
               <input className={cx(inp, 'border-ink-200')} value={val(r, 'dia_chi_giao')} onChange={e => setE(r, 'dia_chi_giao', e.target.value)} placeholder="Địa chỉ giao hàng (trống = địa chỉ ĐKKD)" /></div>
+            {/* Bản 40: người nhận bản cứng HĐ đã ký (chuyển phát) — tự điền khi tạo phiếu chuyển phát */}
+            <div className="grid gap-1.5 sm:grid-cols-2 lg:col-start-2 lg:col-end-8 lg:grid-cols-[1.3fr_1fr_3.7fr]">
+              <input className={cx(inp, 'border-ink-200')} value={val(r, 'nguoi_nhan')} onChange={e => setE(r, 'nguoi_nhan', e.target.value)} placeholder="📦 Người nhận chuyển phát HĐ" title="Người nhận bản cứng HĐ đã ký" />
+              <input className={cx(inp, val(r, 'sdt_nhan').trim() && !sdtOk(val(r, 'sdt_nhan')) ? 'border-red-300' : 'border-ink-200')} inputMode="tel" value={val(r, 'sdt_nhan')} onChange={e => setE(r, 'sdt_nhan', e.target.value)} placeholder="📞 SĐT nhận" />
+              <span className="self-center text-[11px] text-ink-400">Địa chỉ nhận = địa chỉ giao hàng (trống thì dùng địa chỉ ĐKKD).</span></div>
             <div className="flex flex-wrap gap-1 text-[11px] lg:col-start-2 lg:col-end-8">
               {r.trung_mst && <Badge color="red">Cùng MST {r.tax_code} có tên khác — chuẩn hóa</Badge>}
               {r.mst_sai && <Badge color="red">MST sai dạng</Badge>}{r.khong_md && <Badge color="amber">Khách chưa có ★</Badge>}
@@ -129,7 +138,9 @@ export default function PhapNhan() {
         <label className="text-xs text-ink-600">Chức vụ<Input value={adding.chuc_vu} onChange={e => setAdding({ ...adding, chuc_vu: e.target.value })} placeholder="VD: Giám đốc / Chủ hộ kinh doanh" /></label>
         <label className="text-xs text-ink-600">Mã HĐ nguyên tắc (nếu đã ký{acc ? '' : ' — kế toán điền'})<Input disabled={!acc} value={adding.ma_hdnt} onChange={e => setAdding({ ...adding, ma_hdnt: e.target.value })} placeholder="VD: 28/08/2026/HĐNTHH/NT/JINVPP" /></label>
         <label className="text-xs text-ink-600">Ngày ký HĐNT<Input disabled={!acc} type="date" value={adding.ngay_hdnt} onChange={e => setAdding({ ...adding, ngay_hdnt: e.target.value })} /></label>
-        <label className="text-xs text-ink-600 sm:col-span-2">Địa chỉ giao hàng (trống = địa chỉ trên)<Input value={adding.dia_chi_giao} onChange={e => setAdding({ ...adding, dia_chi_giao: e.target.value })} /></label></div>
+        <label className="text-xs text-ink-600 sm:col-span-2">Địa chỉ giao hàng (trống = địa chỉ trên)<Input value={adding.dia_chi_giao} onChange={e => setAdding({ ...adding, dia_chi_giao: e.target.value })} /></label>
+        <label className="text-xs text-ink-600">Người nhận chuyển phát HĐ<Input value={adding.nguoi_nhan} onChange={e => setAdding({ ...adding, nguoi_nhan: e.target.value })} /></label>
+        <label className="text-xs text-ink-600">SĐT nhận<Input inputMode="tel" value={adding.sdt_nhan} onChange={e => setAdding({ ...adding, sdt_nhan: e.target.value })} className={adding.sdt_nhan && !sdtOk(adding.sdt_nhan) ? 'border-red-300' : ''} /></label></div>
       <p className="mt-2 text-xs text-ink-500">Username khớp khách ERP thì gắn ngay; chưa có khách thì ERP tự gắn khi khách có username đó. Khách chưa có ★ → pháp nhân này thành mặc định.</p></Modal>}
     {imp && <ImportBuyers current={rows} onClose={() => setImp(false)} onDone={() => { setImp(false); reload(); }} />}
   </Layout>;

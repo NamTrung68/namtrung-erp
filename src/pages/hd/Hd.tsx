@@ -21,6 +21,7 @@ import { Chips, Modal } from '../../components/ui';
 import { MisaRun, MisaTag } from '../out/MisaRun';
 import { exportMisaDoiChieu, misaCall, misaCfgOf, misaOn } from '../../lib/misa';
 import { DocBtns, KyBtn, KyList } from './HdDocs';
+import { ShipCreate, ShipList, useShipCounts } from './ChuyenPhat';
 import { MstChip } from '../../components/MstCheck';
 
 // ---------------- dùng chung ----------------
@@ -78,7 +79,7 @@ function Block({ n, title, sub, actions, children, tone }: { n?: string; title: 
 }
 
 // ================= SALE =================
-type STab = 'ready' | 'duyet' | 'tra' | 'dang' | 'ky';
+type STab = 'ready' | 'duyet' | 'tra' | 'dang' | 'ky' | 'cp';
 export function HdSale() {
   const a = useApp(); const [tab, setTab] = useState<STab>(() => (sessionStorage.getItem('nt_hd_tab') as STab) || 'ready');
   const go2 = (t: string) => { setTab(t as STab); sessionStorage.setItem('nt_hd_tab', t); };
@@ -87,11 +88,13 @@ export function HdSale() {
   const [hd, setHd] = useState(''); // bản 29: lọc theo số HĐ đầu vào APT
   const { data: hdOpts } = useLoad(() => db.rpc<any[]>('out_hd_opts', { p_mode: 'mine' }).catch(() => []), [rev]);
   React.useEffect(() => { if (query.inv) setOpen(query.inv); }, [query.inv]);
+  React.useEffect(() => { if (query.tab) go2(query.tab); }, [query.tab]); // bản 40: thông báo chuyển phát mở thẳng tab
   const close = () => { setOpen(null); if (location.hash.includes('inv=')) go('/hd'); };
   const { data: saleOpts } = useLoad(() => a.seesTeam ? db.rpc<any[]>('out_sale_opts') : Promise.resolve([]), []);
   const { data: cnt } = useLoad(() => db.rpc<any>('out_invoices_page', { p: { limit: 0, sale, hd } }), [sale, hd, rev]);
   const { data: st } = useLoad(() => db.rpc<any>('out_items_stats', { p_mode: 'mine' }), [rev]);
   const c = (k: string) => Number(cnt?.counts?.[k] || 0);
+  const { data: cp } = useShipCounts([rev]);
   if (!a.isSales && !a.isAdmin) return <Layout title="Hóa đơn của tôi"><Card>Chỉ dành cho Kinh doanh.</Card></Layout>;
   const tabs: [string, React.ReactNode][] = [
     ['ready', <>Sẵn sàng xuất <Badge color="amber">{st?.ton ?? '…'}</Badge></>],
@@ -99,6 +102,7 @@ export function HdSale() {
     ['tra', <>Bị trả / chờ duyệt giá {c('tra_sua') + c('cho_duyet_gia') + c('soan') > 0 && <Badge color="red">{c('tra_sua') + c('cho_duyet_gia') + c('soan')}</Badge>}</>],
     ['dang', <>Đang xử lý <Badge>{c('cho_nhap') + c('xac_nhan_ky')}</Badge></>],
     ['ky', 'Đã ký'],
+    ['cp', <>📦 Chuyển phát HĐ {Number(cp?.qua_han || 0) > 0 ? <Badge color="red">⏰ {cp.qua_han}</Badge> : Number(cp?.mo || 0) > 0 ? <Badge>{cp.mo}</Badge> : null}</>],
   ];
   const reload = () => setRev(x => x + 1);
   return <Layout title="Hóa đơn của tôi" actions={<div className="flex flex-wrap items-center gap-2">
@@ -111,7 +115,8 @@ export function HdSale() {
       {tab === 'duyet' && <SaleList statuses={['da_nhap']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có bản nháp nào chờ bạn" hint="Mở yêu cầu → xem PDF nháp → gửi khách → Chốt, hoặc Yêu cầu sửa." />}
       {tab === 'tra' && <SaleList statuses={['tra_sua', 'cho_duyet_gia', 'soan']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có yêu cầu bị trả hay chờ duyệt" hint="Trả sửa: bấm Sửa rồi gửi lại (lên phiên bản mới). Chờ duyệt giá: biên > 4%, chờ quản lý duyệt. Đang soạn: chưa gửi kế toán." />}
       {tab === 'dang' && <SaleList statuses={['cho_nhap', 'xac_nhan_ky']} sale={sale} hd={hd} rev={rev} onOpen={setOpen} empty="Không có yêu cầu đang ở phía kế toán" hint="Đã gửi → kế toán export MISA → có nháp sẽ chuyển sang tab Chờ tôi duyệt. Đã chốt → chờ kế toán ký." />}
-      {tab === 'ky' && <KyTab sale={sale} hd={hd} rev={rev} onOpen={setOpen} />}
+      {tab === 'ky' && <KyTab sale={sale} hd={hd} rev={rev} onOpen={setOpen} onShipped={reload} />}
+      {tab === 'cp' && <ShipList sale={sale} rev={rev} onChanged={reload} />}
     </div>
     {open && <InvoiceDetail id={open} acc={false} onClose={close} onChanged={reload} />}
   </Layout>;
@@ -122,11 +127,13 @@ function SaleList({ statuses, sale, hd, rev, onOpen, empty, hint }: { statuses: 
 }
 
 /** Bản 35: Đã ký — bấm mã tra cứu xem HĐ trên MISA; cột chứng từ xuất nhanh ĐĐH / BBGN / HĐ mua bán / HĐ nguyên tắc (1 HĐ, cả đơn, nhiều HĐ) */
-function KyTab({ sale, hd, rev, onOpen }: { sale: string; hd: string; rev: number; onOpen: (id: string) => void }) {
+function KyTab({ sale, hd, rev, onOpen, onShipped }: { sale: string; hd: string; rev: number; onOpen: (id: string) => void; onShipped?: () => void }) {
   const { data, loading } = useInv(['da_ky'], { sale, hd, dir: 'desc' }, [rev]);
+  const [ship, setShip] = useState<{ ids: string[]; clear: () => void } | null>(null);
   return <><p className="mb-3 text-sm text-ink-600">Bấm mã tra cứu (ô xanh) để xem HĐ trên MISA, <b>⬇ Tải HĐ (PDF)</b> để tải bản đã ký (lưu sẵn trên Drive công ty). Cột bên phải: 🧾 Đơn đặt hàng · 🚚 Biên bản giao nhận · 📜 HĐ mua bán / 🤝 HĐ nguyên tắc · 🗂️ Cả bộ (ĐĐH + BBGN + HĐ đã ký) — ô có ✓ là đã tải. Dưới biểu tượng là <b>trạng thái hồ sơ</b>; bấm ⋯ để đánh dấu đã gửi khách hoặc tải bản đã ký lên. Ngày chứng từ = ngày HĐ đã ký.</p>
-    <KyList data={data} render={(rows, sel, onSel, st, reload) => <Card bodyClass="p-0"><InvRows rows={rows} loading={loading} onOpen={onOpen} empty="Chưa có HĐ đã ký" sale sel={sel} onSel={onSel}
-      action={v => <DocBtns v={v} st={st[v.id] || null} onChanged={reload} compact />} /></Card>} /></>;
+    <KyList data={data} onShip={(ids, clear) => setShip({ ids, clear })} render={(rows, sel, onSel, st, reload) => <Card bodyClass="p-0"><InvRows rows={rows} loading={loading} onOpen={onOpen} empty="Chưa có HĐ đã ký" sale sel={sel} onSel={onSel}
+      action={v => <DocBtns v={v} st={st[v.id] || null} onChanged={reload} compact />} /></Card>} />
+    {ship && <ShipCreate ids={ship.ids} onClose={() => setShip(null)} onDone={() => { ship.clear(); setShip(null); onShipped?.(); }} />}</>;
 }
 
 /** Bản 32: dòng thiếu ID đơn / username (hoặc username trùng số đơn = file xe lệch cột) → gom nhóm riêng để điền */
