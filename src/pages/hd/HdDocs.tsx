@@ -6,10 +6,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../state';
 import { driveReady, saveToDrive } from '../../lib/drive';
 import { compressImage } from '../../lib/image';
-import { Button, Card, cx, Input, Modal, toast, useAction } from '../../components/ui';
+import { ask, Button, Card, cx, Input, Modal, toast, useAction } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { downloadBlob } from '../../lib/format';
 import { DOC_NAME, docFile, docsOf, hasHdnt, makeBundle, makeDocx, soDon, type DocInv, type DocKind } from '../../lib/hdDocs';
+import { kyName, kyPdf } from '../../lib/hdky';
 
 const loadDocs = async (ids: string[]): Promise<DocInv[]> => {
   const invs = (await db.rpc<DocInv[]>('out_docs_data', { p_ids: ids })) || [];
@@ -80,7 +81,7 @@ const mark = (ids: string[], act: string, kinds: string[] = [], url: string | nu
 
 const ICON: Record<DocKind | 'all', [string, string, string]> = {
   ddh: ['🧾', 'ĐĐH', 'Đơn đặt hàng (.docx)'], bbgn: ['🚚', 'BBGN', 'Biên bản giao nhận hàng hóa (.docx)'],
-  hdmb: ['📜', 'HĐMB', 'HĐ mua bán cho HĐ này (khách chưa ký HĐ nguyên tắc)'], hdnt: ['🤝', 'HĐNT', 'HĐ nguyên tắc của khách'], all: ['🗂️', 'Cả bộ', 'Cả bộ chứng từ của HĐ này (.zip)'],
+  hdmb: ['📜', 'HĐMB', 'HĐ mua bán cho HĐ này (khách chưa ký HĐ nguyên tắc)'], hdnt: ['🤝', 'HĐNT', 'HĐ nguyên tắc của khách'], all: ['🗂️', 'Cả bộ', 'Cả bộ: Đơn đặt hàng + Biên bản giao nhận + HĐ đã ký (PDF) — 1 file .zip'],
 };
 function Tile({ k, onClick, busy, done, hint }: { k: DocKind | 'all'; onClick: () => void; busy?: boolean; done?: { at: string; n: number } | null; hint?: string }) {
   const [ic, l, t] = ICON[k];
@@ -101,7 +102,20 @@ export function DocBtns({ v, st, onChanged, compact }: { v: { id: string; buyer_
   useEffect(() => { if (st === undefined) refresh(); }, [v.id]);
   const log = (kinds: string[]) => mark([v.id], 'tai', kinds).then(refresh).catch(() => null);
   const one = (k: DocKind) => d.start([v.id], async ([x]) => { setInfo(x); const kk = k === 'hdmb' && hasHdnt(x) ? 'hdnt' : k; downloadBlob(docFile(x, kk), await makeDocx(x, kk)); log([kk]); }, k !== 'ddh');
-  const all = () => d.start([v.id], async ([x]) => { setInfo(x); const kinds: DocKind[] = hasHdnt(x) ? [...docsOf(x), 'hdnt'] : docsOf(x); const { blob } = await makeBundle([x], kinds); downloadBlob(`Chung_tu_HD${soDon(x)}.zip`, blob); log(kinds); }, true);
+  // Bản 38: Cả bộ = ĐĐH + BBGN + HĐ đã ký (PDF lấy từ Drive; chưa có thì máy chủ tự tải từ meInvoice theo mã tra cứu)
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const all = async () => {
+    setPdfBusy(true); let pdf: Blob | null = null;
+    try { pdf = await kyPdf(a.settings.drive, v.id); }
+    catch (e: any) {
+      setPdfBusy(false);
+      const ok = await ask({ title: 'Chưa lấy được HĐ đã ký', ok: 'Vẫn tải ĐĐH + BBGN', message: <>Không tự tải được PDF HĐ đã ký: <b>{e?.message || String(e)}</b><br /><br />
+        Bấm vào <b>mã tra cứu</b> (ô xanh) để tải HĐ trên meInvoice, hoặc báo kế toán kiểm tra mã tra cứu. Bạn có muốn tải trước ĐĐH + BBGN không?</> });
+      if (!ok) return;
+    } finally { setPdfBusy(false); }
+    d.start([v.id], async ([x]) => { setInfo(x); const kinds: DocKind[] = ['ddh', 'bbgn'];
+      const { blob } = await makeBundle([x], kinds, undefined, pdf ? { [x.id]: pdf } : {}); downloadBlob(`Chung_tu_HD${soDon(x)}.zip`, blob); log(pdf ? [...kinds, 'hd'] : kinds); }, true);
+  };
   const act = async (x: string, url: string | null = null) => { setMenu(false); try { await mark([v.id], x, [], url); toast.ok(x === 'gui' ? 'Đã đánh dấu: đã gửi khách' : x === 'ky' ? 'Đã lưu: hồ sơ có bản ký' : 'Đã bỏ đánh dấu'); refresh(); } catch (e: any) { toast.err(e); } };
   const upload = async (f: File) => {
     setUp(true);
@@ -121,7 +135,7 @@ export function DocBtns({ v, st, onChanged, compact }: { v: { id: string; buyer_
       <Tile k="ddh" busy={!!d.busy} done={s?.tai?.ddh} onClick={() => one('ddh')} />
       <Tile k="bbgn" busy={!!d.busy} done={s?.tai?.bbgn} onClick={() => one('bbgn')} />
       <Tile k={isNt ? 'hdnt' : 'hdmb'} busy={!!d.busy} done={s?.tai?.hdmb || s?.tai?.hdnt} onClick={() => one('hdmb')} hint="Khách đã ký HĐ nguyên tắc → tải HĐ nguyên tắc; chưa ký → HĐ mua bán" />
-      <Tile k="all" busy={!!d.busy} onClick={all} />
+      <Tile k="all" busy={!!d.busy || pdfBusy} onClick={all} done={s?.tai?.hd && s?.tai?.ddh && s?.tai?.bbgn ? s.tai.hd : null} />
     </div>
     <div className="relative flex items-center gap-1">
       <span className={cx('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold', HS[hs][2])} title={s ? [s.gui_at && 'Gửi: ' + new Date(s.gui_at).toLocaleString('vi-VN') + ' · ' + a.personName(s.gui_by || ''), s.ky_at && 'Bản ký: ' + new Date(s.ky_at).toLocaleString('vi-VN') + ' · ' + a.personName(s.ky_by || '')].filter(Boolean).join('\n') : ''}>
@@ -143,11 +157,17 @@ export function DocBtns({ v, st, onChanged, compact }: { v: { id: string; buyer_
 export function DocsBar({ rows, sel, setSel, onChanged }: { rows: any[]; sel: Record<string, boolean>; setSel: (x: Record<string, boolean>) => void; onChanged?: () => void }) {
   const [kinds, setKinds] = useState<DocKind[]>(() => { try { const k = JSON.parse(localStorage.getItem('nt_doc_kinds') || 'null'); return Array.isArray(k) && k.length ? k : ['ddh', 'bbgn', 'hdmb']; } catch { return ['ddh', 'bbgn', 'hdmb']; } });
   const tog = (k: DocKind) => { const n = kinds.includes(k) ? kinds.filter(x => x !== k) : [...kinds, k]; setKinds(n); try { localStorage.setItem('nt_doc_kinds', JSON.stringify(n)); } catch { /* */ } };
-  const d = useDocs(); const ids = rows.filter(r => sel[r.id]).map(r => r.id); const { busy, run } = useAction();
-  const go = () => { if (!ids.length) return toast.info('Tick HĐ cần xuất (hoặc “Chọn tất cả”)'); if (!kinds.length) return toast.info('Chọn ít nhất 1 loại chứng từ');
-    d.start(ids, async invs => { const { blob, n } = await makeBundle(invs, kinds); if (!n) { toast.info('Không có chứng từ nào cần tạo (HĐ mua bán chỉ cho khách chưa ký HĐ nguyên tắc)'); return; }
+  const a = useApp(); const d = useDocs(); const ids = rows.filter(r => sel[r.id]).map(r => r.id); const { busy, run } = useAction();
+  const [withPdf, setWithPdf] = useState(() => { try { return localStorage.getItem('nt_doc_pdf') !== '0'; } catch { return true; } });
+  const togPdf = () => { setWithPdf(!withPdf); try { localStorage.setItem('nt_doc_pdf', withPdf ? '0' : '1'); } catch { /* */ } };
+  const go = () => { if (!ids.length) return toast.info('Tick HĐ cần xuất (hoặc “Chọn tất cả”)'); if (!kinds.length && !withPdf) return toast.info('Chọn ít nhất 1 loại chứng từ');
+    d.start(ids, async invs => {
+      const pdf: Record<string, Blob> = {}; const miss: string[] = [];
+      if (withPdf) for (const v of invs) { try { pdf[v.id] = await kyPdf(a.settings.drive, v.id); } catch { miss.push(soDon(v)); } }
+      const { blob, n } = await makeBundle(invs, kinds, undefined, pdf); if (!n) { toast.info('Không có chứng từ nào cần tạo (HĐ mua bán chỉ cho khách chưa ký HĐ nguyên tắc)'); return; }
       downloadBlob(`Chung_tu_${invs.length}HD_${new Date().toISOString().slice(0, 10)}.zip`, blob); toast.ok(`Đã tạo ${n} file chứng từ cho ${invs.length} HĐ`);
-      for (const v of invs) await mark([v.id], 'tai', kinds.filter(k => (k === 'hdmb' ? !hasHdnt(v) : k === 'hdnt' ? hasHdnt(v) : true))).catch(() => null);
+      if (miss.length) toast.err(`Chưa lấy được PDF HĐ đã ký: ${miss.slice(0, 8).join(', ')}${miss.length > 8 ? '…' : ''} — bấm mã tra cứu để tải tay`);
+      for (const v of invs) await mark([v.id], 'tai', [...kinds.filter(k => (k === 'hdmb' ? !hasHdnt(v) : k === 'hdnt' ? hasHdnt(v) : true)), ...(pdf[v.id] ? ['hd'] : [])]).catch(() => null);
       onChanged?.(); }, kinds.some(k => k !== 'ddh')); };
   const allOn = rows.length > 0 && rows.every(r => sel[r.id]);
   return <Card className="mb-3" bodyClass="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
@@ -155,6 +175,8 @@ export function DocsBar({ rows, sel, setSel, onChanged }: { rows: any[]; sel: Re
     <span className="text-ink-300">|</span>
     {(['ddh', 'bbgn', 'hdmb', 'hdnt'] as DocKind[]).map(k => <button key={k} onClick={() => tog(k)} title={DOC_NAME[k]} className={cx('flex items-center gap-1 rounded-full border px-2.5 py-1 font-semibold', kinds.includes(k) ? 'border-brand-500 bg-brand-50 text-brand-800' : 'border-ink-200 text-ink-400')}>
       <span className="text-sm">{ICON[k][0]}</span>{DOC_NAME[k]}{k === 'hdmb' ? ' (chưa ký HĐNT)' : k === 'hdnt' ? ' (1 bản/khách)' : ''}{kinds.includes(k) ? ' ✓' : ''}</button>)}
+    <button onClick={togPdf} title="HĐ đã ký (PDF) — lấy từ Drive / tự tải từ meInvoice theo mã tra cứu" className={cx('flex items-center gap-1 rounded-full border px-2.5 py-1 font-semibold', withPdf ? 'border-brand-500 bg-brand-50 text-brand-800' : 'border-ink-200 text-ink-400')}>
+      <span className="text-sm">📄</span>HĐ đã ký (PDF){withPdf ? ' ✓' : ''}</button>
     <div className="ml-auto flex items-center gap-2">
       <Button size="sm" disabled={!ids.length} loading={busy} onClick={() => run(async () => { await mark(ids, 'gui'); onChanged?.(); }, `Đã đánh dấu ${ids.length} HĐ: đã gửi khách`)}>✉ Đã gửi khách</Button>
       <Button size="sm" variant="primary" loading={!!d.busy} disabled={!ids.length} onClick={go}>⬇ Xuất {ids.length || ''} HĐ (.zip)</Button></div>
@@ -179,4 +201,16 @@ export function KyList({ data, render }: { data: any[] | null | undefined; rende
     <DocsBar rows={rows} sel={sel} setSel={setSel} onChanged={reload} />
     {render(rows, sel, (id, on) => setSel(x => ({ ...x, [id]: on })), st, reload)}
   </>;
+}
+
+/** Bản 38: nút tải PDF HĐ đã ký (dưới mã tra cứu). File lưu sẵn trên Google Drive công ty; chưa có thì máy chủ tự tải từ meInvoice rồi lưu */
+export function KyBtn({ v, className }: { v: { id: string; so_hd?: string | null; code?: string; buyer_name?: string | null }; className?: string }) {
+  const a = useApp(); const [busy, setBusy] = useState(false);
+  const go = async (e: React.MouseEvent) => {
+    e.stopPropagation(); setBusy(true);
+    try { const b = await kyPdf(a.settings.drive, v.id); downloadBlob(kyName(v), b); mark([v.id], 'tai', ['hd']).catch(() => null); }
+    catch (er: any) { toast.err((er?.message || String(er)) + ' — bấm mã tra cứu để tải tay'); } finally { setBusy(false); }
+  };
+  return <button type="button" disabled={busy} onClick={go} title="Tải PDF HĐ đã ký (lưu sẵn trên Google Drive công ty)"
+    className={cx('inline-flex items-center gap-1 rounded-md bg-white px-2 py-0.5 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-50 disabled:opacity-60', className)}>{busy ? '⏳ Đang tải…' : '⬇ Tải HĐ (PDF)'}</button>;
 }

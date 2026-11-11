@@ -5,9 +5,9 @@ import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, NumInput,
 import { db, storage } from '../../lib/sb';
 import { useApp } from '../../state';
 import { compressImage } from '../../lib/image';
-import { fmtDate, fmtTime, monthStart, monthEnd, today } from '../../lib/format';
+import { addDays, fmtDate, fmtTime, monthStart, monthEnd, today } from '../../lib/format';
 
-const REQ: [string, string][] = [['xac_nhan_cong', 'Đơn xác nhận công (quên chấm)'], ['cong_tac', 'Đơn đi công tác / gặp khách'], ['xin_muon_som', 'Xin đi muộn / về sớm']];
+const REQ: [string, string][] = [['quen_cham_vao', 'Xác nhận chấm công muộn (quên chấm đến)'], ['quen_cham_ra', 'Xác nhận quên chấm công về'], ['xac_nhan_cong', 'Đơn xác nhận công (quên chấm)'], ['cong_tac', 'Đơn đi công tác / gặp khách'], ['xin_muon_som', 'Xin đi muộn / về sớm']];
 const RS: Record<string, [string, string]> = { cho_duyet: ['Chờ duyệt', 'amber'], da_duyet: ['Đã duyệt', 'green'], tu_choi: ['Từ chối', 'red'], huy: ['Đã hủy', 'gray'] };
 
 export default function Attendance() {
@@ -25,19 +25,30 @@ function MyAttendance() {
   const [month, setMonth] = useState(today().slice(0, 7));
   const { data: ip } = useLoad(() => db.rpc('my_ip'), []);
   const { data: ev, reload } = useLoad(() => db.from('attendance_events').select('id,kind,at,work_date,ip_ok,status,selfie_path,purged_at').eq('profile_id', a.me.id).gte('work_date', month + '-01').lte('work_date', monthEnd(month + '-01')).order('at'), [month]);
+  // Bản 37: giờ vào / ra đã được duyệt qua đơn quên chấm → hiện thay cho giờ chấm (khớp bảng công, lương)
+  const { data: rq } = useLoad(() => db.from('attendance_requests').select('kind,work_date,confirm_in,confirm_out').eq('profile_id', a.me.id).eq('status', 'da_duyet')
+    .in('kind', ['quen_cham_vao', 'quen_cham_ra', 'xac_nhan_cong']).gte('work_date', month + '-01').lte('work_date', monthEnd(month + '-01')), [month]);
   const [cam, setCam] = useState<'in' | 'out' | null>(null); const [img, setImg] = useState<string | null>(null);
   const blocked = !!ip && !ip.ok && (cfg.outside_ip || 'flag') === 'block' && (cfg.ip_whitelist || []).length > 0;
   if (a.me.work_schedule !== 'office') return <Card>Lịch làm việc của bạn ({a.me.work_schedule === 'warehouse' ? 'Kho' : 'không chấm công'}) không cần chấm công bằng ứng dụng.</Card>;
   const days = new Map<string, any[]>(); ((ev as any[]) || []).forEach(e => days.set(e.work_date, [...(days.get(e.work_date) || []), e]));
+  const fixIn: Record<string, string> = {}, fixOut: Record<string, string> = {};
+  ((rq as any[]) || []).forEach(r => {
+    const evs = days.get(r.work_date) || [];
+    if (r.confirm_in && (r.kind === 'quen_cham_vao' || (!fixIn[r.work_date] && !evs.some(e => e.kind === 'in' && e.status !== 'rejected')))) fixIn[r.work_date] = String(r.confirm_in).slice(0, 5);
+    if (r.confirm_out && (r.kind === 'quen_cham_ra' || (!fixOut[r.work_date] && !evs.some(e => e.kind === 'out' && e.status !== 'rejected')))) fixOut[r.work_date] = String(r.confirm_out).slice(0, 5);
+    if (!days.has(r.work_date) && (r.confirm_in || r.confirm_out)) days.set(r.work_date, []);
+  });
+  const sorted = Array.from(days.entries()).sort((x, y) => (x[0] < y[0] ? -1 : 1));
   const todayEv = days.get(today()) || [];
   const start = cfg.start || '08:00';
   const lateOf = (d: string, list: any[]) => {
-    const first = list.find(e => e.kind === 'in'); if (!first) return 0;
-    const t = fmtTime(first.at); const [h, m] = t.split(':').map(Number); const [sh, sm] = start.split(':').map(Number);
+    const first = list.find(e => e.kind === 'in'); if (!first && !fixIn[d]) return 0;
+    const t = fixIn[d] || fmtTime(first.at); const [h, m] = t.split(':').map(Number); const [sh, sm] = start.split(':').map(Number);
     return Math.max(0, h * 60 + m - (sh * 60 + sm));
   };
   const flexFrom = cfg.flex_start || '';
-  const totalLate = Array.from(days.entries()).filter(([d]) => !flexFrom || d >= flexFrom).reduce((s, [d, l]) => s + lateOf(d, l), 0);
+  const totalLate = sorted.filter(([d]) => !flexFrom || d >= flexFrom).reduce((s, [d, l]) => s + lateOf(d, l), 0);
   return (
     <div className="grid gap-4 lg:grid-cols-[380px_minmax(0,1fr)] [&>*]:min-w-0">
       <div className="min-w-0 space-y-4">
@@ -56,12 +67,12 @@ function MyAttendance() {
           <div className="mt-2 h-2 rounded-full bg-ink-100"><div className={totalLate > (cfg.flex_minutes ?? 100) ? 'h-2 rounded-full bg-red-500' : 'h-2 rounded-full bg-emerald-500'} style={{ width: `${Math.min(100, totalLate / (cfg.flex_minutes || 100) * 100)}%` }} /></div></div></Card>
       </div>
       <Card className="min-w-0" title="Lịch sử chấm công" actions={<Input type="month" className="w-36" value={month} onChange={e => setMonth(e.target.value)} />} bodyClass="p-0">
-        {!days.size ? <Empty>Chưa có dữ liệu</Empty> : <ul className="divide-y divide-ink-100">{Array.from(days.entries()).reverse().map(([d, l]) => {
+        {!days.size ? <Empty>Chưa có dữ liệu</Empty> : <ul className="divide-y divide-ink-100">{[...sorted].reverse().map(([d, l]) => {
           const late = !flexFrom || d >= flexFrom ? lateOf(d, l) : 0; const ein = l.find(e => e.kind === 'in'); const eout = [...l].reverse().find(e => e.kind === 'out');
           return <li key={d} className="grid grid-cols-[52px_1fr_1fr] items-center gap-2 px-3 py-2.5 sm:grid-cols-[90px_1fr_1fr_auto] sm:px-4">
             <div><div className="font-semibold leading-tight">{fmtDate(d).slice(0, 5)}</div><div className="text-[11px] text-ink-400">{['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][new Date(d + 'T00:00:00Z').getUTCDay()]}</div></div>
-            <div className="flex min-w-0 items-center gap-1.5">{ein ? <SelfieThumb e={ein} onOpen={setImg} /> : <span className="h-10 w-10" />}<div className="leading-tight"><div className="text-[10px] uppercase text-ink-400">Vào</div><b className="tabular-nums">{fmtTime(ein?.at) || '—'}</b></div></div>
-            <div className="flex min-w-0 items-center gap-1.5">{eout ? <SelfieThumb e={eout} onOpen={setImg} /> : <span className="h-10 w-10" />}<div className="leading-tight"><div className="text-[10px] uppercase text-ink-400">Ra</div><b className="tabular-nums">{fmtTime(eout?.at) || '—'}</b></div></div>
+            <div className="flex min-w-0 items-center gap-1.5">{ein ? <SelfieThumb e={ein} onOpen={setImg} /> : <span className="h-10 w-10" />}<div className="leading-tight"><div className="text-[10px] uppercase text-ink-400">Vào</div><b className="tabular-nums">{fixIn[d] || fmtTime(ein?.at) || '—'}</b>{fixIn[d] && <div className="text-[10px] text-emerald-700">theo đơn</div>}</div></div>
+            <div className="flex min-w-0 items-center gap-1.5">{eout ? <SelfieThumb e={eout} onOpen={setImg} /> : <span className="h-10 w-10" />}<div className="leading-tight"><div className="text-[10px] uppercase text-ink-400">Ra</div><b className="tabular-nums">{fixOut[d] || fmtTime(eout?.at) || '—'}</b>{fixOut[d] && <div className="text-[10px] text-emerald-700">theo đơn</div>}</div></div>
             {(late > 0 || l.some(e => e.status !== 'valid')) && <div className="col-span-3 flex flex-wrap items-center gap-1.5 text-xs sm:col-span-1 sm:justify-end">{late > 0 && <span className="font-semibold text-amber-700">muộn {late}′</span>}
               {l.some(e => e.status === 'flagged') && <Badge color="amber">Ngoài IP</Badge>}{l.some(e => e.status === 'rejected') && <Badge color="red">Bị từ chối</Badge>}</div>}
           </li>; })}</ul>}
@@ -284,7 +295,8 @@ function Requests() {
   return (
     <Card title="Đơn công của tôi" actions={<Button variant="dark" onClick={() => setOpen(true)}>Tạo đơn</Button>} bodyClass="p-0">
       {loading ? <Loading /> : !(data as any[])?.length ? <Empty /> : <Table head={['Loại', 'Ngày', 'Lý do', 'Trạng thái', '']}>{(data as any[]).map(r => (
-        <tr key={r.id}><Td>{REQ.find(x => x[0] === r.kind)?.[1]}</Td><Td>{fmtDate(r.work_date)}{r.part !== 'full' && ` (${r.part === 'am' ? 'sáng' : 'chiều'})`}{r.minutes && ` · ${r.minutes} phút`}</Td>
+        <tr key={r.id}><Td>{REQ.find(x => x[0] === r.kind)?.[1]}</Td><Td>{fmtDate(r.work_date)}{r.part !== 'full' && ` (${r.part === 'am' ? 'sáng' : 'chiều'})`}{r.minutes && ` · ${r.minutes} phút`}{r.req_time && ` · khai ${String(r.req_time).slice(0, 5)}`}
+            {r.status === 'da_duyet' && (r.confirm_in || r.confirm_out) && <div className="text-xs font-semibold text-emerald-700">Giờ chốt: {String(r.confirm_in || r.confirm_out).slice(0, 5)}</div>}</Td>
           <Td>{r.reason}{r.decision_note && <div className="text-xs text-ink-400">QL: {r.decision_note}</div>}</Td><Td><Badge color={RS[r.status][1]}>{RS[r.status][0]}</Badge></Td>
           <Td>{r.status === 'cho_duyet' && <Button size="sm" variant="ghost" onClick={() => run(async () => { await db.rpc('cancel_request', { p_table: 'attendance', p_id: r.id }); reload(); }, 'Đã hủy')}>Hủy</Button>}</Td></tr>))}</Table>}
       <NewReq open={open} onClose={() => setOpen(false)} onDone={() => { setOpen(false); reload(); }} />
@@ -292,19 +304,31 @@ function Requests() {
   );
 }
 function NewReq({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
-  const a = useApp(); const [f, setF] = useState({ kind: 'xac_nhan_cong', work_date: today(), part: 'full', minutes: null as number | null, reason: '' }); const { busy, run } = useAction();
+  const a = useApp(); const cfg = a.settings.attendance || {};
+  const init = () => ({ kind: 'quen_cham_vao', work_date: today(), part: 'full', minutes: null as number | null, req_time: '', reason: '' });
+  const [f, setF] = useState(init); const { busy, run } = useAction();
+  useEffect(() => { if (open) setF(init()); }, [open]);
+  const timed = f.kind === 'quen_cham_vao' || f.kind === 'quen_cham_ra';
+  const back = cfg.forgot_back_days ?? 30;
   return (
     <Modal open={open} onClose={onClose} title="Tạo đơn công" size="sm" footer={<Button variant="primary" loading={busy} onClick={() => run(async () => {
-      await db.from('attendance_requests').insert({ ...f, profile_id: a.me.id, minutes: f.kind === 'xin_muon_som' ? f.minutes : null }); onDone();
+      if (timed && !f.req_time) throw new Error(f.kind === 'quen_cham_vao' ? 'Nhập giờ bạn vào làm' : 'Nhập giờ bạn về');
+      if (f.reason.trim().length < 5) throw new Error('Ghi lý do (tối thiểu 5 ký tự)');
+      await db.from('attendance_requests').insert({ kind: f.kind, work_date: f.work_date, reason: f.reason.trim(), profile_id: a.me.id,
+        part: timed ? 'full' : f.part, minutes: f.kind === 'xin_muon_som' ? f.minutes : null, req_time: timed ? f.req_time : null }); onDone();
     }, 'Đã gửi đơn — chờ quản lý duyệt')}>Gửi đơn</Button>}>
       <div className="space-y-3">
         <p className="text-xs text-ink-500">Công tác, làm từ xa, đi muộn/về sớm: tạo ở mục <a className="text-brand-700 underline" href="#/hr/leave">Xin nghỉ</a>.</p>
-        <Field label="Loại đơn"><Select options={REQ.slice(0, 1)} value={f.kind} onChange={v => setF({ ...f, kind: v })} /></Field>
-        <div className="grid grid-cols-2 gap-3"><Field label="Ngày"><Input type="date" value={f.work_date} onChange={e => setF({ ...f, work_date: e.target.value })} /></Field>
-          {f.kind === 'xin_muon_som' ? <Field label="Số phút"><NumInput value={f.minutes} onChange={v => setF({ ...f, minutes: v })} /></Field>
+        <Field label="Loại đơn"><Select options={REQ.slice(0, 3)} value={f.kind} onChange={v => setF({ ...f, kind: v })} /></Field>
+        <div className="grid grid-cols-2 gap-3"><Field label="Ngày" required><Input type="date" max={today()} min={timed ? addDays(today(), -back) : undefined} value={f.work_date} onChange={e => setF({ ...f, work_date: e.target.value })} /></Field>
+          {timed ? <Field label={f.kind === 'quen_cham_vao' ? 'Giờ bạn vào làm' : 'Giờ bạn về'} required><Input type="time" value={f.req_time} onChange={e => setF({ ...f, req_time: e.target.value })} /></Field>
+            : f.kind === 'xin_muon_som' ? <Field label="Số phút"><NumInput value={f.minutes} onChange={v => setF({ ...f, minutes: v })} /></Field>
             : <Field label="Buổi"><Select options={[['full', 'Cả ngày'], ['am', 'Sáng'], ['pm', 'Chiều']]} value={f.part} onChange={v => setF({ ...f, part: v })} /></Field>}</div>
-        <Field label="Lý do / địa điểm" required><Textarea value={f.reason} onChange={e => setF({ ...f, reason: e.target.value })} /></Field>
-        <p className="text-xs text-ink-500">{f.kind === 'xac_nhan_cong' ? `Tối đa ${a.settings.attendance?.forgot_limit ?? 3} lần/tháng, gửi trong 24 giờ.` : f.kind === 'xin_muon_som' ? 'Gửi tối thiểu 30 phút trước giờ làm. Thời gian vẫn tính vào quỹ 100 phút.' : 'Sale gặp khách: ghi rõ tên khách, địa điểm.'}</p>
+        <Field label="Lý do" required><Textarea value={f.reason} placeholder={timed ? 'VD: Quên chấm, điện thoại hết pin…' : ''} onChange={e => setF({ ...f, reason: e.target.value })} /></Field>
+        <p className="text-xs text-ink-500">{f.kind === 'quen_cham_vao' ? `Giờ vào được quản lý duyệt (hoặc sửa theo camera) sẽ là giờ đến chính thức — tính đi muộn và lương. Gửi được cho ngày trong vòng ${back} ngày.`
+          : f.kind === 'quen_cham_ra' ? `Giờ về được quản lý duyệt (hoặc sửa lại) sẽ là giờ ra chính thức — tính về sớm và lương. Gửi được cho ngày trong vòng ${back} ngày.`
+          : f.kind === 'xac_nhan_cong' ? 'Gửi trong 24 giờ.' : f.kind === 'xin_muon_som' ? 'Gửi tối thiểu 30 phút trước giờ làm. Thời gian vẫn tính vào quỹ 100 phút.' : 'Sale gặp khách: ghi rõ tên khách, địa điểm.'}
+          {(f.kind === 'quen_cham_vao' || f.kind === 'quen_cham_ra' || f.kind === 'xac_nhan_cong') && ` Đơn quên chấm tối đa ${cfg.forgot_limit ?? 3} lần/tháng, mỗi lần trừ điểm chuyên cần.`}</p>
       </div>
     </Modal>
   );

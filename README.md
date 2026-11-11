@@ -166,3 +166,30 @@ Hàm mới: `out_docs_data`, `out_buyer_doc_info`, `out_invoice_mst`; sửa `out
 - **Pháp nhân nhận HĐ** mở cho Sale / CSKH / TN / TP: máy chủ chỉ trả pháp nhân của **khách mình phụ trách** (chủ khách trong phạm vi; CSKH theo sale được hỗ trợ). Được sửa / thêm / ★ / xóa pháp nhân chưa dùng; **mã + ngày HĐNT và Nạp Excel chỉ kế toán / admin / BGĐ**. Nút 🔍 cạnh MST để tra và điền nhanh.
 
 Kiểm thử: `tests/hd36.test.ts`, `supabase/tests/99p_v36.sql`.
+
+## Bản 37 — Ảnh sản phẩm trong báo giá, đơn quên chấm đến / quên chấm về (11/11/2026)
+
+Nâng cấp: chạy `supabase/migrations/0044_v37.sql` trong SQL Editor (tự sao lưu trước khi đổi).
+
+- **Báo giá → ảnh từng dòng hàng** (không bắt buộc): cột “Ảnh” trước tên hàng — bấm chọn, dán (Ctrl+V) hoặc kéo thả; ảnh tự nén ~200 KB, lưu bucket công khai `quote-images/<người lập>/…` (cột `quotation_lines.image`).
+  Bản in gửi khách có cột Ảnh 100×100 px (chỉ hiện khi có ít nhất 1 dòng có ảnh). Nhân bản / lấy mẫu từ Thư viện giữ ảnh. Ảnh **không** tính vào dấu giá → đổi ảnh không phải duyệt giá lại.
+- **Đơn công**: thêm 2 loại
+  - *Xác nhận chấm công muộn (quên chấm đến)* — nhân viên chọn ngày + giờ vào. Người duyệt thấy giờ khai, sửa theo camera nếu sai → giờ chốt là **giờ đến chính thức** (thay cả lần chấm muộn) để tính đi muộn, chuyên cần, lương.
+  - *Xác nhận quên chấm công về* — chọn ngày + giờ về; người duyệt sửa nếu sai → giờ ra chính thức (tính về sớm).
+  - Gửi được cho ngày đã qua trong 30 ngày (`attendance.forgot_back_days`), không gửi cho tháng đã chốt lương, không trùng loại/ngày. Vẫn tính chung giới hạn quên chấm / tháng và điểm chuyên cần như đơn xác nhận công cũ.
+  - Lịch sử “Chấm công của tôi” hiện giờ theo đơn đã duyệt (ghi “theo đơn”).
+
+Kiểm thử: `supabase/tests/99q_v37.sql`, `tests/e2e/v37.cjs`.
+
+## Bản 38 — Tự tải PDF HĐ đã ký, nút “Tải HĐ”, Cả bộ = ĐĐH + BBGN + HĐ (11/11/2026)
+
+Nâng cấp:
+1. Chạy `supabase/migrations/0045_v38.sql` trong SQL Editor (tự sao lưu trước khi đổi).
+2. Supabase → *Edge Functions* → *Deploy a new function* → tên **`hdky`** → dán toàn bộ `supabase/functions/hdky/index.ts` → *Deploy* → vào *Details* **tắt “Verify JWT”** (hàm tự kiểm phiên đăng nhập + quyền với phiếu). Không cần bí mật nào.
+
+- Hàm `hdky` tải PDF từ link tra cứu công khai của meInvoice (`DownloadHandler.ashx?Type=pdf&ext=QXVLM59J&Code={mã tra cứu}`; đổi được bằng `settings.accounting.tra_cuu_dl_url`, chỉ chấp nhận https://…meinvoice.vn) → kiểm file đúng PDF → lưu Google Drive `ERP_NAMTRUNG/HD da ky/<tháng>/<sale>/KY_<số HĐ>_<MST>_<tổng tiền>_<khách>.pdf` → gắn phiếu (file “ky”). Không dùng tài khoản / API MISA.
+- **Tự động**: kế toán điền mã tra cứu (hoặc MISA tự dò ra “Đã ký”) → CSDL gọi ngay `hdky` (pg_net); lịch `nt_hdky` 15 phút/lần (7h–22h) quét HĐ còn thiếu PDF. Mã tra cứu sai → ghi lỗi, thử lại sau 1 giờ, tối đa 5 lần (`app.ky_fetch_fail`).
+- **Hóa đơn của tôi → Đã ký**: dưới mã tra cứu có **⬇ Tải HĐ (PDF)** (lấy từ Drive; chưa có thì tải ngay). Nút **🗂️ Cả bộ** = Đơn đặt hàng + Biên bản giao nhận + HĐ đã ký (PDF) trong 1 file .zip; không lấy được HĐ → nhắc bấm link mã tra cứu, cho tải trước ĐĐH + BBGN. Xuất hàng loạt có thêm lựa chọn “HĐ đã ký (PDF)”. HĐ mua bán / HĐ nguyên tắc vẫn tải riêng ở biểu tượng 📜 / 🤝.
+- Quyền: sale của phiếu, cấp trên theo cây, Kế toán / Admin. Gắn file chỉ hàm máy chủ làm được (service_role); mã file Drive không ra trình duyệt.
+
+Kiểm thử: `supabase/tests/99r_v38.sql`, `tests/e2e/v38.cjs` (chạy thật hàm `hdky` bằng Deno, meInvoice + Apps Script giả lập).

@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, cx, Field, Input, Loading, Modal, NumInput, Select, Textarea, toast, useAction, ask, Table, Td } from '../../components/ui';
-import { db } from '../../lib/sb';
+import { db, storage } from '../../lib/sb';
+import { prepareUpload } from '../../lib/image';
 import { go, useApp, useRoute } from '../../state';
 import { calcQuote, defaultHeader, priceFrame, QuoteHeader, QuoteLine } from '../../lib/quote-calc';
 import { fmtDate, money, num, today, addDays } from '../../lib/format';
@@ -13,6 +14,7 @@ import { noAccent } from '../../lib/format';
 
 const LOCKED = ['da_chot', 'tu_choi', 'het_han', 'da_thay_the'];
 export const khoOf = (w?: string | null) => !w ? '' : /hcm|ho chi minh|hồ chí minh|sài gòn|sai gon/i.test(w) ? 'HCM' : /hà nội|ha noi|hn\b/i.test(w) ? 'HN' : '';
+export const quoteImgUrl = (p?: string | null) => (!p ? '' : /^https?:/i.test(p) ? p : storage.publicUrl('quote-images', p));
 const emptyLine = (): QuoteLine => ({ name: '', spec: '', hs_code: '', unit: 'Chiếc', qty: 0, unit_price_cny: 0, duty_pct: 0, vat_pct: null, freight_pct: null, manual_price: null });
 
 export default function QuoteEditor() {
@@ -37,7 +39,7 @@ export default function QuoteEditor() {
       const ls: any[] = await db.from('quotation_lines').select('*').eq('quotation_id', id).order('line_no');
       const c = await db.from('customers').select('id,code,sys_code,sys_username,sys_warehouse,contact_name,company_name,phone,zalo,import_method').eq('id', q.customer_id).maybeSingle();
       setQuote(q); setCustomer(c); setH({ ...defaultHeader(qd), ...q.header }); setNote(q.note || '');
-      setLines(ls.length ? ls.map(l => ({ name: l.name, spec: l.spec, hs_code: l.hs_code, unit: l.unit, qty: Number(l.qty), unit_price_cny: Number(l.unit_price_cny), duty_pct: Number(l.duty_pct), vat_pct: l.vat_pct === null ? null : Number(l.vat_pct), freight_pct: l.freight_pct === null ? null : Number(l.freight_pct), manual_price: l.manual_price === null ? null : Number(l.manual_price) })) : [emptyLine()]);
+      setLines(ls.length ? ls.map(l => ({ name: l.name, spec: l.spec, hs_code: l.hs_code, unit: l.unit, qty: Number(l.qty), unit_price_cny: Number(l.unit_price_cny), duty_pct: Number(l.duty_pct), vat_pct: l.vat_pct === null ? null : Number(l.vat_pct), freight_pct: l.freight_pct === null ? null : Number(l.freight_pct), manual_price: l.manual_price === null ? null : Number(l.manual_price), image: l.image || null })) : [emptyLine()]);
     } else {
       setQuote(null); setLines([emptyLine()]); setNote('');
       setH({ ...defaultHeader(qd), tyGia: rates.current.ban || qd.tyGia || 4015, tyGiaVon: rates.current.von || 3955 });
@@ -164,13 +166,14 @@ export default function QuoteEditor() {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1150px] text-sm [&_td]:align-top">
                 <thead><tr className="border-y border-ink-200 bg-ink-50 text-left text-xs text-ink-500">
-                  {['#', 'Tên hàng * (tối đa 250 ký tự)', 'HS code', 'ĐVT', 'SL *', 'Đơn giá ¥', 'Thuế NK %', 'VAT %', '% cước', ...(lowHigh ? ['Giá chọn tay'] : []), 'Cước', 'Giá xuất / ĐV', 'Giá khai APT / ĐV', 'Tổng trước VAT', ''].map((x, i) =>
+                  {['#', 'Ảnh', 'Tên hàng * (tối đa 250 ký tự)', 'HS code', 'ĐVT', 'SL *', 'Đơn giá ¥', 'Thuế NK %', 'VAT %', '% cước', ...(lowHigh ? ['Giá chọn tay'] : []), 'Cước', 'Giá xuất / ĐV', 'Giá khai APT / ĐV', 'Tổng trước VAT', ''].map((x, i) =>
                     <th key={i} className="px-1.5 py-2 font-medium">{x}</th>)}</tr></thead>
                 <tbody>
                   {lines.map((l, i) => {
                     const r = result.lines.find(x => x.idx === i);
                     return <tr key={i} className="border-b border-ink-100">
                       <td className="px-1.5 text-xs text-ink-400">{i + 1}</td>
+                      <td className="px-1 py-1"><LineImage path={l.image} disabled={dis} meId={a.me.id} onChange={v => setLine(i, 'image', v)} /></td>
                       <td className="px-1 py-1"><textarea disabled={dis} rows={2} maxLength={250} className="min-h-[56px] w-full min-w-[300px] resize-y rounded-xl border border-ink-200 px-2.5 py-1.5 text-sm leading-snug focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:bg-ink-50" value={l.name} onChange={e => setLine(i, 'name', e.target.value)} />
                         {inv[i]?.length > 0 && <div className="mt-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] leading-snug text-amber-900">
                           <b>📦 Giống hàng tồn kho công ty</b> — báo quản lý xem xét:{inv[i].map((m, k) => <div key={k}>• {m.name}{m.sku && ` (${m.sku})`}{m.qty !== null && <> · tồn <b>{num(m.qty)}</b> {m.unit || ''}</>}{m.warehouse && ` · ${m.warehouse}`} · giống {Math.round(m.score * 100)}%</div>)}</div>}</td>
@@ -253,6 +256,34 @@ const Row = ({ l, v, sub, cls }: { l: string; v: number; sub?: string; cls?: str
   <div className="flex items-start justify-between gap-3 py-1"><span className="text-ink-700">{l}{sub && <span className="block text-[11px] text-ink-400">{sub}</span>}</span><b className={cx('whitespace-nowrap tabular-nums', cls)}>{money(v)}</b></div>
 );
 
+// ---------- Ảnh sản phẩm từng dòng (không bắt buộc) ----------
+function LineImage({ path, disabled, meId, onChange }: { path?: string | null; disabled: boolean; meId: string; onChange: (p: string | null) => void }) {
+  const ref = useRef<HTMLInputElement>(null); const [busy, setBusy] = useState(false); const [view, setView] = useState(false);
+  const put = async (raw?: File | null) => {
+    if (!raw || disabled) return;
+    if (!/^image\//i.test(raw.type) && !/\.(jpe?g|png|webp|gif|bmp|heic)$/i.test(raw.name)) { toast.err('Chỉ nhận file ảnh'); return; }
+    setBusy(true);
+    try {
+      const file = await prepareUpload(raw, 3);
+      const p = `${meId}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${/png$/i.test(file.type) ? 'png' : /webp$/i.test(file.type) ? 'webp' : /gif$/i.test(file.type) ? 'gif' : 'jpg'}`;
+      await storage.upload('quote-images', p, file); onChange(p);
+    } catch (e: any) { toast.err(e?.message || 'Không tải được ảnh'); } finally { setBusy(false); if (ref.current) ref.current.value = ''; }
+  };
+  const url = quoteImgUrl(path);
+  return <div className="w-[72px]" tabIndex={disabled ? -1 : 0} title={disabled ? '' : 'Bấm để chọn ảnh, hoặc bấm vào ô rồi dán (Ctrl+V)'}
+    onPaste={e => { const f = Array.from(e.clipboardData?.files || [])[0]; if (f) { e.preventDefault(); put(f); } }}
+    onDragOver={e => { if (!disabled) e.preventDefault(); }} onDrop={e => { e.preventDefault(); put(e.dataTransfer.files?.[0]); }}>
+    <input ref={ref} type="file" accept="image/*" className="hidden" onChange={e => put(e.target.files?.[0])} />
+    {url ? <div className="group relative h-[72px] w-[72px]">
+      <img src={url} alt="" className="h-full w-full cursor-zoom-in rounded-lg border border-ink-200 bg-white object-contain" onClick={() => setView(true)} />
+      {!disabled && <><button type="button" className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full bg-white text-xs text-ink-500 shadow ring-1 ring-ink-200 hover:text-red-600" title="Bỏ ảnh" onClick={() => onChange(null)}>✕</button>
+        <button type="button" className="absolute inset-x-0 bottom-0 hidden rounded-b-lg bg-black/55 py-0.5 text-[10px] text-white group-hover:block" onClick={() => ref.current?.click()}>Đổi ảnh</button></>}
+    </div> : disabled ? <div className="grid h-[72px] w-[72px] place-items-center rounded-lg border border-dashed border-ink-200 text-[10px] text-ink-300">—</div>
+      : <button type="button" disabled={busy} onClick={() => ref.current?.click()} className="grid h-[72px] w-[72px] place-items-center rounded-lg border border-dashed border-ink-300 text-center text-[10px] leading-tight text-ink-400 hover:border-brand-400 hover:text-brand-600">{busy ? 'Đang tải…' : <span>＋ Ảnh<br />(dán / kéo thả)</span>}</button>}
+    {view && url && <div className="fixed inset-0 z-[60] grid place-items-center bg-black/80 p-4" onClick={() => setView(false)}><img src={url} alt="" className="max-h-[88vh] max-w-full rounded-2xl bg-white shadow-2xl" /></div>}
+  </div>;
+}
+
 // ---------- Bản in gửi khách ----------
 function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolean; onClose: () => void; quote: any; customer: any; h: QuoteHeader; lines: QuoteLine[] }) {
   const a = useApp(); const co = a.settings.company || {}; const qr = a.settings.vietqr || {}; const qd = a.settings.quote_defaults || {};
@@ -270,6 +301,7 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
   const utPrint = t.phiUT + (h.cheDoXuat === 'du' ? t.chenhLamTron : 0); // phí ủy thác gánh phần chênh làm tròn để mục B cộng đúng
   const bTotal = t.tienHang + t.ship + t.cuoc + t.phiDV + utPrint + t.phuPhi + t.thueNK + t.vat + t.tndn;
   const C = 'border border-[#d9a27f] px-1.5 py-1';
+  const hasImg = valid.some(x => x.l.image); const nA = hasImg ? 7 : 6;
   return (
     <Modal open={open} onClose={onClose} title={`Xem trước báo giá ${quote.code}`} size="lg"
       footer={<><span className="mr-auto text-xs text-ink-400">Kiểm tra nội dung và số tiền chuyển khoản trước khi gửi khách.</span><Button variant="primary" onClick={doPrint}>In / Lưu PDF từ trình duyệt</Button></>}>
@@ -292,12 +324,14 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
         </div>
         <div className="mb-1 border-l-4 border-[#F07B3C] pl-2 font-bold">A. HÀNG HÓA VÀ GIÁ XUẤT HÓA ĐƠN</div>
         <table className="mb-3 w-full border-collapse text-[12px]">
-          <thead className="bg-[#f8d5bf]"><tr>{['STT', 'Sản phẩm', 'ĐVT', 'SL', 'Đơn giá NCC', 'Giá xuất trước VAT', 'Thành tiền trước VAT', 'VAT', 'Tiền VAT'].map(x => <th key={x} className={C}>{x}</th>)}</tr></thead>
-          <tbody>{valid.map(({ l, r: lr }, i) => <tr key={i}><td className={C + ' text-center'}>{i + 1}</td><td className={C + ' whitespace-pre-wrap'}>{l.name}{l.spec && <div className="text-[11px]">{l.spec}</div>}</td><td className={C}>{l.unit}</td>
+          <thead className="bg-[#f8d5bf]"><tr>{['STT', ...(hasImg ? ['Ảnh'] : []), 'Sản phẩm', 'ĐVT', 'SL', 'Đơn giá NCC', 'Giá xuất trước VAT', 'Thành tiền trước VAT', 'VAT', 'Tiền VAT'].map(x => <th key={x} className={C}>{x}</th>)}</tr></thead>
+          <tbody>{valid.map(({ l, r: lr }, i) => <tr key={i}><td className={C + ' text-center'}>{i + 1}</td>
+            {hasImg && <td className={C + ' w-[112px] p-1 text-center align-middle'}>{l.image && <img src={quoteImgUrl(l.image)} alt="" className="mx-auto h-[100px] w-[100px] object-contain" />}</td>}
+            <td className={C + ' whitespace-pre-wrap'}>{l.name}{l.spec && <div className="text-[11px]">{l.spec}</div>}</td><td className={C}>{l.unit}</td>
             <td className={C + ' text-right'}>{num(l.qty)}</td><td className={C + ' text-right'}>¥{num(l.unit_price_cny)}</td><td className={C + ' text-right'}>{money(lr!.giaXuat)}</td>
             <td className={C + ' text-right'}>{money(lr!.tongTruocVAT)}</td><td className={C + ' text-center'}>{num(lr!.vatPct)}%</td><td className={C + ' text-right'}>{money(lr!.vat)}</td></tr>)}
-            <tr className="font-bold"><td className={C} colSpan={6}>TỔNG</td><td className={C + ' text-right'}>{money(t.tongTruocVAT)}</td><td className={C} /><td className={C + ' text-right'}>{money(t.vat)}</td></tr>
-            <tr className="bg-[#f8d5bf] text-[14px] font-bold"><td className={C + ' text-center'} colSpan={6}>TỔNG CỘNG SAU VAT</td><td className={C + ' text-right'} colSpan={3}>{money(t.tongSauVAT)} đ</td></tr></tbody>
+            <tr className="font-bold"><td className={C} colSpan={nA}>TỔNG</td><td className={C + ' text-right'}>{money(t.tongTruocVAT)}</td><td className={C} /><td className={C + ' text-right'}>{money(t.vat)}</td></tr>
+            <tr className="bg-[#f8d5bf] text-[14px] font-bold"><td className={C + ' text-center'} colSpan={nA}>TỔNG CỘNG SAU VAT</td><td className={C + ' text-right'} colSpan={3}>{money(t.tongSauVAT)} đ</td></tr></tbody>
         </table>
         <div className="mb-1 border-l-4 border-[#F07B3C] pl-2 font-bold">B. CHI TIẾT CẤU THÀNH CHI PHÍ</div>
         <table className="mb-3 w-full border-collapse text-[12px]">

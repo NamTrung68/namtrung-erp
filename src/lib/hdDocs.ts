@@ -97,7 +97,7 @@ const slug = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/
 export const docFile = (v: DocInv, kind: DocKind) => kind === 'hdnt' ? `HDNT_${slug(v.buyer_name || '')}_${slug(String(v.buyer?.ma_hdnt || ''))}.docx` : `${DOC_SHORT[kind]}_HD${soDon(v)}_${slug(v.buyer_name || '')}.docx`;
 
 /** Gói nhiều HĐ: mỗi HĐ 1 thư mục; HĐ nguyên tắc chỉ 1 bản cho mỗi mã HĐNT */
-export async function makeBundle(invs: DocInv[], kinds: DocKind[], onStep?: (s: string) => void): Promise<{ blob: Blob; n: number }> {
+export async function makeBundle(invs: DocInv[], kinds: DocKind[], onStep?: (s: string) => void, pdf: Record<string, Blob> = {}): Promise<{ blob: Blob; n: number }> {
   const { makeZip } = await import('./zip'); const files: { name: string; data: Blob }[] = []; const seenNt = new Set<string>();
   for (let i = 0; i < invs.length; i++) { const v = invs[i]; onStep?.(`Đang tạo ${i + 1}/${invs.length}…`);
     const dir = `HD${soDon(v)}_${slug(v.buyer_name || '')}`;
@@ -107,6 +107,7 @@ export async function makeBundle(invs: DocInv[], kinds: DocKind[], onStep?: (s: 
         files.push({ name: `HD_nguyen_tac/${docFile(v, k)}`, data: await makeDocx(v, k) }); continue; }
       files.push({ name: `${dir}/${docFile(v, k)}`, data: await makeDocx(v, k) });
     }
+    if (pdf[v.id]) files.push({ name: `${dir}/HD_da_ky_${soDon(v)}_${slug(v.buyer_name || '')}.pdf`, data: pdf[v.id] }); // bản 38: HĐ đã ký (PDF)
   }
   return { blob: await makeZip(files), n: files.length };
 }
