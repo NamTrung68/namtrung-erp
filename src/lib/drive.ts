@@ -56,6 +56,19 @@ export function hdFile(c: DriveCfg, fileId: string): Promise<Blob> {
   if (cache.size > 40) cache.delete(cache.keys().next().value!);
   return p;
 }
+/** Bản 41: lấy file bản scan hồ sơ (vé xem dùng 1 lần — người có quyền với HĐ / pháp nhân, không cần quyền Drive) */
+export function scanFile(c: DriveCfg, scanId: string): Promise<Blob> {
+  const k = 'scan:' + scanId; const hit = cache.get(k); if (hit) return hit;
+  const p = (async () => {
+    const ticket = await db.rpc<string>('ho_so_scan_ticket', { p_id: scanId });
+    const j = await call(c, { action: 'get', ticket });
+    const bin = atob(j.data); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return new Blob([u8], { type: j.mime || 'application/pdf' });
+  })();
+  cache.set(k, p); p.catch(() => cache.delete(k));
+  if (cache.size > 40) cache.delete(cache.keys().next().value!);
+  return p;
+}
 export const hdFileCached = (fileId: string) => cache.has(fileId);
 export const clearHdCache = () => cache.clear();
 

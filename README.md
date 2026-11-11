@@ -200,3 +200,34 @@ Kiểm thử: `supabase/tests/99r_v38.sql`, `tests/e2e/v38.cjs` (chạy thật h
 - Nay: trước khi xuất chứng từ, ERP đọc "Ngày … tháng … năm …" (cả mẫu song ngữ "Ngày (Date) … tháng (month) …") trong PDF HĐ đã ký lưu trên Drive → dùng ngày đó và sửa luôn ngày HĐ trên phiếu (`out_ky_fix_ngay`, ghi nhật ký `out_events`). Không đọc được PDF thì giữ ngày cũ.
 - Mẫu ĐĐH: bỏ dòng "Ngày đặt hàng"; "Ngày giao hàng" → "Ngày giao hàng dự kiến" (= ngày HĐ).
 - Nâng cấp: `supabase/migrations/0046_v39.sql`. Kiểm thử: `supabase/tests/99s_v39.sql`, `tests/hdfile.test.ts`, `tests/e2e/v38.cjs` với `PDF_FILE` (PDF có dòng ngày).
+
+## Bản 40 — Chuyển phát HĐ đã ký, theo dõi thu về bản ký (giai đoạn 1: nhập tay) (11/11/2026)
+
+Nâng cấp: chạy `supabase/migrations/0048_v40.sql` trong SQL Editor (tự sao lưu trước khi đổi). Không cần hàm máy chủ mới.
+
+- **Hóa đơn của tôi → tab Đã ký**: tick HĐ → **📦 Gửi chuyển phát** → ERP gom theo khách (1 khách = 1 phiếu `CPxxxxx`, cùng sale), gợi ý người nhận / SĐT / địa chỉ từ *Pháp nhân nhận HĐ* (rồi tới người liên hệ của khách), tick “Lưu vào pháp nhân” để lần sau tự điền.
+- **Tab 📦 Chuyển phát HĐ** (sale) và màn **Chuyển phát HĐ** `#/hd/cp` (kế toán / quản lý / BGĐ, có nút *+ Tạo phiếu gửi*): Chờ gửi → **Đã gửi** (ngày gửi, mã vận đơn) → **Khách đã nhận** (ngày nhận; báo sale + CSKH hỗ trợ nhắc khách gửi lại 1 bản; hạn thu về = ngày nhận + 7 ngày) → **Đã thu về** (từng HĐ hoặc cả phiếu). Có Báo hoàn / thất lạc (HĐ mở lại để gửi phiếu mới), Hủy, Lùi 1 bước khi bấm nhầm.
+- **Cảnh báo quá hạn**: lịch `nt_ship_remind` 8h15 sáng thứ 2 – thứ 7 báo sale + CSKH + quản lý trực tiếp, nhắc lại theo chu kỳ (mặc định 3 ngày).
+- **Bộ lọc**: trạng thái (đang theo dõi, chờ gửi, đã gửi, khách đã nhận, sắp hạn, quá hạn, đã thu về, hoàn, hủy), tìm mã phiếu / mã vận đơn / số HĐ / khách / SĐT, sale, khoảng ngày gửi / nhận / thu về / tạo; xuất Excel.
+- **Vết hồ sơ**: phiếu Đã gửi → HĐ “✉ đã gửi khách”; HĐ thu về → “✓ đã có bản ký” (bỏ xác nhận chỉ gỡ khi chưa lưu file scan). Mỗi thao tác ghi `out_ship_events` và lịch sử phiếu xuất HĐ (`out_events`, action `chuyen_phat`).
+- **Pháp nhân nhận HĐ**: thêm *Người nhận chuyển phát* + *SĐT nhận* (cột `out_buyers.nguoi_nhan`, `sdt_nhan`), bộ lọc “Thiếu SĐT / địa chỉ nhận chuyển phát”, có trong Excel xuất.
+- **Cấu hình → Kế toán – Hóa đơn → 📦 Chuyển phát HĐ** (`settings.chuyen_phat`): tên / SĐT / địa chỉ gửi, hãng mặc định, hạn thu về, chu kỳ nhắc, ngưỡng “sắp hạn”. Kế toán sửa được.
+- Quyền: sale của HĐ + cấp trên theo cây + CSKH được giao, Kế toán / Admin / BGĐ. Ghi chỉ qua hàm (`out_ship_create`, `out_ship_act`, `out_ship_thu`).
+- Giai đoạn 2 (chờ ViettelPost cấp quyền tích hợp): tạo vận đơn + tính cước qua API, nhận webhook trạng thái → tự ghi ngày gửi / ngày khách nhận (cột `out_ships.api` để sẵn).
+
+Kiểm thử: `supabase/tests/99t_v40.sql`.
+
+## Bản 41 — Lưu trữ hồ sơ HĐ: bản scan lên Google Drive + bản cứng (11/11/2026)
+
+Nâng cấp: chạy `supabase/migrations/0049_v41.sql` trong SQL Editor (tự sao lưu trước khi đổi). Apps Script Drive **không phải cập nhật** (`drive_redeem` tự tra thêm bảng scan).
+
+- **Bảng `ho_so_scans`**: mỗi file scan gắn 1 HĐ (bộ chứng từ) hoặc 1 pháp nhân (HĐ nguyên tắc / mua bán). 1 file có thể gồm nhiều loại giấy (`kinds`: hd, ddh, bbgn, hdmb, hdnt, khac). Mã file Drive không ra trình duyệt; xem qua vé dùng 1 lần (`ho_so_scan_ticket`, nhật ký `VIEW_SCAN`).
+- **Đủ hồ sơ** (`ho_so_status`): HĐ đã ký + ĐĐH + BBGN + (HĐNT của pháp nhân nếu có mã HĐNT, ngược lại HĐMB của HĐ). Chip 🗂 dưới mỗi HĐ ở tab Đã ký: chưa scan / thiếu loại nào / đủ, 🗄 = đã cất bản cứng. Bộ lọc “Lưu trữ” theo các trạng thái này.
+- **Tải scan** (Kế toán / Admin / BGĐ — như quyền lưu Drive hiện có): PDF, hoặc nhiều ảnh / chụp điện thoại → ERP tự gộp 1 PDF (A4, `src/lib/hoso.ts`, không thư viện). Lưu `ERP_NAMTRUNG/Ho so khach hang/<MST> - <Tên>/HD <năm>/` hoặc `…/Hop dong NT-MB/`.
+- Tải scan của HĐ đang trong phiếu chuyển phát chưa thu về → **tự xác nhận “Đã thu về”**; HĐ thành “✓ đã có bản ký”. Nút **📎 scan** trên từng HĐ ở màn Chuyển phát.
+- **Pháp nhân nhận HĐ**: nút 🗂 (số bản scan; vàng = đã ký HĐNT nhưng chưa có scan) → hồ sơ pháp nhân, tải scan HĐNT / HĐMB.
+- **Bản cứng**: `out_doc_state.cung_at / cung_vi_tri`, đánh dấu hàng loạt “🗄 Cất bản cứng” + vị trí tủ / bìa (`out_doc_cung`).
+- **Trang mới** `#/hd/luu-tru` “Lưu trữ HĐ đã ký” cho Kế toán / BGĐ (500 HĐ mới nhất theo bộ lọc sale / số HĐ đầu vào), cùng giao diện tab Đã ký.
+- Sửa: mục “Tải bản đã ký lên” cũ hiện cho cả sale nhưng sale không có quyền lưu Drive (báo lỗi) → nay chỉ hiện với Kế toán / Admin / BGĐ.
+
+Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.

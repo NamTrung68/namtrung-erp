@@ -11,6 +11,7 @@ import { fmtDate, fmtDateTime, money, num } from '../../lib/format';
 import { appsScriptCode, saveToDrive } from '../../lib/drive';
 import { DEFAULT_ACC_CFG } from '../../lib/doisoat';
 import { misaCall } from '../../lib/misa';
+import { ShipCfg } from '../hd/ChuyenPhat';
 
 const TG_EVENTS: [string, string][] = [['leave_request', 'Đơn nghỉ / đơn công mới'], ['attendance_flag', 'Chấm công ngoài IP'], ['quote_approval', 'Báo giá chờ duyệt giá'], ['quote_won', 'Chốt đơn'],
   ['support', 'Gọi hỗ trợ'], ['ticket', 'Ticket mới'], ['announcement', 'Bảng tin toàn công ty'], ['payroll', 'Chốt lương'], ['daily_summary', 'Tóm tắt 9h sáng'], ['acc_invoice', 'HĐ APT có dòng không đơn / lệch giá'], ['acc_overdue', 'Dòng HĐ quá hạn sale chưa xử lý'], ['report_missing', 'Sale chưa nộp báo cáo 18h'], ['hr', 'Hợp đồng lao động sắp hết hạn'], ['test', 'Tin thử']];
@@ -38,7 +39,7 @@ export default function Settings() {
       <Tabs value={tab} onChange={setTab} tabs={tabs} />
       <div className="mt-4 max-w-4xl">
         {tab === 'telegram' && <Telegram />}{tab === 'quote' && <QuoteCfg />}{tab === 'quote' && a.isAdmin && <LibraryCfg />}{tab === 'company' && <Company />}{tab === 'attendance' && <AttendanceCfg />}
-        {tab === 'holidays' && <Holidays />}{tab === 'payroll' && <PayrollCfg />}{tab === 'crm' && <CrmCfg />}{tab === 'lookups' && <Lookups />}{tab === 'org' && <Org />}{tab === 'login' && <LoginCfg />}{tab === 'payroll' && <InventoryCfg />}{tab === 'acc' && <AccCfg />}{tab === 'backup' && <DriveCfg />}
+        {tab === 'holidays' && <Holidays />}{tab === 'payroll' && <PayrollCfg />}{tab === 'crm' && <CrmCfg />}{tab === 'lookups' && <Lookups />}{tab === 'org' && <Org />}{tab === 'login' && <LoginCfg />}{tab === 'payroll' && <InventoryCfg />}{tab === 'acc' && <AccCfg />}{tab === 'acc' && <ShipCfgCard />}{tab === 'backup' && <DriveCfg />}
       </div>
     </Layout>
   );
@@ -459,4 +460,13 @@ function DriveCfg() {
       </ol>
     </Card>
   </div>;
+}
+
+/** Bản 40: chuyển phát HĐ đã ký — địa chỉ gửi, hạn thu về bản ký */
+function ShipCfgCard() {
+  const s = useSetting('chuyen_phat');
+  return <Card className="mt-4" title="📦 Chuyển phát HĐ đã ký" actions={<Button variant="primary" loading={s.busy} onClick={s.save}>Lưu</Button>}>
+    <ShipCfg v={s.v} set={s.set} />
+    <p className="mt-2 text-xs text-ink-500">Khách nhận HĐ → hạn thu về = ngày nhận + số ngày trên. Quá hạn: 8h15 sáng (thứ 2 – thứ 7) ERP báo sale, CSKH hỗ trợ và quản lý trực tiếp, lặp lại theo chu kỳ nhắc. Giai đoạn 2 sẽ dùng địa chỉ gửi này để tạo vận đơn ViettelPost.</p>
+  </Card>;
 }

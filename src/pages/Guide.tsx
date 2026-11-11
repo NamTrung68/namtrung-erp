@@ -262,6 +262,31 @@ Vào [Hóa đơn của tôi](#/hd) → tab **Sẵn sàng xuất**. Hàng gom the
 | Thời gian từ "Có nháp" đến "Đã chốt" | ≤ 2 ngày |
 | Tỷ lệ yêu cầu bị trả sửa | < 10% |` },
 
+  { id: 'chuyen-phat', icon: '📦', title: 'Chuyển phát HĐ đã ký và thu về bản ký', who: ['Sale', 'Kế toán', 'Quản lý'], text: `
+Gửi bản cứng HĐ đã ký cho khách, khách ký và **gửi lại Nam Trung 1 bản**. Sale xem ở tab **📦 Chuyển phát HĐ** trong [Hóa đơn của tôi](#/hd); kế toán / quản lý xem ở [Chuyển phát HĐ](#/hd/cp).
+
+1. **Tạo phiếu**: tab **Đã ký** → tick các HĐ cần gửi (gõ username / ID đơn rồi "Chọn tất cả đang lọc") → **📦 Gửi chuyển phát**. ERP tự **gom theo khách**: 1 khách = 1 phiếu, nhiều khách = nhiều phiếu. Hoặc bấm **+ Tạo phiếu gửi** ở màn Chuyển phát.
+2. **Người nhận** tự điền từ [Pháp nhân nhận HĐ](#/hd/phap-nhan) (người nhận, SĐT nhận, địa chỉ giao hàng); chưa có thì lấy người liên hệ / SĐT của khách. Sửa nếu cần, tick **Lưu vào pháp nhân** để lần sau tự có.
+3. **Đã gửi**: bấm **📤 Đã gửi** → ngày gửi + mã vận đơn (bổ sung sau cũng được). Hoặc tick **Đã gửi luôn** khi tạo phiếu. HĐ tự đánh dấu **✉ đã gửi khách** ở tab Đã ký.
+4. **Khách đã nhận**: bấm **📬 Khách đã nhận** → ngày nhận. ERP **báo sale (và CSKH hỗ trợ)** ngay để nhắc khách ký và gửi lại 1 bản. **Hạn thu về = ngày nhận + 7 ngày** (đổi ở Cấu hình → Kế toán – Hóa đơn).
+5. **Quá hạn** chưa thu về: 8h15 sáng thứ 2 – thứ 7 ERP cảnh báo **sale + CSKH + quản lý trực tiếp**, nhắc lại 3 ngày/lần tới khi thu về. Phiếu hiện đỏ "⏰ Trễ N ngày".
+6. **Thu về**: nhận được bản ký → bấm **✍ Thu về** (cả phiếu) hoặc **✍ thu về** trên từng HĐ. Đủ HĐ → phiếu **Đã thu về**, HĐ thành **✓ đã có bản ký**. Muốn lưu bản scan: tab Đã ký → ⋯ → Tải bản đã ký lên.
+- **Bị hoàn / thất lạc**: ⋯ Khác → **Báo hoàn** (ghi lý do) → HĐ mở lại để tạo phiếu mới. **Bấm nhầm**: ⋯ Khác → Lùi 1 bước, hoặc ↶ trên HĐ đã thu về.
+- **Bộ lọc**: Đang theo dõi · Chờ gửi · Đã gửi · Khách đã nhận · Sắp hạn · Quá hạn · Đã thu về · Hoàn · Hủy; tìm theo mã phiếu / mã vận đơn / số HĐ / khách / SĐT; lọc theo sale và khoảng ngày gửi / nhận / thu về. **⬇ Excel** xuất đúng danh sách đang lọc.
+- Giai đoạn 2: tạo vận đơn và tự cập nhật ngày khách nhận qua **API ViettelPost** (đang chờ ViettelPost cấp quyền tích hợp).` },
+
+  { id: 'luu-tru', icon: '🗄️', title: 'Lưu trữ hồ sơ: bản scan (Drive) + bản cứng', who: ['Kế toán', 'Sale', 'Quản lý'], text: `
+Mỗi HĐ đã ký cần đủ **bản mềm** (scan, lưu Google Drive công ty) và **bản cứng** (cất tủ). Kế toán / BGĐ tải scan; sale xem được bản scan của khách mình ngay trong ERP.
+
+- **Đủ hồ sơ** 1 HĐ = **HĐ đã ký + Đơn đặt hàng + Biên bản giao nhận** + **HĐ nguyên tắc** (nếu pháp nhân đã ký HĐNT — scan 1 lần ở pháp nhân, dùng cho mọi HĐ) hoặc **HĐ mua bán** của HĐ đó.
+- **Tải scan**: tab **Đã ký** (hoặc [Lưu trữ HĐ đã ký](#/hd/luu-tru)) → ⋯ → **📎 Tải bản scan lên**, hoặc bấm chip **🗂** dưới HĐ → Hồ sơ HĐ. Chọn PDF có sẵn, hoặc chọn / **📷 chụp nhiều ảnh** → ERP gộp thành 1 PDF nhiều trang. Tick file gồm những giấy gì (1 file chứa cả bộ cũng được). **Scan được tờ nào lưu tờ đó** — chip 🗂 báo còn thiếu loại nào.
+- Khách gửi lại bản ký trong phiếu chuyển phát: bấm **📎 scan** trên HĐ ở màn Chuyển phát (hoặc tải ở tab Đã ký) → ERP lưu Drive và **tự xác nhận "Đã thu về"**.
+- **HĐ nguyên tắc / mua bán theo khách**: [Pháp nhân nhận HĐ](#/hd/phap-nhan) → nút **🗂** trên pháp nhân (vàng = đã ký HĐNT nhưng chưa có scan) → tải scan HĐNT; xem toàn bộ hồ sơ của pháp nhân.
+- **Thư mục Drive**: \`ERP_NAMTRUNG/Ho so khach hang/<MST> - <Tên>/HD <năm>/\` (bộ chứng từ theo HĐ) và \`…/Hop dong NT-MB/\` (HĐ nguyên tắc / mua bán). Tên file: \`HD401_HD-DDH-BBGN_20261111-0930.pdf\`.
+- **Bản cứng**: tick HĐ → **🗄 Cất bản cứng** → ghi vị trí (VD *Tủ 1 · Bìa T11/2026*); hoặc ghi trong Hồ sơ HĐ.
+- **Bộ lọc Lưu trữ** ở tab Đã ký: Chưa có bản scan · Scan còn thiếu · Đủ hồ sơ scan · Chưa cất bản cứng.
+- Gỡ bản scan nhầm: Hồ sơ HĐ → **Gỡ** (chỉ gỡ khỏi ERP, file trên Drive giữ nguyên).` },
+
   { id: 'bao-mat', icon: '🔐', title: 'Quyền xem và bảo mật file hóa đơn', who: ['Tất cả'], text: `
 - PDF nháp / đã ký lưu **kín** trên Google Drive công ty (thư mục \`ERP_NAMTRUNG\`), không chia sẻ công khai. ERP chỉ mở qua **vé dùng 1 lần** (hết hạn sau vài phút).
 - **Ai xem được**: sale của yêu cầu, cấp trên theo cây nhân sự, Kế toán, Admin, BGĐ. **Sale không xem chéo** HĐ của sale khác — trên ERP lẫn Drive.
