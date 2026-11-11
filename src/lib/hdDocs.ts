@@ -51,8 +51,15 @@ export function docVars(v: DocInv, kind: DocKind) {
     so_hd: kind === 'hdnt' ? String(v.buyer?.ma_hdnt || '').trim() : soHdmb(v),
   };
   if (kind === 'hdnt') base.ngay_chu = nt ? ngayChu(nt) : ngayChu(ngay);
+  // Đơn đặt hàng: ngày giao = ngày ký HĐ; ngày đặt = 30 ngày trước, tính cả 2 đầu (ký 30/10/2026 → đặt 01/10/2026)
+  if (kind === 'ddh') base.ngay = dmy(ngayDat(ngay));
   return base;
 }
+/** Ngày đặt hàng trên ĐĐH = ngày ký HĐ − 29 ngày (khoảng 30 ngày tính cả ngày đặt và ngày giao) */
+export function ngayDat(iso: string): string {
+  const d = new Date(iso.slice(0, 10) + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 29); return d.toISOString().slice(0, 10);
+}
+
 /** Dòng hàng + dòng thuế theo từng thuế suất (HĐ có 8% và 10% → 2 dòng thuế) */
 export function docRows(v: DocInv) {
   const rows = v.lines.map((l, i) => ({ stt: String(i + 1), ten_hang: l.ten, dvt: l.dvt || '', sl: qty(l.sl), don_gia: vnd(l.don_gia), thanh_tien: vnd(Math.round(Number(l.sl) * Number(l.don_gia))) }));
