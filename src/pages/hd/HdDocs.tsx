@@ -10,7 +10,7 @@ import { ask, Button, Card, cx, Input, Modal, toast, useAction } from '../../com
 import { db } from '../../lib/sb';
 import { downloadBlob } from '../../lib/format';
 import { DOC_NAME, docFile, docsOf, hasHdnt, makeBundle, makeDocx, soDon, type DocInv, type DocKind } from '../../lib/hdDocs';
-import { kyName, kyPdf } from '../../lib/hdky';
+import { kyName, kyNgay, kyPdf } from '../../lib/hdky';
 
 const loadDocs = async (ids: string[]): Promise<DocInv[]> => {
   const invs = (await db.rpc<DocInv[]>('out_docs_data', { p_ids: ids })) || [];
@@ -45,12 +45,25 @@ function InfoModal({ invs, onClose, onOk }: { invs: DocInv[]; onClose: () => voi
   </Modal>;
 }
 
-/** Hook chung: tải dữ liệu → (hỏi bổ sung đại diện) → tạo file */
+/** Bản 39: ngày chứng từ = ngày in trên HĐ đã ký (đọc trong PDF). Lệch ngày hệ thống ghi → sửa luôn trên phiếu */
+async function syncNgay(drive: any, invs: DocInv[], onStep?: (s: string) => void): Promise<DocInv[]> {
+  const out = [...invs]; let next = 0, done = 0;
+  const worker = async () => { while (next < out.length) { const i = next++; const v = out[i];
+    const ngay = await kyNgay(drive, v.id);
+    if (ngay && ngay !== String(v.ngay_hd || '').slice(0, 10)) { out[i] = { ...v, ngay_hd: ngay }; db.rpc('out_ky_fix_ngay', { p_id: v.id, p_ngay: ngay }).catch(() => null); }
+    onStep?.(`Đang đối chiếu ngày HĐ ${++done}/${out.length}…`); } };
+  await Promise.all(Array.from({ length: Math.min(3, out.length) }, worker));
+  return out;
+}
+
+/** Hook chung: tải dữ liệu → đối chiếu ngày HĐ → (hỏi bổ sung đại diện) → tạo file */
 function useDocs() {
+  const a = useApp();
   const [ask, setAsk] = useState<{ invs: DocInv[]; then: (x: DocInv[]) => Promise<void> } | null>(null); const [busy, setBusy] = useState('');
   const start = async (ids: string[], then: (x: DocInv[]) => Promise<void>, needRep: boolean) => {
     setBusy('Đang lấy dữ liệu…');
-    try { const invs = await loadDocs(ids); if (!invs.length) throw new Error('Không có HĐ nào bạn được xem');
+    try { let invs = await loadDocs(ids); if (!invs.length) throw new Error('Không có HĐ nào bạn được xem');
+      invs = await syncNgay(a.settings.drive, invs, setBusy);
       if (needRep && invs.some(thieu)) { setAsk({ invs, then }); return; } await then(invs); }
     catch (e: any) { toast.err(e); } finally { setBusy(''); }
   };

@@ -193,3 +193,10 @@ Nâng cấp:
 - Quyền: sale của phiếu, cấp trên theo cây, Kế toán / Admin. Gắn file chỉ hàm máy chủ làm được (service_role); mã file Drive không ra trình duyệt.
 
 Kiểm thử: `supabase/tests/99r_v38.sql`, `tests/e2e/v38.cjs` (chạy thật hàm `hdky` bằng Deno, meInvoice + Apps Script giả lập).
+
+## Bản 39 — Ngày chứng từ = ngày in trên HĐ đã ký; ĐĐH "Ngày giao hàng dự kiến" (11/11/2026)
+
+- Trước: ngày trên ĐĐH / BBGN / HĐ mua bán = ngày kế toán / hệ thống đánh dấu "Đã ký" (có thể chậm 1–2 ngày so với ngày HĐ).
+- Nay: trước khi xuất chứng từ, ERP đọc "Ngày … tháng … năm …" (cả mẫu song ngữ "Ngày (Date) … tháng (month) …") trong PDF HĐ đã ký lưu trên Drive → dùng ngày đó và sửa luôn ngày HĐ trên phiếu (`out_ky_fix_ngay`, ghi nhật ký `out_events`). Không đọc được PDF thì giữ ngày cũ.
+- Mẫu ĐĐH: bỏ dòng "Ngày đặt hàng"; "Ngày giao hàng" → "Ngày giao hàng dự kiến" (= ngày HĐ).
+- Nâng cấp: `supabase/migrations/0046_v39.sql`. Kiểm thử: `supabase/tests/99s_v39.sql`, `tests/hdfile.test.ts`, `tests/e2e/v38.cjs` với `PDF_FILE` (PDF có dòng ngày).

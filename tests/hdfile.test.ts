@@ -26,3 +26,13 @@ test('đọc chữ trong PDF đã ký', () => {
   const r = parseHdText(NHAP.replace('<Chưa cấp số>', '00000928'));
   assert.equal(r?.kind, 'ky'); assert.equal(r?.so_hd, '928');
 });
+
+test('đọc ngày HĐ trong PDF (thường, song ngữ, dạng số; bỏ qua "Ký ngày")', async () => {
+  const { hdNgay } = await import('../src/lib/hdfile');
+  assert.equal(hdNgay('HÓA ĐƠN GIÁ TRỊ GIA TĂNG Ngày 30 tháng 10 năm 2026 Ký hiệu: 1C26TNT'), '2026-10-30');
+  assert.equal(hdNgay('HÓA ĐƠN GIÁ TRỊ GIA TĂNG (VAT INVOICE) Ngày (Date) 05 tháng (month) 11 năm (year) 2026 Số (No.): 123'), '2026-11-05');
+  assert.equal(hdNgay('Ngày\n(Date)\n 7 \ntháng\n(month)\n 1\n năm \n(year)\n 2027'), '2027-01-07');
+  assert.equal(hdNgay('Ngày (Date): 30/10/2026'), '2026-10-30');
+  assert.equal(hdNgay('Signature Valid Ký bởi: CÔNG TY NAM TRUNG Ký ngày: 02/11/2026'), undefined);
+  assert.equal(hdNgay('không có ngày'), undefined);
+});
