@@ -7,7 +7,7 @@
 //
 // Việc hàm làm (body JSON {action, ...}):
 //   get    — {invoice_id}: người dùng ERP có quyền với phiếu. Đã có PDF → trả file_id; chưa có → tải + lưu → trả file_id + data (base64)
-//   sweep  — {ids?}: CSDL gọi (x-cron-key): tải các HĐ đã ký còn thiếu PDF (tối đa 15 HĐ / lần)
+//   sweep  — {ids?}: CSDL gọi (x-cron-key): tải các HĐ đã ký còn thiếu PDF (tối đa 6 HĐ / lần — mỗi HĐ ~10 giây)
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 const env = (k: string) => Deno.env.get(k) || '';
@@ -19,7 +19,7 @@ const admin = createClient(SUPA_URL, adminKey, { auth: { persistSession: false }
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-cron-key', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const fileSafe = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').replace(/[^A-Za-z0-9 _-]+/g, '').trim().replace(/\s+/g, ' ').slice(0, 60);
+const fileSafe = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').replace(/[^A-Za-z0-9 _-]+/g, '').trim().replace(/\s+/g, ' ').slice(0, 60);
 const vnMonth = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7);
 const MAX = 12 * 1024 * 1024;
 
@@ -28,24 +28,35 @@ function b64(u8: Uint8Array): string {
   return btoa(s);
 }
 
-/** Link tải: chỉ cho https://*.meinvoice.vn (cấu hình sai / bị sửa cũng không gọi ra chỗ khác) */
-function dlUrl(tpl: string, ma: string): string {
+/** Link tải: chỉ cho https://*.meinvoice.vn (cấu hình sai / bị sửa cũng không gọi ra chỗ khác). Trả 2 biến thể: tải thẳng + xem (Viewer=1) */
+function dlUrls(tpl: string, ma: string): string[] {
   const u = new URL(tpl.replace('{code}', encodeURIComponent(ma)));
   if (u.protocol !== 'https:' || !/(^|\.)meinvoice\.vn$/i.test(u.hostname)) throw new Error('Link tra cứu phải là https://…meinvoice.vn');
-  u.searchParams.delete('Viewer');
+  const a = new URL(u); a.searchParams.delete('Viewer');
+  const b = new URL(u); b.searchParams.set('Viewer', '1');
   const test = env('HDKY_TEST_BASE'); // chỉ môi trường kiểm thử cục bộ (biến máy chủ), production không đặt
-  return test ? test.replace(/\/+$/, '') + u.pathname + u.search : u.toString();
+  return [a, b].map(x => (test ? test.replace(/\/+$/, '') + x.pathname + x.search : x.toString()));
 }
+const isPdf = (u8: Uint8Array) => u8[0] === 0x25 && u8[1] === 0x50 && u8[2] === 0x44 && u8[3] === 0x46;
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
-async function fetchPdf(url: string): Promise<Uint8Array> {
-  let r: Response;
-  try { r = await fetch(url, { redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (ERP NamTrung)', Accept: 'application/pdf,*/*' }, signal: AbortSignal.timeout(30_000) }); }
-  catch (e) { throw new Error('Không kết nối được meInvoice: ' + errText(e)); }
-  if (!r.ok) throw new Error(`meInvoice trả lỗi ${r.status}`);
-  const u8 = new Uint8Array(await r.arrayBuffer());
-  if (u8.length > MAX) throw new Error('File HĐ quá lớn');
-  if (!(u8[0] === 0x25 && u8[1] === 0x50 && u8[2] === 0x44 && u8[3] === 0x46)) throw new Error('meInvoice không trả file PDF — kiểm tra mã tra cứu (bấm link mã tra cứu để xem)');
-  return u8;
+async function fetchPdf(urls: string[]): Promise<Uint8Array> {
+  const why: string[] = [];
+  for (const url of urls) {
+    let r: Response;
+    try { r = await fetch(url, { redirect: 'follow', headers: { 'User-Agent': UA, Accept: 'application/pdf,text/html,*/*', Referer: 'https://www.meinvoice.vn/tra-cuu/', 'Accept-Language': 'vi-VN,vi;q=0.9' }, signal: AbortSignal.timeout(30_000) }); }
+    catch (e) { why.push('không kết nối: ' + errText(e)); continue; }
+    const u8 = new Uint8Array(await r.arrayBuffer());
+    if (u8.length > MAX) throw new Error('File HĐ quá lớn');
+    if (r.ok && isPdf(u8)) return u8;
+    // một số bản trả PDF dạng base64 (JSON / text)
+    const txt = new TextDecoder().decode(u8.subarray(0, 200_000));
+    const m = txt.match(/JVBERi0[A-Za-z0-9+/=\\]{100,}/);
+    if (r.ok && m) { try { const bin = atob(m[0].replace(/\\/g, '')); const out = Uint8Array.from(bin, c => c.charCodeAt(0)); if (isPdf(out)) return out; } catch { /* */ } }
+    const snip = txt.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+    why.push(`${r.status} ${r.headers.get('content-type') || '?'} ${u8.length}B${r.url !== url ? ' → ' + new URL(r.url).pathname : ''}: ${snip}`);
+  }
+  throw new Error('meInvoice không trả file PDF — kiểm tra mã tra cứu (bấm link mã tra cứu để xem). Chi tiết: ' + why.join(' | ').slice(0, 380));
 }
 
 /** Tải + lưu Drive + gắn phiếu. info = out_ky_info_sys */
@@ -55,7 +66,7 @@ async function fetchStore(info: any): Promise<{ file_id: string; data: string }>
   const { data: drv } = await admin.from('settings').select('value').eq('key', 'drive').maybeSingle();
   const driveUrl = drv?.value?.url; if (!driveUrl) throw new Error('Chưa cấu hình lưu Google Drive (Cấu hình → Sao lưu Google Drive)');
   try {
-    const u8 = await fetchPdf(dlUrl(String(info.url_tpl), String(info.ma_tra_cuu)));
+    const u8 = await fetchPdf(dlUrls(String(info.url_tpl), String(info.ma_tra_cuu)));
     const data = b64(u8);
     const so = String(info.so_hd || '').replace(/\D/g, '').replace(/^0+(?=\d)/, '') || info.code;
     const name = ['KY', so, String(info.tax_code || '').replace(/\D/g, '') || 'MST', Math.round(Number(info.tong) || 0), fileSafe(String(info.buyer_name || ''))]
@@ -76,8 +87,8 @@ async function fetchStore(info: any): Promise<{ file_id: string; data: string }>
 
 async function sweep(ids: string[] | null) {
   let list: string[] = [];
-  if (ids && ids.length) list = ids.slice(0, 15);
-  else { const { data, error } = await admin.rpc('out_ky_pending', { p_limit: 15 }); if (error) throw new Error(error.message); list = (data || []).map((x: any) => String(typeof x === 'string' ? x : Object.values(x)[0])); }
+  if (ids && ids.length) list = ids.slice(0, 6);
+  else { const { data, error } = await admin.rpc('out_ky_pending', { p_limit: 6 }); if (error) throw new Error(error.message); list = (data || []).map((x: any) => String(typeof x === 'string' ? x : Object.values(x)[0])); }
   const out = { saved: 0, skip: 0, fail: 0, errors: [] as string[] };
   for (const id of list) {
     const { data: info } = await admin.rpc('out_ky_info_sys', { p_id: id });
