@@ -1,7 +1,7 @@
 // Xuất HĐ đầu ra: kế toán nạp sổ HĐ chính thức (mã hàng MISA) → sale lập phiếu (giá + đơn vị nhận HĐ) → kế toán xuất nháp → sale xác nhận ký → kế toán ký
 import React, { useMemo, useState } from 'react';
 import { MstCheck, MstChip } from '../../components/MstCheck';
-import { DocBtns } from '../hd/HdDocs';
+import { DocBtns, KyBtn } from '../hd/HdDocs';
 import { mstLevel, PROVIDER, type MstResult } from '../../lib/mst';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, Select, Stat, StatusChips, Table, Tabs, Td, Textarea, ask, toast, useAction, useLoad } from '../../components/ui';
@@ -583,7 +583,7 @@ export function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc
       Việc tiếp theo — <b>{who}</b>: {what}{v.sua_sau_nhap && s === 'cho_nhap' ? <span className="ml-1 font-semibold text-red-700">(sửa sau nháp)</span> : null}</div> : null; })()}
     <HdFilesSection v={v} files={fl} acc={acc} onChanged={done} />
     <MisaBox v={v} acc={acc} onChanged={done} />
-    {s === 'da_ky' && v.ma_tra_cuu && <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký{v.so_hd ? <> HĐ số <b>{v.so_hd}</b></> : ''}{v.ngay_hd ? ' ngày ' + fmtDate(v.ngay_hd) : ''} · Mã tra cứu <TraCuu ma={v.ma_tra_cuu} /> <span className="text-xs text-emerald-700">bấm mã để xem HĐ</span></div>}
+    {s === 'da_ky' && v.ma_tra_cuu && <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký{v.so_hd ? <> HĐ số <b>{v.so_hd}</b></> : ''}{v.ngay_hd ? ' ngày ' + fmtDate(v.ngay_hd) : ''} · Mã tra cứu <TraCuu ma={v.ma_tra_cuu} /> <span className="text-xs text-emerald-700">bấm mã để xem HĐ</span> <KyBtn v={v} /></div>}
     {s === 'da_ky' && <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-ink-200 px-3 py-2 text-sm"><b>Chứng từ kèm HĐ:</b><DocBtns v={v} /></div>}
     {acc && ['xac_nhan_ky', 'da_ky'].includes(s) && <div className="mb-3"><SignBox v={v} onDone={done} /></div>}
     {s === 'da_ky' && !v.ma_tra_cuu && !fl.some(f => f.kind === 'ky') && <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký HĐ số <b>{v.so_hd}</b> ngày {fmtDate(v.ngay_hd)} — kế toán đã gửi mail. Sale báo khách kiểm tra email.</div>}

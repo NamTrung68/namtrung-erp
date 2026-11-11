@@ -415,6 +415,7 @@ const SYS: GuideSec[] = [
 
   { id: 'faq', icon: '❓', title: 'Câu hỏi thường gặp', who: ['Tất cả'], text: `
 | Câu hỏi | Trả lời |
+| Tải HĐ đã ký / cả bộ chứng từ? | [Hóa đơn của tôi](#/hd) → tab **Đã ký** → **⬇ Tải HĐ (PDF)** dưới mã tra cứu. **🗂️ Cả bộ** tải Đơn đặt hàng + Biên bản giao nhận + HĐ đã ký trong 1 file .zip. HĐ tự lưu trên Drive công ty khi kế toán điền mã tra cứu; báo lỗi thì bấm mã tra cứu để tải tay |
 | Quên chấm công vào / ra? | [Chấm công](#/hr/attendance) → tab **Đơn công** → chọn "Xác nhận chấm công muộn (quên chấm đến)" hoặc "Xác nhận quên chấm công về", điền ngày + giờ. Quản lý duyệt / sửa giờ → giờ đó dùng tính đi muộn, lương. Gửi được cho ngày trong 30 ngày; mỗi tháng có giới hạn số lần |
 | Báo "ngoài mạng công ty"? | Kết nối wifi văn phòng rồi bấm lại. Đi gặp khách → tạo đơn công tác |
 | Camera không mở? | Cho phép quyền camera cho trang; vẫn lỗi thì chọn ảnh từ máy trong hộp chấm công |

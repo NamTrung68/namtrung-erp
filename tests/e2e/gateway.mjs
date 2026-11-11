@@ -31,6 +31,15 @@ http.createServer(async (req, res) => {
       }
       return send(res, 200, {});
     }
+    if (u.pathname === '/auth/v1/user') {   // supabase-js auth.getUser(jwt) — dùng trong hàm máy chủ
+      const t = (req.headers.authorization || '').replace(/^Bearer\s+/i, ''); const [h, p, sg] = t.split('.');
+      if (!sg || crypto.createHmac('sha256', SECRET).update(`${h}.${p}`).digest('base64url') !== sg) return send(res, 401, { msg: 'invalid JWT' });
+      const c = JSON.parse(Buffer.from(p, 'base64url').toString()); return send(res, 200, { id: c.sub, email: c.email, aud: 'authenticated', role: c.role });
+    }
+    if (u.pathname.startsWith('/functions/v1/') && process.env.FN_PORT) {   // hàm máy chủ chạy bằng Deno cục bộ
+      const r = await fetch('http://127.0.0.1:' + process.env.FN_PORT + req.url, { method: req.method, headers: { 'content-type': 'application/json', authorization: req.headers.authorization || '', 'x-cron-key': req.headers['x-cron-key'] || '' }, body: ['GET', 'HEAD'].includes(req.method) ? undefined : raw });
+      return send(res, r.status, Buffer.from(await r.arrayBuffer()), { 'Content-Type': r.headers.get('content-type') || 'application/json' });
+    }
     if (u.pathname.startsWith('/storage/v1/')) {
       const p = u.pathname.replace('/storage/v1/object/', '');
       if (req.method === 'POST' && p.startsWith('sign/')) return send(res, 200, { signedURL: '/object/public-signed/' + p.slice(5) + '?token=t' });

@@ -20,7 +20,7 @@ import { exportHdChinhThuc, listHdVao } from '../../lib/hdExport';
 import { Chips, Modal } from '../../components/ui';
 import { MisaRun, MisaTag } from '../out/MisaRun';
 import { exportMisaDoiChieu, misaCall, misaCfgOf, misaOn } from '../../lib/misa';
-import { DocBtns, KyList } from './HdDocs';
+import { DocBtns, KyBtn, KyList } from './HdDocs';
 import { MstChip } from '../../components/MstCheck';
 
 // ---------------- dùng chung ----------------
@@ -63,7 +63,7 @@ function InvRows({ rows, loading, onOpen, empty, action, sale = false, sel, onSe
         {v.mas && <div className="mt-1 flex flex-wrap items-center gap-1 text-[11.5px]">{v.hds && <span className="rounded-md bg-ink-900 px-1.5 py-0.5 font-semibold text-white">HĐ {v.hds}</span>}{String(v.mas).split(', ').slice(0, 6).map((m: string) => <span key={m} className="rounded-md bg-brand-50 px-1.5 py-0.5 font-mono text-brand-800">{m}</span>)}{String(v.mas).split(', ').length > 6 && <span className="text-ink-400">+{String(v.mas).split(', ').length - 6} mã</span>}</div>}</div>
       <div className="w-32 text-right text-[15px] font-bold tabular-nums text-ink-900">{money(tong)}{v.bien_max != null && Number(v.bien_max) > BIEN_DUYET && <div className="text-[11px] font-semibold text-amber-700">biên {pctTxt(Number(v.bien_max))}</div>}</div>
       <div className="w-48">{v.misa_at && v.status === 'cho_nhap' && !(v.misa && v.misa.st !== 'da_xoa') ? <Badge color="amber">Đã export — chờ PDF nháp</Badge> : <SBadge s={v.status} />}<MisaTag v={v} />
-        {v.status === 'da_ky' && v.ma_tra_cuu && <div className="mt-1"><TraCuu ma={v.ma_tra_cuu} /></div>}
+        {v.status === 'da_ky' && v.ma_tra_cuu && <div className="mt-1"><TraCuu ma={v.ma_tra_cuu} /><div className="mt-1"><KyBtn v={v} /></div></div>}
         {who && <div className="mt-0.5 text-[11px] text-ink-500"><b className={who === 'Sale' ? 'text-brand-700' : 'text-amber-700'}>{who}</b>: {what}</div>}</div>
       {action && <div onClick={e => e.stopPropagation()}>{action(v)}</div>}
     </div>; })}</div>;
@@ -124,7 +124,7 @@ function SaleList({ statuses, sale, hd, rev, onOpen, empty, hint }: { statuses: 
 /** Bản 35: Đã ký — bấm mã tra cứu xem HĐ trên MISA; cột chứng từ xuất nhanh ĐĐH / BBGN / HĐ mua bán / HĐ nguyên tắc (1 HĐ, cả đơn, nhiều HĐ) */
 function KyTab({ sale, hd, rev, onOpen }: { sale: string; hd: string; rev: number; onOpen: (id: string) => void }) {
   const { data, loading } = useInv(['da_ky'], { sale, hd, dir: 'desc' }, [rev]);
-  return <><p className="mb-3 text-sm text-ink-600">Bấm mã tra cứu (ô xanh) để xem / tải HĐ đã ký trên MISA. Cột bên phải: 🧾 Đơn đặt hàng · 🚚 Biên bản giao nhận · 📜 HĐ mua bán / 🤝 HĐ nguyên tắc · 🗂️ Cả bộ — ô có ✓ là đã tải. Dưới biểu tượng là <b>trạng thái hồ sơ</b>; bấm ⋯ để đánh dấu đã gửi khách hoặc tải bản đã ký lên. Ngày chứng từ = ngày HĐ đã ký.</p>
+  return <><p className="mb-3 text-sm text-ink-600">Bấm mã tra cứu (ô xanh) để xem HĐ trên MISA, <b>⬇ Tải HĐ (PDF)</b> để tải bản đã ký (lưu sẵn trên Drive công ty). Cột bên phải: 🧾 Đơn đặt hàng · 🚚 Biên bản giao nhận · 📜 HĐ mua bán / 🤝 HĐ nguyên tắc · 🗂️ Cả bộ (ĐĐH + BBGN + HĐ đã ký) — ô có ✓ là đã tải. Dưới biểu tượng là <b>trạng thái hồ sơ</b>; bấm ⋯ để đánh dấu đã gửi khách hoặc tải bản đã ký lên. Ngày chứng từ = ngày HĐ đã ký.</p>
     <KyList data={data} render={(rows, sel, onSel, st, reload) => <Card bodyClass="p-0"><InvRows rows={rows} loading={loading} onOpen={onOpen} empty="Chưa có HĐ đã ký" sale sel={sel} onSel={onSel}
       action={v => <DocBtns v={v} st={st[v.id] || null} onChanged={reload} compact />} /></Card>} /></>;
 }

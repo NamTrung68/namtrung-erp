@@ -180,3 +180,16 @@ Nâng cấp: chạy `supabase/migrations/0044_v37.sql` trong SQL Editor (tự sa
   - Lịch sử “Chấm công của tôi” hiện giờ theo đơn đã duyệt (ghi “theo đơn”).
 
 Kiểm thử: `supabase/tests/99q_v37.sql`, `tests/e2e/v37.cjs`.
+
+## Bản 38 — Tự tải PDF HĐ đã ký, nút “Tải HĐ”, Cả bộ = ĐĐH + BBGN + HĐ (11/11/2026)
+
+Nâng cấp:
+1. Chạy `supabase/migrations/0045_v38.sql` trong SQL Editor (tự sao lưu trước khi đổi).
+2. Supabase → *Edge Functions* → *Deploy a new function* → tên **`hdky`** → dán toàn bộ `supabase/functions/hdky/index.ts` → *Deploy* → vào *Details* **tắt “Verify JWT”** (hàm tự kiểm phiên đăng nhập + quyền với phiếu). Không cần bí mật nào.
+
+- Hàm `hdky` tải PDF từ link tra cứu công khai của meInvoice (`DownloadHandler.ashx?Type=pdf&ext=QXVLM59J&Code={mã tra cứu}`; đổi được bằng `settings.accounting.tra_cuu_dl_url`, chỉ chấp nhận https://…meinvoice.vn) → kiểm file đúng PDF → lưu Google Drive `ERP_NAMTRUNG/HD da ky/<tháng>/<sale>/KY_<số HĐ>_<MST>_<tổng tiền>_<khách>.pdf` → gắn phiếu (file “ky”). Không dùng tài khoản / API MISA.
+- **Tự động**: kế toán điền mã tra cứu (hoặc MISA tự dò ra “Đã ký”) → CSDL gọi ngay `hdky` (pg_net); lịch `nt_hdky` 15 phút/lần (7h–22h) quét HĐ còn thiếu PDF. Mã tra cứu sai → ghi lỗi, thử lại sau 1 giờ, tối đa 5 lần (`app.ky_fetch_fail`).
+- **Hóa đơn của tôi → Đã ký**: dưới mã tra cứu có **⬇ Tải HĐ (PDF)** (lấy từ Drive; chưa có thì tải ngay). Nút **🗂️ Cả bộ** = Đơn đặt hàng + Biên bản giao nhận + HĐ đã ký (PDF) trong 1 file .zip; không lấy được HĐ → nhắc bấm link mã tra cứu, cho tải trước ĐĐH + BBGN. Xuất hàng loạt có thêm lựa chọn “HĐ đã ký (PDF)”. HĐ mua bán / HĐ nguyên tắc vẫn tải riêng ở biểu tượng 📜 / 🤝.
+- Quyền: sale của phiếu, cấp trên theo cây, Kế toán / Admin. Gắn file chỉ hàm máy chủ làm được (service_role); mã file Drive không ra trình duyệt.
+
+Kiểm thử: `supabase/tests/99r_v38.sql`, `tests/e2e/v38.cjs` (chạy thật hàm `hdky` bằng Deno, meInvoice + Apps Script giả lập).
