@@ -216,3 +216,18 @@ Nâng cấp: chạy `supabase/migrations/0048_v40.sql` trong SQL Editor (tự sa
 - Giai đoạn 2 (chờ ViettelPost cấp quyền tích hợp): tạo vận đơn + tính cước qua API, nhận webhook trạng thái → tự ghi ngày gửi / ngày khách nhận (cột `out_ships.api` để sẵn).
 
 Kiểm thử: `supabase/tests/99t_v40.sql`.
+
+## Bản 41 — Lưu trữ hồ sơ HĐ: bản scan lên Google Drive + bản cứng (11/11/2026)
+
+Nâng cấp: chạy `supabase/migrations/0049_v41.sql` trong SQL Editor (tự sao lưu trước khi đổi). Apps Script Drive **không phải cập nhật** (`drive_redeem` tự tra thêm bảng scan).
+
+- **Bảng `ho_so_scans`**: mỗi file scan gắn 1 HĐ (bộ chứng từ) hoặc 1 pháp nhân (HĐ nguyên tắc / mua bán). 1 file có thể gồm nhiều loại giấy (`kinds`: hd, ddh, bbgn, hdmb, hdnt, khac). Mã file Drive không ra trình duyệt; xem qua vé dùng 1 lần (`ho_so_scan_ticket`, nhật ký `VIEW_SCAN`).
+- **Đủ hồ sơ** (`ho_so_status`): HĐ đã ký + ĐĐH + BBGN + (HĐNT của pháp nhân nếu có mã HĐNT, ngược lại HĐMB của HĐ). Chip 🗂 dưới mỗi HĐ ở tab Đã ký: chưa scan / thiếu loại nào / đủ, 🗄 = đã cất bản cứng. Bộ lọc “Lưu trữ” theo các trạng thái này.
+- **Tải scan** (Kế toán / Admin / BGĐ — như quyền lưu Drive hiện có): PDF, hoặc nhiều ảnh / chụp điện thoại → ERP tự gộp 1 PDF (A4, `src/lib/hoso.ts`, không thư viện). Lưu `ERP_NAMTRUNG/Ho so khach hang/<MST> - <Tên>/HD <năm>/` hoặc `…/Hop dong NT-MB/`.
+- Tải scan của HĐ đang trong phiếu chuyển phát chưa thu về → **tự xác nhận “Đã thu về”**; HĐ thành “✓ đã có bản ký”. Nút **📎 scan** trên từng HĐ ở màn Chuyển phát.
+- **Pháp nhân nhận HĐ**: nút 🗂 (số bản scan; vàng = đã ký HĐNT nhưng chưa có scan) → hồ sơ pháp nhân, tải scan HĐNT / HĐMB.
+- **Bản cứng**: `out_doc_state.cung_at / cung_vi_tri`, đánh dấu hàng loạt “🗄 Cất bản cứng” + vị trí tủ / bìa (`out_doc_cung`).
+- **Trang mới** `#/hd/luu-tru` “Lưu trữ HĐ đã ký” cho Kế toán / BGĐ (500 HĐ mới nhất theo bộ lọc sale / số HĐ đầu vào), cùng giao diện tab Đã ký.
+- Sửa: mục “Tải bản đã ký lên” cũ hiện cho cả sale nhưng sale không có quyền lưu Drive (báo lỗi) → nay chỉ hiện với Kế toán / Admin / BGĐ.
+
+Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.

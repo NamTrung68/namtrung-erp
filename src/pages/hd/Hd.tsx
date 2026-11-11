@@ -127,8 +127,8 @@ function SaleList({ statuses, sale, hd, rev, onOpen, empty, hint }: { statuses: 
 }
 
 /** Bản 35: Đã ký — bấm mã tra cứu xem HĐ trên MISA; cột chứng từ xuất nhanh ĐĐH / BBGN / HĐ mua bán / HĐ nguyên tắc (1 HĐ, cả đơn, nhiều HĐ) */
-function KyTab({ sale, hd, rev, onOpen, onShipped }: { sale: string; hd: string; rev: number; onOpen: (id: string) => void; onShipped?: () => void }) {
-  const { data, loading } = useInv(['da_ky'], { sale, hd, dir: 'desc' }, [rev]);
+function KyTab({ sale, hd, rev, onOpen, onShipped, limit }: { sale: string; hd: string; rev: number; onOpen: (id: string) => void; onShipped?: () => void; limit?: number }) {
+  const { data, loading } = useInv(['da_ky'], { sale, hd, dir: 'desc', ...(limit ? { limit } : {}) }, [rev]);
   const [ship, setShip] = useState<{ ids: string[]; clear: () => void } | null>(null);
   return <><p className="mb-3 text-sm text-ink-600">Bấm mã tra cứu (ô xanh) để xem HĐ trên MISA, <b>⬇ Tải HĐ (PDF)</b> để tải bản đã ký (lưu sẵn trên Drive công ty). Cột bên phải: 🧾 Đơn đặt hàng · 🚚 Biên bản giao nhận · 📜 HĐ mua bán / 🤝 HĐ nguyên tắc · 🗂️ Cả bộ (ĐĐH + BBGN + HĐ đã ký) — ô có ✓ là đã tải. Dưới biểu tượng là <b>trạng thái hồ sơ</b>; bấm ⋯ để đánh dấu đã gửi khách hoặc tải bản đã ký lên. Ngày chứng từ = ngày HĐ đã ký.</p>
     <KyList data={data} onShip={(ids, clear) => setShip({ ids, clear })} render={(rows, sel, onSel, st, reload) => <Card bodyClass="p-0"><InvRows rows={rows} loading={loading} onOpen={onOpen} empty="Chưa có HĐ đã ký" sale sel={sel} onSel={onSel}
@@ -344,6 +344,24 @@ export function HdKeToan() {
     {lechT && <LechModal t={lechT} onClose={() => setLechT(null)} onDone={() => { setLechT(null); reload(); }} />}
     {open && <InvoiceDetail id={open} acc onClose={close} onChanged={reload} />}
     {runner && <MisaRun ids={runner} onClose={() => { setRunner(null); setPick({}); }} onDone={reload} />}
+  </Layout>;
+}
+
+// ================= LƯU TRỮ HĐ ĐÃ KÝ (bản 41) =================
+/** Kế toán / BGĐ: toàn bộ HĐ đã ký — chứng từ, chuyển phát, bản scan (Drive) + bản cứng. Sale dùng tab Đã ký trong Hóa đơn của tôi */
+export function HdLuuTru() {
+  const a = useApp(); const [sale, setSale] = useState(''); const [hd, setHd] = useState(''); const [rev, setRev] = useState(0); const [open, setOpen] = useState<string | null>(null);
+  const acc = a.isAdmin || a.has('ke_toan', 'bgd');
+  const { data: saleOpts } = useLoad(() => acc ? db.rpc<any[]>('out_sale_opts').catch(() => []) : Promise.resolve([]), []);
+  const { data: hdOpts } = useLoad(() => acc ? db.rpc<any[]>('out_hd_opts', { p_mode: 'acc' }).catch(() => []) : Promise.resolve([]), []);
+  if (!acc) return <Layout title="Lưu trữ HĐ đã ký"><Card>Dành cho Kế toán, BGĐ. Sale xem ở Hóa đơn của tôi → Đã ký.</Card></Layout>;
+  return <Layout title="Lưu trữ HĐ đã ký" actions={<div className="flex flex-wrap items-center gap-2">
+    <Select className="w-56" placeholder="Tất cả số HĐ đầu vào" options={((hdOpts as any[]) || []).map(x => [x.hd, `HĐ ${x.hd}${x.ngay ? ' · ' + fmtDate(x.ngay) : ''} · ${x.n} mã`] as [string, string])} value={hd} onChange={setHd} />
+    <Select className="w-48" placeholder="Tất cả sale" options={(saleOpts || []).map((x: any) => [x.id, x.full_name] as [string, string])} value={sale} onChange={setSale} />
+    <Button onClick={() => go('/hd/cp')}>📦 Chuyển phát HĐ</Button></div>}>
+    <p className="mb-2 text-xs text-ink-500">Hiện 500 HĐ đã ký mới nhất theo bộ lọc — chọn sale / số HĐ đầu vào để xem HĐ cũ hơn.</p>
+    <KyTab sale={sale} hd={hd} rev={rev} onOpen={setOpen} onShipped={() => setRev(x => x + 1)} limit={500} />
+    {open && <InvoiceDetail id={open} acc onClose={() => setOpen(null)} onChanged={() => setRev(x => x + 1)} />}
   </Layout>;
 }
 

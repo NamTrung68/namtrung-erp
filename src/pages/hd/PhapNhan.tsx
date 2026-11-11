@@ -4,6 +4,7 @@ import { Layout } from '../../components/Layout';
 import { Badge, Button, Empty, Input, Loading, Modal, Select, ask, cx, toast, useAction, useLoad } from '../../components/ui';
 import { db } from '../../lib/sb';
 import { useApp } from '../../state';
+import { BuyerHoSo } from './HoSo';
 import { readXlsx, writeXlsx } from '../../lib/xlsx';
 import { parseBuyers } from '../../lib/xuathd';
 import { downloadMau } from '../../lib/mau';
@@ -38,6 +39,9 @@ export default function PhapNhan() {
   const { data, loading, error } = useLoad(() => db.rpc<any>('out_buyers_page', { p: { q: qq, flag, sale, limit: 2000 } }), [qq, flag, sale, rev]);
   const rows: Row[] = data?.rows || []; const counts = data?.counts || {}; const acc: boolean = data ? !!data.acc : a.isAdmin || a.has('ke_toan');
   const [edit, setEdit] = useState<Record<string, Draft>>({}); const [adding, setAdding] = useState<Draft | null>(null); const [imp, setImp] = useState(false);
+  // Bản 41: hồ sơ scan HĐ nguyên tắc / mua bán theo pháp nhân
+  const [hoSo, setHoSo] = useState<Row | null>(null);
+  const { data: hs, reload: rlHs } = useLoad(() => rows.length ? db.rpc<Record<string, { hdnt: number; hdmb: number; tong: number }>>('ho_so_buyer_status', { p_ids: rows.map(r => r.id) }).catch(() => ({})) : Promise.resolve({}), [rows.map(r => r.id).join()]);
   const groups = useMemo(() => { const m = new Map<string, Row[]>(); rows.forEach(r => { const k = r.customer_id || 'u:' + lc(r.username); m.set(k, [...(m.get(k) || []), r]); }); return Array.from(m.values()); }, [rows]);
   const dirty = (r: Row) => { const d = edit[r.id]; if (!d) return false; const o = toDraft(r); return (Object.keys(o) as (keyof Draft)[]).some(k => (d[k] || '').trim() !== (o[k] || '').trim()); };
   const setE = (r: Row, k: keyof Draft, v: string) => setEdit(x => ({ ...x, [r.id]: { ...(x[r.id] || toDraft(r)), [k]: v } }));
@@ -102,6 +106,8 @@ export default function PhapNhan() {
             <input className={cx(inp, emailOk(val(r, 'email')) ? 'border-ink-200' : 'border-red-300')} value={val(r, 'email')} onChange={e => setE(r, 'email', e.target.value)} placeholder="Email nhận HĐ" />
             <input className={cx(inp, 'border-ink-200')} value={val(r, 'username')} onChange={e => setE(r, 'username', e.target.value)} placeholder="Username" title="Đổi username = chuyển sang khách khác" />
             <div className="flex items-center gap-1.5">{d ? <Button size="sm" variant="primary" loading={busy} onClick={() => save(r)}>Lưu</Button> : null}
+              <button className={cx('rounded-md border px-1.5 py-0.5 text-[11px] font-semibold', r.ma_hdnt && !hs?.[r.id]?.hdnt ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-ink-200 text-ink-600 hover:border-brand-400')}
+                title={r.ma_hdnt ? (hs?.[r.id]?.hdnt ? 'Đã có bản scan HĐ nguyên tắc' : 'Đã ký HĐ nguyên tắc nhưng chưa có bản scan') : 'Hồ sơ scan của pháp nhân'} onClick={() => setHoSo(r)}>🗂 {hs?.[r.id]?.tong || 0}</button>
               <button className="px-1 text-xs text-red-600 hover:underline" onClick={() => del(r)}>Xóa</button></div>
             {/* Bản 35: thông tin in bộ chứng từ (ĐĐH, biên bản giao nhận, HĐ mua bán / HĐ nguyên tắc) */}
             <div className="grid gap-1.5 sm:grid-cols-2 lg:col-start-2 lg:col-end-8 lg:grid-cols-[1.3fr_1fr_1.7fr_130px_2fr]">
@@ -142,6 +148,7 @@ export default function PhapNhan() {
         <label className="text-xs text-ink-600">Người nhận chuyển phát HĐ<Input value={adding.nguoi_nhan} onChange={e => setAdding({ ...adding, nguoi_nhan: e.target.value })} /></label>
         <label className="text-xs text-ink-600">SĐT nhận<Input inputMode="tel" value={adding.sdt_nhan} onChange={e => setAdding({ ...adding, sdt_nhan: e.target.value })} className={adding.sdt_nhan && !sdtOk(adding.sdt_nhan) ? 'border-red-300' : ''} /></label></div>
       <p className="mt-2 text-xs text-ink-500">Username khớp khách ERP thì gắn ngay; chưa có khách thì ERP tự gắn khi khách có username đó. Khách chưa có ★ → pháp nhân này thành mặc định.</p></Modal>}
+    {hoSo && <BuyerHoSo buyer={{ id: hoSo.id, name: hoSo.name, tax_code: hoSo.tax_code, ma_hdnt: hoSo.ma_hdnt, ngay_hdnt: hoSo.ngay_hdnt }} onClose={() => setHoSo(null)} onChanged={rlHs} />}
     {imp && <ImportBuyers current={rows} onClose={() => setImp(false)} onDone={() => { setImp(false); reload(); }} />}
   </Layout>;
 }

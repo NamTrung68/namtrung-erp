@@ -11,6 +11,7 @@ import { db } from '../../lib/sb';
 import { fmtDate, fmtDateTime, today } from '../../lib/format';
 import { writeXlsx } from '../../lib/xlsx';
 import { useApp } from '../../state';
+import { ScanUpload, useIsAcc } from './HoSo';
 
 export type ShipSt = 'cho_gui' | 'da_gui' | 'da_nhan' | 'da_thu' | 'hoan' | 'huy';
 export const SHIP_ST: Record<ShipSt, [string, string]> = {
@@ -144,7 +145,7 @@ function ActModal({ s, kind, items, onClose, onDone }: { s: any; kind: ActKind; 
           <Input type="date" min={minD} max={today()} value={ngay} onChange={e => setNgay(e.target.value)} /></Field>}
         {(kind === 'gui' || kind === 'nhan') && <Field label="Mã vận đơn" hint={kind === 'gui' ? 'Có thể bổ sung sau' : undefined}><Input value={mvd} onChange={e => setMvd(e.target.value)} placeholder="VD: 1234567890" /></Field>}
         {kind === 'nhan' && <p className="rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-900">Hạn thu về bản ký: <b>{fmtDate(addDays(ngay, Number(s._cfg?.so_ngay_thu || 7)))}</b>. ERP báo sale ngay để nhắc khách ký và gửi lại 1 bản; quá hạn sẽ cảnh báo sale + quản lý mỗi sáng.</p>}
-        {kind === 'thu' && <p className="text-xs text-ink-600">{items ? `HĐ: ${(s.items || []).filter((x: any) => items.includes(x.invoice_id)).map((x: any) => x.so_hd || x.code).join(', ')}` : `Tất cả ${nThu} HĐ còn lại của phiếu.`} Muốn lưu bản scan thì tải lên ở tab Đã ký (⋯ → Tải bản đã ký).</p>}
+        {kind === 'thu' && <p className="text-xs text-ink-600">{items ? `HĐ: ${(s.items || []).filter((x: any) => items.includes(x.invoice_id)).map((x: any) => x.so_hd || x.code).join(', ')}` : `Tất cả ${nThu} HĐ còn lại của phiếu.`} Có bản scan thì bấm <b>📎 scan</b> trên từng HĐ của phiếu (kế toán) — lưu Drive và tự xác nhận thu về.</p>}
         {(kind === 'hoan' || kind === 'huy') && <Field label={kind === 'hoan' ? 'Lý do (bắt buộc)' : 'Lý do (không bắt buộc)'}><Input autoFocus value={note} onChange={e => setNote(e.target.value)} placeholder={kind === 'hoan' ? 'VD: sai địa chỉ, khách không nhận, thất lạc…' : ''} /></Field>}
         {kind === 'hoan' && <p className="text-xs text-ink-500">HĐ của phiếu được mở lại để tạo phiếu gửi mới.</p>}</>}
     </div></Modal>;
@@ -152,6 +153,7 @@ function ActModal({ s, kind, items, onClose, onDone }: { s: any; kind: ActKind; 
 
 function ShipRow({ s, onAct, onChanged }: { s: any; onAct: (k: ActKind, items?: string[]) => void; onChanged: () => void }) {
   const a = useApp(); const { busy, run } = useAction(); const [menu, setMenu] = useState(false); const st = s.status as ShipSt;
+  const acc = useIsAcc(); const [scan, setScan] = useState<any>(null); // bản 41: tải scan bản ký khách gửi lại → tự thu về
   const con = (s.items || []).filter((x: any) => !x.thu_at).length; const tong = (s.items || []).length;
   const lui = () => run(async () => { const n = await ask({ title: `Lùi trạng thái ${s.code}?`, message: 'Dùng khi bấm nhầm. Ngày đã ghi của bước hiện tại sẽ bị xóa.', input: { label: 'Ghi chú (không bắt buộc)' }, ok: 'Lùi' }); if (n === null) return;
     await db.rpc('out_ship_act', { p_id: s.id, p_act: 'lui', p: { note: n } }); onChanged(); }, 'Đã lùi trạng thái');
@@ -199,7 +201,9 @@ function ShipRow({ s, onAct, onChanged }: { s: any; onAct: (k: ActKind, items?: 
       className={cx('inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[11.5px]', x.thu_at ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-ink-200 bg-white text-ink-700')}>
       <b>HĐ {x.so_hd || x.code}</b>{x.ngay_hd && <span className="text-ink-400">{fmtDate(x.ngay_hd)}</span>}
       {x.thu_at ? <><span>✓ thu về {fmtDate(x.thu_ngay)}</span>{x.thu_url && <a href={x.thu_url} target="_blank" rel="noreferrer">📎</a>}<button className="text-ink-400 hover:text-red-600" title="Bỏ xác nhận (bấm nhầm)" onClick={() => boThu(x.invoice_id)}>↶</button></>
-        : (st === 'da_gui' || st === 'da_nhan') && tong > 1 ? <button className="font-semibold text-emerald-700 hover:underline" onClick={() => onAct('thu', [x.invoice_id])}>✍ thu về</button> : null}</span>)}</div>
+        : (st === 'da_gui' || st === 'da_nhan') && tong > 1 ? <button className="font-semibold text-emerald-700 hover:underline" onClick={() => onAct('thu', [x.invoice_id])}>✍ thu về</button> : null}
+      {acc && st !== 'huy' && st !== 'cho_gui' && <button className="text-brand-700 hover:underline" title="Tải bản scan khách gửi lại (lưu Drive, tự xác nhận thu về)" onClick={() => setScan(x)}>📎 scan</button>}</span>)}</div>
+    {scan && <ScanUpload target={{ inv: { id: scan.invoice_id, so_hd: scan.so_hd, buyer_name: scan.buyer_name, tax_code: scan.tax_code, ngay_hd: scan.ngay_hd } }} onClose={() => setScan(null)} onDone={() => { setScan(null); onChanged(); }} />}
   </div>;
 }
 

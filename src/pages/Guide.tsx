@@ -275,6 +275,18 @@ Gửi bản cứng HĐ đã ký cho khách, khách ký và **gửi lại Nam Tru
 - **Bộ lọc**: Đang theo dõi · Chờ gửi · Đã gửi · Khách đã nhận · Sắp hạn · Quá hạn · Đã thu về · Hoàn · Hủy; tìm theo mã phiếu / mã vận đơn / số HĐ / khách / SĐT; lọc theo sale và khoảng ngày gửi / nhận / thu về. **⬇ Excel** xuất đúng danh sách đang lọc.
 - Giai đoạn 2: tạo vận đơn và tự cập nhật ngày khách nhận qua **API ViettelPost** (đang chờ ViettelPost cấp quyền tích hợp).` },
 
+  { id: 'luu-tru', icon: '🗄️', title: 'Lưu trữ hồ sơ: bản scan (Drive) + bản cứng', who: ['Kế toán', 'Sale', 'Quản lý'], text: `
+Mỗi HĐ đã ký cần đủ **bản mềm** (scan, lưu Google Drive công ty) và **bản cứng** (cất tủ). Kế toán / BGĐ tải scan; sale xem được bản scan của khách mình ngay trong ERP.
+
+- **Đủ hồ sơ** 1 HĐ = **HĐ đã ký + Đơn đặt hàng + Biên bản giao nhận** + **HĐ nguyên tắc** (nếu pháp nhân đã ký HĐNT — scan 1 lần ở pháp nhân, dùng cho mọi HĐ) hoặc **HĐ mua bán** của HĐ đó.
+- **Tải scan**: tab **Đã ký** (hoặc [Lưu trữ HĐ đã ký](#/hd/luu-tru)) → ⋯ → **📎 Tải bản scan lên**, hoặc bấm chip **🗂** dưới HĐ → Hồ sơ HĐ. Chọn PDF có sẵn, hoặc chọn / **📷 chụp nhiều ảnh** → ERP gộp thành 1 PDF nhiều trang. Tick file gồm những giấy gì (1 file chứa cả bộ cũng được). **Scan được tờ nào lưu tờ đó** — chip 🗂 báo còn thiếu loại nào.
+- Khách gửi lại bản ký trong phiếu chuyển phát: bấm **📎 scan** trên HĐ ở màn Chuyển phát (hoặc tải ở tab Đã ký) → ERP lưu Drive và **tự xác nhận "Đã thu về"**.
+- **HĐ nguyên tắc / mua bán theo khách**: [Pháp nhân nhận HĐ](#/hd/phap-nhan) → nút **🗂** trên pháp nhân (vàng = đã ký HĐNT nhưng chưa có scan) → tải scan HĐNT; xem toàn bộ hồ sơ của pháp nhân.
+- **Thư mục Drive**: \`ERP_NAMTRUNG/Ho so khach hang/<MST> - <Tên>/HD <năm>/\` (bộ chứng từ theo HĐ) và \`…/Hop dong NT-MB/\` (HĐ nguyên tắc / mua bán). Tên file: \`HD401_HD-DDH-BBGN_20261111-0930.pdf\`.
+- **Bản cứng**: tick HĐ → **🗄 Cất bản cứng** → ghi vị trí (VD *Tủ 1 · Bìa T11/2026*); hoặc ghi trong Hồ sơ HĐ.
+- **Bộ lọc Lưu trữ** ở tab Đã ký: Chưa có bản scan · Scan còn thiếu · Đủ hồ sơ scan · Chưa cất bản cứng.
+- Gỡ bản scan nhầm: Hồ sơ HĐ → **Gỡ** (chỉ gỡ khỏi ERP, file trên Drive giữ nguyên).` },
+
   { id: 'bao-mat', icon: '🔐', title: 'Quyền xem và bảo mật file hóa đơn', who: ['Tất cả'], text: `
 - PDF nháp / đã ký lưu **kín** trên Google Drive công ty (thư mục \`ERP_NAMTRUNG\`), không chia sẻ công khai. ERP chỉ mở qua **vé dùng 1 lần** (hết hạn sau vài phút).
 - **Ai xem được**: sale của yêu cầu, cấp trên theo cây nhân sự, Kế toán, Admin, BGĐ. **Sale không xem chéo** HĐ của sale khác — trên ERP lẫn Drive.
