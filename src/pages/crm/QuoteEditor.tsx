@@ -348,7 +348,8 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
             <B C={C} n="7" l="Phí hợp quy" v={h.phiHopQuy} />
             <B C={C} n="8" l="Phí kiểm tra chất lượng" v={h.phiKTCL} />
             {h.phiKhac > 0 && <B C={C} n="" l={h.tenPhiKhac || 'Phí khác'} v={h.phiKhac} />}
-            <B C={C} n="9" l="Thuế nhập khẩu" q={money(h.coSoThueNK === 'toKhai' ? t.toKhai : t.tongTruocVAT)} p={valid.length === 1 ? `${num(valid[0].r!.dutyPct)}%` : 'theo HS'} v={t.thueNK} />
+            {/* Thuế NK: không hiện trị giá tính thuế cho khách; thuế suất 0% / thành tiền 0 thì để trắng */}
+            <B C={C} n="9" l="Thuế nhập khẩu" q="" p={!valid.some(x => Number(x.r!.dutyPct) > 0) ? '' : valid.length === 1 ? `${num(valid[0].r!.dutyPct)}%` : 'theo HS'} v={t.thueNK} blank0 />
             <B C={C} n="10" l="VAT" q={money(t.tongTruocVAT)} p={valid.length === 1 ? `${num(valid[0].r!.vatPct)}%` : 'theo dòng'} v={t.vat} />
             {t.tndn > 0 && <><tr className="bg-[#fbeee5] font-bold"><td className={C} colSpan={5}>III. Phát sinh do xuất hóa đơn cao hơn giá trị thực</td></tr>
               <B C={C} n="11" l="Thuế TNDN trên phần chênh giá xuất" q={money(t.tongTruocVAT - t.giaDu)} p={`${num(h.tndnPct)}%`} v={t.tndn} /></>}
@@ -379,5 +380,5 @@ function QuotePrint({ open, onClose, quote, customer, h, lines }: { open: boolea
     </Modal>
   );
 }
-const B = ({ C, n, l, q = '', p = '', v }: { C: string; n: string; l: string; q?: string; p?: string; v: number }) =>
-  <tr><td className={C + ' text-center'}>{n}</td><td className={C}>{l}</td><td className={C + ' text-right'}>{q}</td><td className={C + ' text-right'}>{p}</td><td className={C + ' text-right'}>{money(v)}</td></tr>;
+const B = ({ C, n, l, q = '', p = '', v, blank0 }: { C: string; n: string; l: string; q?: string; p?: string; v: number; blank0?: boolean }) =>
+  <tr><td className={C + ' text-center'}>{n}</td><td className={C}>{l}</td><td className={C + ' text-right'}>{q}</td><td className={C + ' text-right'}>{p}</td><td className={C + ' text-right'}>{blank0 && !Math.round(v) ? '' : money(v)}</td></tr>;
