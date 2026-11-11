@@ -35,3 +35,17 @@ export function kyPdf(drive: DriveCfg | undefined, invoiceId: string): Promise<B
 const slug = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40);
 export const kyName = (v: { so_hd?: string | null; code?: string; buyer_name?: string | null }) =>
   `HD${String(v.so_hd || '').replace(/\D/g, '').replace(/^0+(?=\d)/, '') || v.code || ''}_${slug(v.buyer_name || '')}.pdf`;
+
+const ngayMem = new Map<string, Promise<string | null>>();
+/** Ngày in trên HĐ đã ký ("Ngày … tháng … năm …" trong PDF) — dùng làm ngày chứng từ. Không đọc được → null */
+export function kyNgay(drive: DriveCfg | undefined, invoiceId: string): Promise<string | null> {
+  const hit = ngayMem.get(invoiceId); if (hit) return hit;
+  const p = (async () => {
+    const blob = await kyPdf(drive, invoiceId);
+    const [{ pdfText }, { hdNgay }] = await Promise.all([import('./pdf'), import('./hdfile')]);
+    const ngay = hdNgay(await pdfText(blob, 1)) || null;
+    return ngay && /^\d{4}-\d{2}-\d{2}$/.test(ngay) ? ngay : null;
+  })().catch(() => null);
+  ngayMem.set(invoiceId, p);
+  return p;
+}

@@ -99,5 +99,5 @@ test('Đơn đặt hàng: bỏ dòng Ngày đặt hàng, còn Ngày giao hàng',
   const xml = execSync('unzip -p public/mau-hd/ddh.docx word/document.xml').toString();
   const txt = xml.replace(/<[^>]*>/g, '');
   assert.ok(!/Ngày đặt hàng/.test(txt) && !txt.includes('{{ngay}}'), 'không còn dòng Ngày đặt hàng');
-  assert.ok(txt.includes('Ngày giao hàng: {{ngay_giao}}'));
+  assert.ok(txt.includes('Ngày giao hàng dự kiến: {{ngay_giao}}'));
 });

@@ -27,9 +27,18 @@ export function parseHdText(text: string, sellerMst = '0108195040'): HdInfo | nu
   const tong = t.match(/Tổng cộng\s*:?\s*[\d.]+\s+[\d.]+\s+([\d.]+)/i)?.[1] || t.match(/Cộng tiền thanh toán\s*:?\s*([\d.]+)/i)?.[1];
   const so = t.match(/Số\s*:\s*(<\s*Chưa cấp số\s*>|\d+)/i)?.[1] || '';
   const kh = t.match(/Ký hiệu\s*:\s*([0-9A-Z]{4,10})/i)?.[1];
-  const d = t.match(/Ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+(\d{4})/i);
-  const ngay = d ? `${d[3]}-${d[2].padStart(2, '0')}-${d[1].padStart(2, '0')}` : undefined;
+  const ngay = hdNgay(t);
   if (!mst && !tong) return null;
   const ky = /^\d+$/.test(so);
   return { kind: ky ? 'ky' : 'nhap', mst, tong: tong ? money(tong) : null, so_hd: ky ? String(Number(so)) : undefined, ky_hieu: kh, ngay, from: 'noi_dung' };
+}
+
+/** Ngày lập HĐ trong chữ PDF: "Ngày 30 tháng 10 năm 2026", mẫu song ngữ "Ngày (Date) 30 tháng (month) 10 năm (year) 2026", hoặc "Ngày (Date): 30/10/2026" */
+export function hdNgay(text: string): string | undefined {
+  const t = text.replace(/\s+/g, ' '); const P = '\\s*(?:\\([^)]{0,20}\\)\\s*)?:?\\s*';
+  const ok = (d: string, m: string, y: string) => { const dd = +d, mm = +m; return dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12 ? `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}` : undefined; };
+  let r = t.match(new RegExp('Ngày' + P + '(\\d{1,2})\\s*tháng' + P + '(\\d{1,2})\\s*năm' + P + '(\\d{4})', 'i'));
+  if (r) return ok(r[1], r[2], r[3]);
+  r = t.match(new RegExp('(?:^|[^ýy] )Ngày' + P + '(\\d{1,2})[/.-](\\d{1,2})[/.-](\\d{4})'));
+  return r ? ok(r[1], r[2], r[3]) : undefined;
 }

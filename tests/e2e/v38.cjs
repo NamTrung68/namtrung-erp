@@ -6,7 +6,7 @@ const BASE = 'http://localhost:8080/'; const SHOTS = process.env.SHOTS || '/tmp/
 const errors = []; const ok = (c, m) => { if (!c) errors.push('FAIL ' + m); else console.log('  ✓ ' + m); };
 const sql = q => execSync(`psql -h /var/tmp/pg -p 5433 -U postgres -d nt_e2e -Atqc "${q.replace(/"/g, '\\"')}"`).toString().trim();
 fs.mkdirSync(SHOTS, { recursive: true });
-const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
+const PDF = process.env.PDF_FILE ? fs.readFileSync(process.env.PDF_FILE) : Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n'); // PDF_FILE: PDF có dòng "Ngày 28 tháng 10 năm 2026"
 const hits = [];
 http.createServer((req, res) => { const u = new URL(req.url, 'http://x'); hits.push(u.pathname + u.search);
   if (u.searchParams.get('Code') && u.searchParams.get('Code').startsWith('GOOD')) { res.writeHead(200, { 'Content-Type': 'application/pdf' }); return res.end(PDF); }
@@ -16,7 +16,7 @@ http.createServer((req, res) => { const u = new URL(req.url, 'http://x'); hits.p
   sql(`insert into settings(key, value) values ('drive', '{"url":"http://localhost:8091"}') on conflict (key) do update set value = excluded.value`);
   const A = sql("select id from profiles where email='a@nt.vn'");
   const IT = sql("insert into out_items(ma_hang, ten, dvt, vat, sl_nhap, dg_nhap) values ('HH-E2E-38', 'Đèn LED dây 5m', 'Cuộn', 0.08, 500, 50000) returning id").split('\n')[0];
-  const mk = (code, mst, so, ma) => { const id = sql(`insert into out_invoices(code, sale_id, buyer_name, tax_code, status, so_hd, ngay_hd, status_at) values ('${code}', '${A}', 'Công ty ${code}', '${mst}', 'xac_nhan_ky', '${so}', current_date, now()) returning id`).split('\n')[0];
+  const mk = (code, mst, so, ma) => { const id = sql(`insert into out_invoices(code, sale_id, buyer_name, tax_code, status, so_hd, ngay_hd, status_at, created_at) values ('${code}', '${A}', 'Công ty ${code}', '${mst}', 'xac_nhan_ky', '${so}', current_date, now(), now() - interval '30 days') returning id`).split('\n')[0];
     sql(`insert into out_invoice_lines(invoice_id, item_id, stt, sl, don_gia, vat) values ('${id}', '${IT}', 1, 10, 54000, 0.08)`);
     sql(`update out_invoices set status = 'da_ky', ma_tra_cuu = '${ma}' where id = '${id}'`); return id; };
   const I1 = mk('XHD38001', '0101248141', '381', 'GOOD38A001'), I2 = mk('XHD38002', '0101248142', '382', 'BAD38B0002'), I3 = mk('XHD38003', '0101248143', '383', 'GOOD38C003');
@@ -43,6 +43,14 @@ http.createServer((req, res) => { const u = new URL(req.url, 'http://x'); hits.p
   p = await dl.path(); let names = execSync(`unzip -Z1 "${p}"`).toString();
   ok(/DDH_HD381/.test(names) && /BBGN_HD381/.test(names) && /HD_da_ky_381.*\.pdf/.test(names) && !/HDMB|HDNT/.test(names), 'Cả bộ có ĐĐH + BBGN + HĐ đã ký:\n' + names.trim());
   ok(hits.length === n0, 'lần 2 lấy PDF từ Drive, không tải lại meInvoice');
+  if (process.env.PDF_FILE) {   // bản 39: ngày chứng từ = ngày in trên HĐ (đọc trong PDF), sửa luôn ngày trên phiếu
+    const tmp = '/tmp/v38-bbgn.docx'; fs.writeFileSync(tmp, execSync(`unzip -p "${p}" "$(unzip -Z1 "${p}" | grep BBGN)"`));
+    const doc = execSync(`unzip -p ${tmp} word/document.xml`).toString().replace(/<[^>]*>/g, '');
+    ok(/28 tháng 10 năm 2026/.test(doc), 'Biên bản giao nhận ghi ngày theo HĐ: 28/10/2026');
+    const ddhF = '/tmp/v38-ddh.docx'; fs.writeFileSync(ddhF, execSync(`unzip -p "${p}" "$(unzip -Z1 "${p}" | grep DDH)"`));
+    ok(/Ngày giao hàng dự kiến: 28\/10\/2026/.test(execSync(`unzip -p ${ddhF} word/document.xml`).toString().replace(/<[^>]*>/g, '')), 'ĐĐH: Ngày giao hàng dự kiến 28/10/2026');
+    ok(sql(`select to_char(ngay_hd, 'DD/MM/YYYY') from out_invoices where id = '${I1}'`) === '28/10/2026', 'ngày HĐ trên phiếu sửa theo PDF');
+  }
 
   // 3) Mã tra cứu sai: báo + cho tải ĐĐH + BBGN
   await row('XHD38002').locator('button[title^="Cả bộ"]').click(); await a.waitForTimeout(3000);
