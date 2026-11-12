@@ -4,6 +4,7 @@
 //    → quá hạn chưa thu về: cảnh báo sale + quản lý mỗi sáng → "Đã thu về" từng HĐ → xong
 //  · Phiếu Đã gửi / HĐ thu về tự cập nhật vết hồ sơ ở tab Đã ký (✉ đã gửi khách · ✓ đã có bản ký)
 import React, { useEffect, useState } from 'react';
+import { Pager, usePager } from '../../components/Pager';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Card, cx, Empty, Field, Input, Loading, Modal, NumInput, Select, StatusChips, Textarea, ask, toast, useAction, useLoad } from '../../components/ui';
 import { CopyBtn } from '../../components/MstCheck';
@@ -225,6 +226,7 @@ export function ShipList({ sale: saleProp, rev: revProp = 0, onChanged, canPick 
   const p = { st, q: qq, sale: sl, field, tu, den };
   const { data, loading, error } = useLoad(() => db.rpc<any>('out_ships_page', { p: { ...p, limit: 300 } }), [JSON.stringify(p), rev, revProp]);
   const rows: any[] = data?.rows || []; const c = data?.counts || {}; const cfg = data?.cfg || {};
+  const pg = usePager('hd_cp', [JSON.stringify(p), rows.length]);
   const { data: saleOpts } = useLoad(() => saleProp === undefined && (a.seesTeam || a.isAdmin || a.has('ke_toan')) ? db.rpc<any[]>('out_sale_opts').catch(() => []) : Promise.resolve([]), []);
   const chips: [string, string, number, string][] = [
     ['mo', 'Đang theo dõi', c.mo ?? 0, 'dark'], ['cho_gui', 'Chờ gửi', c.cho_gui ?? 0, 'amber'], ['da_gui', 'Đã gửi — đang giao', c.da_gui ?? 0, 'blue'],
@@ -254,8 +256,9 @@ export function ShipList({ sale: saleProp, rev: revProp = 0, onChanged, canPick 
       <div className="ml-auto flex gap-2"><Button loading={busy} onClick={exportX}>⬇ Excel</Button>
         {canPick && <Button variant="primary" onClick={() => setPick(true)}>+ Tạo phiếu gửi</Button>}</div></div>
     {loading && !data ? <Loading /> : error ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : !rows.length ? <Card><Empty>Không có phiếu chuyển phát nào{st || qq || tu || den ? ' khớp bộ lọc' : ''}</Empty></Card> :
-      <div className="space-y-2">{rows.map(s => <ShipRow key={s.id} s={s} onAct={(kind, items) => setAct({ s: { ...s, _cfg: cfg }, kind, items })} onChanged={reload} />)}
-        {data.total > rows.length && <div className="text-center text-xs text-ink-500">Đang hiện {rows.length}/{data.total} — lọc để thu hẹp</div>}</div>}
+      <div className="space-y-2">{pg.slice(rows).map(s => <ShipRow key={s.id} s={s} onAct={(kind, items) => setAct({ s: { ...s, _cfg: cfg }, kind, items })} onChanged={reload} />)}
+        <Pager p={pg} total={rows.length} className="rounded-2xl border border-ink-200 bg-white" />
+        {data.total > rows.length && <div className="text-center text-xs text-ink-500">Đang hiện {rows.length}/{data.total} phiếu mới nhất — lọc để thu hẹp</div>}</div>}
     {act && <ActModal s={act.s} kind={act.kind} items={act.items} onClose={() => setAct(null)} onDone={() => { setAct(null); reload(); }} />}
     {pick && <ShipPicker onClose={() => setPick(false)} onPick={ids => { setPick(false); setCreate(ids); }} />}
     {create && <ShipCreate ids={create} onClose={() => setCreate(null)} onDone={() => { setCreate(null); reload(); }} />}

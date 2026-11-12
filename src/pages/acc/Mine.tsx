@@ -108,14 +108,16 @@ export function AccApprove() {
     const note = await ask({ title: ok ? 'Duyệt mở chặn' : 'Từ chối', message: ok ? 'Dòng sẽ được chốt TRUE gửi APT.' : 'Dòng trả về sale xử lý tiếp.', input: { label: ok ? 'Ghi chú (nếu có)' : 'Lý do từ chối', required: !ok } });
     if (note === null) return; await db.rpc('acc_line_approve', { p_id: l.id, p_ok: ok, p_note: note }); reload();
   }, ok ? 'Đã duyệt' : 'Đã từ chối');
+  const pg = usePager('acc_approve', [(data || []).length]);
   if (!can) return <Layout title="Duyệt mở chặn HĐ"><Card>Bạn chưa được cấp quyền duyệt. Admin/BGĐ thêm người duyệt ở Cấu hình → Kế toán – Hóa đơn.</Card></Layout>;
   const rows = data || [];
   return <Layout title="Duyệt mở chặn HĐ">
     <p className="mb-3 text-sm text-ink-600">Dòng chưa có đơn, giá khách = 0 hoặc biên NT dưới khung — sale xin duyệt ngoại lệ. Duyệt → dòng được chốt; hệ thống ghi tên, lý do, thời điểm.</p>
     {loading ? <Loading /> : !rows.length ? <Card><Empty>Không có dòng chờ duyệt</Empty></Card> :
-      <div className="space-y-3">{rows.map(l => <LineCard key={l.id} l={l} onOpen={() => setSel(l)}>
+      <div className="space-y-3">{pg.slice(rows).map(l => <LineCard key={l.id} l={l} onOpen={() => setSel(l)}>
         <div className="mt-3 flex gap-2"><Button variant="success" loading={busy} onClick={() => act(l, true)}>✓ Duyệt</Button><Button variant="danger" loading={busy} onClick={() => act(l, false)}>Từ chối</Button>
-          <span className="self-center text-xs text-ink-500">Sale: {a.personName(l.replied_by)}</span></div></LineCard>)}</div>}
+          <span className="self-center text-xs text-ink-500">Sale: {a.personName(l.replied_by)}</span></div></LineCard>)}
+        <Pager p={pg} total={rows.length} className="rounded-2xl border border-ink-200 bg-white" /></div>}
     {sel && <LineModal line={sel} onClose={() => setSel(null)} onChanged={() => { setSel(null); reload(); }} />}
   </Layout>;
 }
