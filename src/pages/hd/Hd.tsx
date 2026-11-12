@@ -46,8 +46,20 @@ function useInv(statuses: string[], extra: Record<string, any> = {}, dep: any[] 
   }, [statuses.join(), JSON.stringify(extra), ...dep]);
 }
 /** Danh sách phiếu HĐ — tự phân trang (20/trang mặc định, nhớ số dòng/trang theo pk) */
-function InvRows({ rows, loading, onOpen, empty, action, sale = false, sel, onSel, pk = 'hd_rows' }: { rows: any[]; loading: boolean; onOpen: (id: string) => void; empty: string; action?: (v: any) => React.ReactNode; sale?: boolean; sel?: Record<string, boolean>; onSel?: (id: string, on: boolean) => void; pk?: string }) {
+/** Bản 46: nhãn đối chiếu người mua với HĐ đã ký trước (cùng MST) — kế toán thấy ngay yêu cầu nào đúng y pháp nhân cũ */
+const PN_DIFF: Record<string, string> = { ten: 'tên', dia_chi: 'địa chỉ', email: 'email' };
+function PnTag({ c }: { c: any }) {
+  if (!c) return null;
+  const last = c.last ? `HĐ ${c.last.so_hd || c.last.code}${c.last.ngay_hd ? ' ngày ' + fmtDate(c.last.ngay_hd) : ''}` : '';
+  if (c.st === 'khop') return <span title={`Tên, MST, địa chỉ, email y hệt ${last} đã ký — tạo nháp không cần kiểm lại thông tin người mua`} className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">✓ Pháp nhân đã xuất · khớp {last}</span>;
+  if (c.st === 'lech') return <span title={`Đã ký: ${c.last?.buyer_name || ''} · ${c.last?.address || ''}${c.last?.email ? ' · ' + c.last.email : ''}`} className="rounded-md bg-red-50 px-1.5 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">⚠ Khác {(c.diff || []).map((k: string) => PN_DIFF[k] || k).join(', ')} so với {last} — kiểm tra</span>;
+  if (c.st === 'moi') return <span title="MST này chưa có HĐ đã ký nào — kiểm tra kỹ tên, địa chỉ với đăng ký thuế" className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">★ Pháp nhân lần đầu xuất — kiểm tra</span>;
+  return <span className="rounded-md bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-600">Không có MST</span>;
+}
+function InvRows({ rows, loading, onOpen, empty, action, sale = false, sel, onSel, pk = 'hd_rows', pn = false }: { rows: any[]; loading: boolean; onOpen: (id: string) => void; empty: string; action?: (v: any) => React.ReactNode; sale?: boolean; sel?: Record<string, boolean>; onSel?: (id: string, on: boolean) => void; pk?: string; pn?: boolean }) {
   const a = useApp(); const pg = usePager(pk, [rows.length]);
+  const pnIds = pn ? pg.slice(rows).map(v => v.id).join(',') : '';
+  const { data: pnc } = useLoad(() => pnIds ? db.rpc<Record<string, any>>('out_pn_check', { p_ids: pnIds.split(',') }).catch(() => ({})) : Promise.resolve({} as Record<string, any>), [pnIds]);
   if (loading && !rows.length) return <Loading />;
   if (!rows.length) return empty ? <div className="px-4 py-6 text-center text-sm text-ink-400">{empty}</div> : null;
   return <><div className="divide-y divide-ink-100">{pg.slice(rows).map(v => { const [who, what] = nextStep(v); const tong = Number(v.tien_hang || 0) + Number(v.tien_thue || 0);
@@ -62,7 +74,8 @@ function InvRows({ rows, loading, onOpen, empty, action, sale = false, sel, onSe
           {v.tax_code && <MstChip mst={v.tax_code} />}
           {v.mds && String(v.mds).split(/,\s*/).slice(0, 4).map((md: string) => <span key={md} className="rounded-md bg-ink-100 px-1.5 py-0.5 font-semibold text-ink-700">{md}</span>)}
           {v.mds && String(v.mds).split(/,\s*/).length > 4 && <span className="text-ink-400">+{String(v.mds).split(/,\s*/).length - 4} đơn</span>}
-          {(!sale || a.isAdmin || a.seesTeam) && v.sale_id ? <span className="text-ink-500">Sale <b className="font-semibold text-ink-800">{a.personName(v.sale_id) || '—'}</b></span> : null}</div>
+          {(!sale || a.isAdmin || a.seesTeam) && v.sale_id ? <span className="text-ink-500">Sale <b className="font-semibold text-ink-800">{a.personName(v.sale_id) || '—'}</b></span> : null}
+          {pn && <PnTag c={(pnc as any)?.[v.id]} />}</div>
         {v.mas && <div className="mt-1 flex flex-wrap items-center gap-1 text-[11.5px]">{v.hds && <span className="rounded-md bg-ink-900 px-1.5 py-0.5 font-semibold text-white">HĐ {v.hds}</span>}{String(v.mas).split(', ').slice(0, 6).map((m: string) => <span key={m} className="rounded-md bg-brand-50 px-1.5 py-0.5 font-mono text-brand-800">{m}</span>)}{String(v.mas).split(', ').length > 6 && <span className="text-ink-400">+{String(v.mas).split(', ').length - 6} mã</span>}</div>}</div>
       <div className="w-32 text-right text-[15px] font-bold tabular-nums text-ink-900">{money(tong)}{v.bien_max != null && Number(v.bien_max) > BIEN_DUYET && <div className="text-[11px] font-semibold text-amber-700">biên {pctTxt(Number(v.bien_max))}</div>}</div>
       <div className="w-48">{v.misa_at && v.status === 'cho_nhap' && !(v.misa && v.misa.st !== 'da_xoa') ? <Badge color="amber">Đã export — chờ PDF nháp</Badge> : <SBadge s={v.status} />}<MisaTag v={v} />
@@ -125,7 +138,7 @@ export function HdSale() {
 }
 function SaleList({ statuses, sale, hd, rev, onOpen, empty, hint }: { statuses: string[]; sale: string; hd: string; rev: number; onOpen: (id: string) => void; empty: string; hint: string }) {
   const { data, loading } = useInv(statuses, { sale, hd, ...(statuses.includes('da_ky') ? { dir: 'desc' } : {}) }, [rev]); // đã ký: mới nhất lên đầu
-  return <><p className="mb-3 text-sm text-ink-600">{hint}</p><Card bodyClass="p-0"><InvRows rows={data || []} loading={loading} onOpen={onOpen} empty={empty} sale pk={'hd_sale_' + statuses.join('_')} /></Card></>;
+  return <><p className="mb-3 text-sm text-ink-600">{hint}</p><Card bodyClass="p-0"><InvRows rows={data || []} loading={loading} onOpen={onOpen} empty={empty} sale pk={'hd_sale_' + statuses.join('_')} pn={!statuses.includes('da_ky')} /></Card></>;
 }
 
 /** Bản 35: Đã ký — bấm mã tra cứu xem HĐ trên MISA; cột chứng từ xuất nhanh ĐĐH / BBGN / HĐ mua bán / HĐ nguyên tắc (1 HĐ, cả đơn, nhiều HĐ) */
@@ -321,24 +334,24 @@ export function HdKeToan() {
         <Button variant={api ? undefined : 'primary'} loading={busy} disabled={!chuaExport.length} onClick={api && picked.length ? () => reExport(picked) : exportAll}>⬇ {api ? 'Excel nhập MISA — làm tay' : 'Export file nhập MISA'} ({api && picked.length ? picked.length : chuaExport.length})</Button>
         {api && <Button variant="primary" disabled={!chuaExport.length} onClick={taoNhap}>⚡ Tạo nháp MISA ({picked.length || apiReady.length})</Button>}</>}>
       {duyet.length > 0 && <div className="border-b border-ink-100 bg-red-50/40"><div className="px-4 pt-2 text-xs font-semibold text-red-700">Chờ duyệt giá (biên &gt; 4%) — 1 người duyệt là đủ</div>
-        <InvRows pk="kt_duyet" rows={duyet} loading={false} onOpen={setOpen} empty="" action={v => <Button size="sm" variant="primary" onClick={() => approve(v)}>Duyệt</Button>} /></div>}
+        <InvRows pn pk="kt_duyet" rows={duyet} loading={false} onOpen={setOpen} empty="" action={v => <Button size="sm" variant="primary" onClick={() => approve(v)}>Duyệt</Button>} /></div>}
       {chuaExport.length > 0 && <div className="px-4 pt-2 text-xs font-semibold text-amber-700">Chưa export ({chuaExport.length})</div>}
-      <InvRows pk="kt_export" rows={chuaExport} loading={moi.loading} onOpen={setOpen} empty={choPdf.length ? '' : 'Không có yêu cầu mới chờ export'} sel={api ? pick : undefined} onSel={api ? onSel : undefined} />
+      <InvRows pn pk="kt_export" rows={chuaExport} loading={moi.loading} onOpen={setOpen} empty={choPdf.length ? '' : 'Không có yêu cầu mới chờ export'} sel={api ? pick : undefined} onSel={api ? onSel : undefined} />
       {choPdf.length > 0 && <div className="border-t border-ink-100"><div className="px-4 pt-2 text-xs font-semibold text-ink-600">Đã export — chờ nạp PDF nháp ({choPdf.length})</div>
-        <InvRows pk="kt_chopdf" rows={choPdf} loading={false} onOpen={setOpen} empty="" action={v => v.misa && v.misa.st === 'da_tao' && !v.misa.cu ? (v.misa.khop === false ? <Button size="sm" onClick={() => setOpen(v.id)}>Xử lý lệch</Button> : <Button size="sm" variant="primary" loading={busy} onClick={() => layPdf(v)}>⬇ Lấy PDF</Button>) : <Button size="sm" onClick={() => reExport([v.id])}>Export lại</Button>} /></div>}
+        <InvRows pn pk="kt_chopdf" rows={choPdf} loading={false} onOpen={setOpen} empty="" action={v => v.misa && v.misa.st === 'da_tao' && !v.misa.cu ? (v.misa.khop === false ? <Button size="sm" onClick={() => setOpen(v.id)}>Xử lý lệch</Button> : <Button size="sm" variant="primary" loading={busy} onClick={() => layPdf(v)}>⬇ Lấy PDF</Button>) : <Button size="sm" onClick={() => reExport([v.id])}>Export lại</Button>} /></div>}
     </Block>
 
     <Block n="3" title="PDF nháp từ MISA" sub={<>Tải PDF nháp hàng loạt, tên file dạng <code>NHAP_MST_TổngTiền_yyyymmdd</code> — ERP khớp theo MST + tổng tiền và báo sale.</>}
       actions={<Button variant="dark" onClick={() => setPdf(true)}>⇪ Tải PDF nháp / đã ký</Button>}>
       <div className="px-4 py-3 text-sm text-ink-600">{choPdf.length ? <><b>{choPdf.length}</b> yêu cầu đã export đang chờ PDF nháp (danh sách ở khối ②). Nạp PDF xong, yêu cầu tự rời khối ② và báo sale.</> : 'Không có yêu cầu đã export chờ PDF nháp.'}</div>
       {(traSua.data || []).filter(v => v.status === 'tra_sua').length > 0 && <div className="border-t border-ink-100"><div className="px-4 pt-2 text-xs font-semibold text-red-700">Sale trả sửa — chờ sale sửa và gửi lại (xóa nháp cũ trên MISA)</div>
-        <InvRows pk="kt_trasua" rows={(traSua.data || []).filter(v => v.status === 'tra_sua')} loading={false} onOpen={setOpen} empty="" /></div>}
+        <InvRows pn pk="kt_trasua" rows={(traSua.data || []).filter(v => v.status === 'tra_sua')} loading={false} onOpen={setOpen} empty="" /></div>}
       {(traSua.data || []).filter(v => v.status === 'da_nhap').length > 0 && <div className="border-t border-ink-100 px-4 py-2 text-xs text-ink-500">{(traSua.data || []).filter(v => v.status === 'da_nhap').length} yêu cầu có nháp, đang chờ sale duyệt.</div>}
     </Block>
 
     <Block n="4" title="Chờ ký — sale đã chốt" sub={<>Ký trên MISA đúng bản sale chốt → dán <b>mã tra cứu</b> MISA vào ô của phiếu → bấm <b>✓ Đã ký</b>. Sale được báo và bấm mã để xem HĐ.{api && <> Nháp tạo bằng API: ERP <b>tự dò MISA 15 phút/lần</b> (7h–21h) và tự chuyển Đã ký{mcfg.last_sync_at ? ` — lần dò gần nhất ${fmtDateTime(mcfg.last_sync_at)}` : ''}.</>}</>}
       actions={api ? <Button loading={busy} onClick={doMisa}>⟳ Dò MISA ngay</Button> : undefined}>
-      <InvRows pk="kt_choky" rows={ky.data || []} loading={ky.loading} onOpen={setOpen} empty="Không có yêu cầu chờ ký" action={v => <SignBox v={v} onDone={reload} compact />} />
+      <InvRows pn pk="kt_choky" rows={ky.data || []} loading={ky.loading} onOpen={setOpen} empty="Không có yêu cầu chờ ký" action={v => <SignBox v={v} onDone={reload} compact />} />
     </Block>
 
     {imp === 'xe' && <ImportTruck onClose={() => setImp('')} onDone={id => { setImp(''); go('/acc?truck=' + id); }} />}

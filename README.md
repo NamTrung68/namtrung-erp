@@ -250,3 +250,10 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Duyệt đơn → nút **Sửa loại** cạnh Duyệt / Từ chối: nhân sự chọn nhầm loại (VD "Việc riêng có lương" thay vì "Nghỉ phép năm") → người duyệt chọn loại đúng rồi bấm Duyệt. Nhân sự được báo, ghi chú đơn lưu "Sửa loại: … → …", có nhật ký.
 - Chỉ khi đơn còn chờ duyệt; không đổi giữa đơn theo giờ ↔ theo ngày / buổi; đổi sang phép năm kiểm số phép còn lại.
 - Nâng cấp: `supabase/migrations/0053_v45.sql`. Kiểm thử: `supabase/tests/99x_v45.sql`, `tests/e2e/v45.cjs`.
+
+## Bản 46 — Pháp nhân: xóa nhanh nhiều dòng + đối chiếu với HĐ đã ký (13/11/2026)
+
+- **Pháp nhân nhận HĐ**: tick ô đầu dòng (hoặc *Chọn cả trang*) → **🗑 Xóa N pháp nhân đã chọn**. Sale chỉ xóa được pháp nhân chưa dùng ở phiếu nào (như cũ).
+- Nhãn **✓ Đã xuất N HĐ đúng thông tin** (cùng MST + tên + địa chỉ với HĐ đã ký) / **⚠ MST này đã xuất HĐ với tên / địa chỉ khác**; bộ lọc *Đã xuất HĐ — đúng thông tin*, *MST đã xuất HĐ với tên / địa chỉ khác*, *Chưa xuất HĐ lần nào*.
+- **Bàn làm việc kế toán** (và các tab chưa ký của sale): mỗi yêu cầu có nhãn so với HĐ **đã ký** cùng MST — **✓ Pháp nhân đã xuất · khớp HĐ số…** (tên, địa chỉ, email y hệt → tạo nháp không cần kiểm lại người mua), **⚠ Khác tên / địa chỉ / email so với HĐ…**, **★ Pháp nhân lần đầu xuất**. So sánh bỏ qua hoa thường, khoảng trắng thừa, dấu chấm cuối; **không** bỏ dấu tiếng Việt.
+- Hàm `app.pn_norm`, `app.mst_norm`, `out_pn_check`; `out_buyers_page` thêm `da_xuat` / `xuat_cuoi` / `ky_mst`. Nâng cấp: `supabase/migrations/0054_v46.sql`. Kiểm thử: `supabase/tests/99y_v46.sql`.
