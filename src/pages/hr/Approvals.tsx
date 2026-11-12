@@ -29,6 +29,15 @@ export default function Approvals() {
     if (note === null) return;
     run(async () => { await db.rpc('decide_request', { p_table: table, p_id: id, p_approve: ok, p_note: note || null }); reload(); r2(); }, ok ? 'Đã duyệt' : 'Đã từ chối');
   };
+  // Bản 45: nhân sự chọn nhầm loại đơn → người duyệt sửa loại rồi bấm Duyệt (chỉ khi đơn còn chờ duyệt)
+  const changeType = async (r: any) => {
+    const hours = r.part === 'hours';
+    const opts = a.opts('leave_type').filter(([k]) => k !== r.leave_type && k !== 'khong_phep' && (hours ? !!(a.lk('leave_type', k)?.extra?.hours || a.lk('leave_type', k)?.extra?.work) : !a.lk('leave_type', k)?.extra?.hours));
+    const t = await ask({ title: `Sửa loại đơn · ${a.personName(r.profile_id)}`, message: <>Đang là: <b>{a.label('leave_type', r.leave_type)}</b> · {whenText(r)}. Sửa xong bấm <b>Duyệt</b> như bình thường; nhân sự được báo loại mới.</>,
+      input: { label: 'Loại đúng', required: true, options: opts }, ok: 'Sửa loại' });
+    if (!t) return;
+    run(async () => { await db.rpc('leave_change_type', { p_id: r.id, p_type: t, p_note: null }); reload(); }, 'Đã sửa loại đơn');
+  };
   return (
     <Layout title="Duyệt đơn" actions={lead ? <><Button onClick={() => go('/hr/leave')}>Tạo đơn hộ</Button><Button onClick={() => setDelOpen(true)}>Ủy quyền duyệt</Button></> : undefined}>
       {!canDecide && <div className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-sm text-sky-900">👀 Chế độ <b>chỉ xem</b>: đây là các đơn của bạn và trạng thái duyệt. Muốn tạo / hủy đơn, vào mục <a className="font-semibold underline" href="#/hr/leave">Xin nghỉ</a> hoặc <a className="font-semibold underline" href="#/hr/attendance">Chấm công → Đơn công</a>.</div>}
@@ -40,7 +49,7 @@ export default function Approvals() {
           <tr key={r.id}><Td className="whitespace-nowrap font-medium">{a.personName(r.profile_id)}</Td><Td>{a.label('leave_type', r.leave_type)}{r.late_notice && <Badge color="amber" className="ml-1">báo gấp</Badge>}</Td>
             <Td className="whitespace-nowrap">{whenText(r)}</Td><Td>{num(r.days, 1)}</Td>
             <Td className="max-w-xs">{r.reason}{r.backup_id && <div className="text-xs text-ink-400">Hỗ trợ: {a.personName(r.backup_id)}</div>}{r.handover && <div className="text-xs text-ink-400">Bàn giao: {r.handover}</div>}</Td><Td className="whitespace-nowrap text-xs">{fmtDateTime(r.created_at)}</Td>
-            <Td className="whitespace-nowrap">{r.status === 'cho_duyet' && canDecide ? <><Button size="sm" variant="success" onClick={() => decide('leave', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('leave', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pl} total={(lv as any[]).length} /></>}
+            <Td className="whitespace-nowrap">{r.status === 'cho_duyet' && canDecide ? <><Button size="sm" variant="ghost" onClick={() => changeType(r)} title="Nhân sự chọn nhầm loại đơn → sửa rồi Duyệt">Sửa loại</Button> <Button size="sm" variant="success" onClick={() => decide('leave', r.id, true)}>Duyệt</Button> <Button size="sm" variant="danger" onClick={() => decide('leave', r.id, false)}>Từ chối</Button></> : <Badge color={LS[r.status][1]}>{LS[r.status][0]}</Badge>}</Td></tr>))}</Table><Pager p={pl} total={(lv as any[]).length} /></>}
       </Card>
       <Card title="Đơn công (quên chấm đến · quên chấm về · xác nhận công)" bodyClass="p-0" className="mb-4">
         {!(ar as any[])?.length ? <Empty>Không có đơn</Empty> : <><Table head={['Nhân sự', 'Loại', 'Ngày', 'Lý do', 'Giờ khai', 'Giờ chốt', '']}>{pa.slice(ar as any[]).map(r => (
