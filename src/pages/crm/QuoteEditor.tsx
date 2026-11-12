@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Layout } from '../../components/Layout';
-import { Badge, Button, cx, Field, Input, Loading, Modal, NumInput, Select, Textarea, toast, useAction, ask, Table, Td } from '../../components/ui';
+import { Badge, Button, cx, Field, Input, Loading, Modal, NumInput, Select, Textarea, toast, useAction, useLoad, ask, Table, Td } from '../../components/ui';
 import { db, storage } from '../../lib/sb';
 import { compressImage, prepareUpload } from '../../lib/image';
 import { go, useApp, useRoute } from '../../state';
@@ -72,7 +72,9 @@ export default function QuoteEditor() {
     return () => clearTimeout(t);
   }, [namesKey]);
   const t = result.totals;
-  const frame = priceFrame(h, t, { tyGiaSan: rates.current.san ?? qd.tyGiaSan, phiDVSan: qd.phiDVSan, tyLeXuatMin: qd.tyLeXuatMin });
+  // Bản 44: khung giá riêng của khách (anh đặt trong hồ sơ khách) — máy chủ kiểm lại cùng mức này
+  const { data: kh } = useLoad(() => customer?.id ? db.from('customer_price_floor').select('phi_ut_min,phi_dv_min,cuoc_khoi_min,note').eq('customer_id', customer.id).maybeSingle().then((x: any) => x, () => null) : Promise.resolve(null), [customer?.id]);
+  const frame = priceFrame(h, t, { tyGiaSan: rates.current.san ?? qd.tyGiaSan, phiDVSan: qd.phiDVSan, tyLeXuatMin: qd.tyLeXuatMin, kh: kh as any });
   const locked = quote && LOCKED.includes(quote.status);
   const canEdit = !locked && (!quote || quote.sale_id === a.me.id || a.isAdmin);
   const set = <K extends keyof QuoteHeader>(k: K) => (v: any) => setH(x => ({ ...x, [k]: v ?? 0 }));
@@ -228,6 +230,7 @@ export default function QuoteEditor() {
               <Row l="LN ước tính (nội bộ, chưa gồm đàm phán NCC)" v={t.lnUocTinh} cls="text-emerald-700" />
               <div className="pl-2 text-[11px] text-ink-400">Tỷ giá {money(t.lnChiTiet.tyGia)} · Cước {money(t.lnChiTiet.cuoc)} · UT {money(t.lnChiTiet.uyThac)} · DV {money(t.lnChiTiet.phiDV)} · Làm tròn {money(t.lnChiTiet.lamTron)}</div>
             </div>
+            {kh && <div className="border-t border-ink-100 bg-emerald-50 px-4 py-2 text-xs text-emerald-800">⭐ Khách có <b>khung giá riêng</b>: {[(kh as any).phi_ut_min != null && `UT ≥ ${num((kh as any).phi_ut_min, 2)}%`, (kh as any).phi_dv_min != null && `DV ≥ ${num((kh as any).phi_dv_min, 2)}%`, (kh as any).cuoc_khoi_min != null && `cước ≥ ${money((kh as any).cuoc_khoi_min)}đ/m³`].filter(Boolean).join(' · ')}{(kh as any).note ? ` — ${(kh as any).note}` : ''}</div>}
             {(frame.cam.length > 0 || frame.duyet.length > 0 || t.warnings.length > 0 || result.errors.length > 0) && <div className="space-y-1 border-t border-ink-100 px-4 py-3 text-xs">
               {frame.cam.map(x => <div key={x} className="font-medium text-red-700">⛔ CẤM: {x}</div>)}
               {frame.duyet.map(x => <div key={x} className="text-amber-700">⚠️ Cần duyệt: {x}</div>)}
