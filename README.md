@@ -244,3 +244,9 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Hồ sơ khách → ô **⭐ Khung giá riêng của khách** (chỉ Admin / BGĐ sửa): phí ủy thác tối thiểu %, phí dịch vụ tối thiểu %, cước tối thiểu đ/m³, ghi chú. Ô trống = theo mức sàn chung.
 - Báo giá của khách đó kiểm CẤM / Cần duyệt theo khung riêng (trình duyệt + máy chủ `app.quote_check_kh`) → trong khung thì sale gửi luôn, không cần duyệt. Màn báo giá hiện dòng "Khách có khung giá riêng".
 - Bảng `customer_price_floor`, đặt qua `customer_price_floor_set` (ghi nhật ký). Nâng cấp: `supabase/migrations/0052_v44.sql`. Kiểm thử: `supabase/tests/99w_v44.sql`, `tests/e2e/v44.cjs`.
+
+## Bản 45 — Sửa loại đơn nghỉ trước khi duyệt (13/11/2026)
+
+- Duyệt đơn → nút **Sửa loại** cạnh Duyệt / Từ chối: nhân sự chọn nhầm loại (VD "Việc riêng có lương" thay vì "Nghỉ phép năm") → người duyệt chọn loại đúng rồi bấm Duyệt. Nhân sự được báo, ghi chú đơn lưu "Sửa loại: … → …", có nhật ký.
+- Chỉ khi đơn còn chờ duyệt; không đổi giữa đơn theo giờ ↔ theo ngày / buổi; đổi sang phép năm kiểm số phép còn lại.
+- Nâng cấp: `supabase/migrations/0053_v45.sql`. Kiểm thử: `supabase/tests/99x_v45.sql`, `tests/e2e/v45.cjs`.
