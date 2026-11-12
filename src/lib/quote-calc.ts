@@ -124,9 +124,15 @@ export const defaultHeader = (cfg: Partial<QuoteHeader> & Record<string, any> = 
   tyGiaVon: n(cfg.tyGiaVon, 3955), giaVonKhoi: cfg.giaVonKhoi || { HN: 800000, HCM: 1300000 }, phiUTSan: n(cfg.phiUTSan, 0.8),
 });
 
+/** Bước làm tròn giá xuất được phép (đ). Giá trị khác (VD gõ nhầm 401500) làm giá xuất về 0 → tự dùng 1 đ */
+export const LAM_TRON = [1, 10, 100, 500, 1000];
+export const lamTronOf = (v: unknown) => { const x = n(v, 1); return LAM_TRON.includes(x) ? x : 1; };
+
 export function calcQuote(h: QuoteHeader, rawLines: QuoteLine[], opts: { tyLeCoc?: number } = {}): QuoteResult {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const step = lamTronOf(h.lamTron);
+  if (n(h.lamTron, 1) > 1 && step !== n(h.lamTron, 1)) warnings.push(`"Làm tròn giá đến" = ${n(h.lamTron, 1).toLocaleString('vi-VN')} không hợp lệ — đã tính làm tròn 1 đ (chọn lại 1 / 10 / 100 / 500 / 1.000)`);
   const lines = rawLines
     .map((l, idx) => ({ ...l, idx }))
     .filter(l => (l.name || '').trim() !== '' && n(l.qty) > 0);
@@ -173,10 +179,10 @@ export function calcQuote(h: QuoteHeader, rawLines: QuoteLine[], opts: { tyLeCoc
     let giaDuRaw = 0;
     if (denom <= 0) errors.push(`Dòng ${l.idx + 1}: tỷ lệ ủy thác + thuế NK quá lớn, không tính được giá xuất`);
     else giaDuRaw = (chiPhi + (utOnTH ? tienHang * u : 0)) / denom / qty;
-    const giaDu = roundTo(giaDuRaw, n(h.lamTron, 1), h.lamTronKieu);
+    const giaDu = roundTo(giaDuRaw, step, h.lamTronKieu);
     let giaXuat = giaDu;
     if (h.cheDoXuat !== 'du') {
-      giaXuat = n(l.manual_price) > 0 ? n(l.manual_price) : roundTo(giaDuRaw * n(h.pctXuat, 100) / 100, n(h.lamTron, 1), h.lamTronKieu);
+      giaXuat = n(l.manual_price) > 0 ? n(l.manual_price) : roundTo(giaDuRaw * n(h.pctXuat, 100) / 100, step, h.lamTronKieu);
     }
     const tongTruocVAT = r0(giaXuat * qty);
     const giaKhaiDV = r0(giaXuat * kDong);
@@ -187,6 +193,7 @@ export function calcQuote(h: QuoteHeader, rawLines: QuoteLine[], opts: { tyLeCoc
       tongTruocVAT, giaKhaiDV, triGiaKhai, thueNK, vat, vatPct, dutyPct: d * 100 };
   });
 
+  res.forEach(x => { if (x.tienHang > 0 && !(x.giaXuat > 0)) errors.push(`Dòng ${x.idx + 1}: giá xuất = 0 — kiểm tra "Giá chọn tay", "% xuất" hoặc "Làm tròn giá đến"`); });
   const sum = (k: keyof LineResult) => res.reduce((s, x) => s + (x[k] as number), 0);
   const tongTruocVAT = sum('tongTruocVAT');
   const giaDuTotal = res.reduce((s, x) => s + r0(x.giaDu * n(lines.find(l => l.idx === x.idx)!.qty)), 0);
