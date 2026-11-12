@@ -231,3 +231,10 @@ Nâng cấp: chạy `supabase/migrations/0049_v41.sql` trong SQL Editor (tự sa
 - Sửa: mục “Tải bản đã ký lên” cũ hiện cho cả sale nhưng sale không có quyền lưu Drive (báo lỗi) → nay chỉ hiện với Kế toán / Admin / BGĐ.
 
 Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
+
+## Bản 43 — Sửa tính phút đi muộn / về sớm, gặp khách theo giờ (12/11/2026)
+
+- Đơn "Đi muộn, về sớm, ra ngoài" đã duyệt bị cộng 2 lần (giờ xin + phút về sớm thực tế). Nay gộp khoảng: phút vắng = (vắng thực tế ∪ giờ xin) trong khung giờ làm.
+- "Công tác, gặp khách" chọn được **Theo giờ** (đi gặp khách rồi về thẳng): khoảng đó tính là giờ làm, không trừ quỹ. Gặp khách buổi sáng / chiều chỉ che buổi đó.
+- "Chấm công của tôi" lấy phút muộn / sớm từ máy chủ (`att_my_month`) — trước tự tính từ 08:00 nên người nghỉ buổi sáng bị báo muộn hơn 300 phút.
+- Nâng cấp: `supabase/migrations/0051_v43.sql`. Kiểm thử: `supabase/tests/99v_v43.sql`.

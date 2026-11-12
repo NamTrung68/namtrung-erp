@@ -22,7 +22,7 @@ export default function Leave() {
   const { data: mine, loading, reload } = useLoad(() => db.from('leave_requests').select('*').eq('profile_id', a.me.id).order('start_date', { asc: false }).limit(100), []);
   const { data: hol } = useLoad(() => db.from('holidays').select('day').gte('day', `${today().slice(0, 4)}-01-01`), []);
   const holidays = useMemo(() => new Set(((hol as any[]) || []).map(h => h.day)), [hol]);
-  const lt = a.lk('leave_type', f.leave_type); const ex = lt?.extra || {}; const hours = !!ex.hours;
+  const lt = a.lk('leave_type', f.leave_type); const ex = lt?.extra || {}; const hours = !!ex.hours || (!!ex.work && f.part === 'hours'); // Bản 43: công tác / gặp khách cho chọn theo giờ
   const sched = a.people.find(p => p.id === target) ? (target === a.me.id ? a.me.work_schedule : 'office') : 'office';
   const days = useMemo(() => {
     if (hours || f.end_date < f.start_date) return 0; let s = 0; let d = f.start_date;
@@ -61,7 +61,7 @@ export default function Leave() {
                 <Select options={[['', 'Chính tôi'], ...others.map(p => [p.id, p.full_name] as [string, string])]} value={f.for_id} onChange={v => setF({ ...f, for_id: v })} /></Field>}
               <div><div className="mb-1.5 text-xs"><B>Loại đơn</B>{ex.notice_days && <span className="ml-2 text-ink-400">cần báo trước {ex.notice_days} ngày</span>}</div>
                 <div className="flex flex-wrap gap-1.5">{a.opts('leave_type').filter(([k]) => k !== 'khong_phep' || f.for_id).map(([k, l]) =>
-                  <button key={k} type="button" onClick={() => setF({ ...f, leave_type: k })} className={cx('rounded-full border px-3 py-1 text-[13px] font-semibold transition', f.leave_type === k ? 'border-brand-600 bg-brand-600 text-white shadow-sm' : 'border-ink-200 bg-white text-ink-700 hover:border-brand-300')}>{l}</button>)}</div></div>
+                  <button key={k} type="button" onClick={() => setF({ ...f, leave_type: k, part: f.part === 'hours' && !a.lk('leave_type', k)?.extra?.work ? 'full' : f.part })} className={cx('rounded-full border px-3 py-1 text-[13px] font-semibold transition', f.leave_type === k ? 'border-brand-600 bg-brand-600 text-white shadow-sm' : 'border-ink-200 bg-white text-ink-700 hover:border-brand-300')}>{l}</button>)}</div></div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <div className="grid grid-cols-2 gap-2">
@@ -72,8 +72,8 @@ export default function Leave() {
                   </div>
                   <div className="mt-1.5 flex gap-1.5">{[['Hôm nay', 0], ['Ngày mai', 1], ['Ngày kia', 2]].map(([l, n]) => <button key={l as string} type="button" onClick={() => setDate(addDays(today(), n as number))} className={cx('rounded-full border px-2.5 py-0.5 text-xs', f.start_date === addDays(today(), n as number) && f.end_date === f.start_date ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-dashed border-ink-300 text-ink-600 hover:border-brand-500')}>{l}</button>)}</div>
                 </div>
-                {!hours && f.start_date === f.end_date ? <div><div className="mb-1.5 text-xs"><B>Buổi</B></div>
-                  <div className="inline-flex rounded-full bg-ink-100 p-1">{[['full', 'Cả ngày'], ['am', 'Sáng'], ['pm', 'Chiều']].map(([k, l]) =>
+                {(!hours || ex.work) && (f.start_date === f.end_date || hours) ? <div><div className="mb-1.5 text-xs"><B>Buổi</B></div>
+                  <div className="inline-flex rounded-full bg-ink-100 p-1">{[['full', 'Cả ngày'], ['am', 'Sáng'], ['pm', 'Chiều'], ...(ex.work ? [['hours', 'Theo giờ']] : [])].map(([k, l]) =>
                     <button key={k} type="button" onClick={() => setF({ ...f, part: k })} className={cx('rounded-full px-4 py-1.5 text-sm font-semibold', f.part === k ? 'bg-ink-900 text-white' : 'text-ink-600')}>{l}</button>)}</div></div>
                   : <Field label={<B>Khi bạn vắng, việc gấp tìm ai?</B>}><Select options={a.people.filter(p => p.id !== target && p.status === 'active').map(p => [p.id, p.full_name])} value={f.backup_id} onChange={v => setF({ ...f, backup_id: v })} placeholder="Chưa chọn" /></Field>}
               </div>
@@ -90,8 +90,8 @@ export default function Leave() {
             </div>
             {(late || hours || ex.work || (after !== null && after < 0)) && <ul className="space-y-1 border-t border-ink-100 px-5 py-3 text-xs">
               {late && <li className="text-amber-700">⚠️ Đơn báo gấp: loại này cần báo trước {ex.notice_days} ngày. Vẫn gửi được nhưng bị tính vào điểm chuyên cần.</li>}
-              {hours && <li className="text-ink-600">⏱ Thời gian vắng tính vào quỹ linh hoạt {a.settings.attendance?.flex_minutes ?? 100} phút/tháng.</li>}
-              {ex.work && <li className="text-emerald-700">✓ Loại này vẫn tính đủ công.</li>}
+              {hours && !ex.work && <li className="text-ink-600">⏱ Thời gian vắng tính vào quỹ linh hoạt {a.settings.attendance?.flex_minutes ?? 100} phút/tháng. <b>Đi gặp khách / việc công ty</b> thì chọn “Công tác, gặp khách” → Theo giờ (không tính vào quỹ).</li>}
+              {ex.work && <li className="text-emerald-700">✓ Loại này vẫn tính đủ công{hours ? ', không tính muộn / về sớm trong khoảng giờ này (đi gặp khách rồi về thẳng: ghi đến 17:30)' : f.part === 'am' || f.part === 'pm' ? ', chỉ che buổi đã chọn — buổi còn lại vẫn tính giờ chấm' : ''}.</li>}
               {after !== null && after < 0 && <li className="text-red-600">Không đủ phép — chọn "Nghỉ không lương" cho phần thiếu.</li>}
             </ul>}
           </section>
