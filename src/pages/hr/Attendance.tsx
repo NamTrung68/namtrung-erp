@@ -28,6 +28,8 @@ function MyAttendance() {
   // Bản 37: giờ vào / ra đã được duyệt qua đơn quên chấm → hiện thay cho giờ chấm (khớp bảng công, lương)
   const { data: rq } = useLoad(() => db.from('attendance_requests').select('kind,work_date,confirm_in,confirm_out').eq('profile_id', a.me.id).eq('status', 'da_duyet')
     .in('kind', ['quen_cham_vao', 'quen_cham_ra', 'xac_nhan_cong']).gte('work_date', month + '-01').lte('work_date', monthEnd(month + '-01')), [month]);
+  // Bản 43: phút muộn / sớm lấy từ máy chủ (cùng cách tính bảng công: có đơn nghỉ nửa ngày, gặp khách, xin về sớm…)
+  const { data: sv, reload: rsv } = useLoad(() => db.rpc<Record<string, { l: number; c: string }>>('att_my_month', { p_month: month + '-01' }).catch(() => null), [month]);
   const [cam, setCam] = useState<'in' | 'out' | null>(null); const [img, setImg] = useState<string | null>(null);
   const blocked = !!ip && !ip.ok && (cfg.outside_ip || 'flag') === 'block' && (cfg.ip_whitelist || []).length > 0;
   if (a.me.work_schedule !== 'office') return <Card>Lịch làm việc của bạn ({a.me.work_schedule === 'warehouse' ? 'Kho' : 'không chấm công'}) không cần chấm công bằng ứng dụng.</Card>;
@@ -43,6 +45,7 @@ function MyAttendance() {
   const todayEv = days.get(today()) || [];
   const start = cfg.start || '08:00';
   const lateOf = (d: string, list: any[]) => {
+    if (sv) return Number((sv as any)[d]?.l || 0); // số của máy chủ (muộn + về sớm, đã trừ đơn được duyệt)
     const first = list.find(e => e.kind === 'in'); if (!first && !fixIn[d]) return 0;
     const t = fixIn[d] || fmtTime(first.at); const [h, m] = t.split(':').map(Number); const [sh, sm] = start.split(':').map(Number);
     return Math.max(0, h * 60 + m - (sh * 60 + sm));
@@ -63,7 +66,7 @@ function MyAttendance() {
             </div>
             <p className="mt-3 text-xs text-ink-500">Giờ làm {cfg.start}–{cfg.end}, thứ Bảy đến {cfg.saturday_end}. Quỹ linh hoạt {cfg.flex_minutes} phút/tháng cho đi muộn + về sớm (từ {fmtDate(cfg.flex_start)}). Giờ chấm lấy theo máy chủ.</p>
           </Card>}
-        <Card title="Tháng này"><div className="text-sm">Số ngày có chấm công: <b>{days.size}</b><br />Đi muộn (ước tính theo giờ vào{flexFrom && today() < flexFrom ? `, tính từ ${fmtDate(flexFrom)}` : ''}): <b>{totalLate}</b> / {cfg.flex_minutes ?? 100} phút
+        <Card title="Tháng này"><div className="text-sm">Số ngày có chấm công: <b>{days.size}</b><br />Đi muộn + về sớm (theo bảng công{flexFrom && today() < flexFrom ? `, tính từ ${fmtDate(flexFrom)}` : ''}): <b>{totalLate}</b> / {cfg.flex_minutes ?? 100} phút
           <div className="mt-2 h-2 rounded-full bg-ink-100"><div className={totalLate > (cfg.flex_minutes ?? 100) ? 'h-2 rounded-full bg-red-500' : 'h-2 rounded-full bg-emerald-500'} style={{ width: `${Math.min(100, totalLate / (cfg.flex_minutes || 100) * 100)}%` }} /></div></div></Card>
       </div>
       <Card className="min-w-0" title="Lịch sử chấm công" actions={<Input type="month" className="w-36" value={month} onChange={e => setMonth(e.target.value)} />} bodyClass="p-0">
@@ -73,12 +76,12 @@ function MyAttendance() {
             <div><div className="font-semibold leading-tight">{fmtDate(d).slice(0, 5)}</div><div className="text-[11px] text-ink-400">{['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][new Date(d + 'T00:00:00Z').getUTCDay()]}</div></div>
             <div className="flex min-w-0 items-center gap-1.5">{ein ? <SelfieThumb e={ein} onOpen={setImg} /> : <span className="h-10 w-10" />}<div className="leading-tight"><div className="text-[10px] uppercase text-ink-400">Vào</div><b className="tabular-nums">{fixIn[d] || fmtTime(ein?.at) || '—'}</b>{fixIn[d] && <div className="text-[10px] text-emerald-700">theo đơn</div>}</div></div>
             <div className="flex min-w-0 items-center gap-1.5">{eout ? <SelfieThumb e={eout} onOpen={setImg} /> : <span className="h-10 w-10" />}<div className="leading-tight"><div className="text-[10px] uppercase text-ink-400">Ra</div><b className="tabular-nums">{fixOut[d] || fmtTime(eout?.at) || '—'}</b>{fixOut[d] && <div className="text-[10px] text-emerald-700">theo đơn</div>}</div></div>
-            {(late > 0 || l.some(e => e.status !== 'valid')) && <div className="col-span-3 flex flex-wrap items-center gap-1.5 text-xs sm:col-span-1 sm:justify-end">{late > 0 && <span className="font-semibold text-amber-700">muộn {late}′</span>}
+            {(late > 0 || l.some(e => e.status !== 'valid')) && <div className="col-span-3 flex flex-wrap items-center gap-1.5 text-xs sm:col-span-1 sm:justify-end">{late > 0 && <span className="font-semibold text-amber-700">muộn/sớm {late}′</span>}
               {l.some(e => e.status === 'flagged') && <Badge color="amber">Ngoài IP</Badge>}{l.some(e => e.status === 'rejected') && <Badge color="red">Bị từ chối</Badge>}</div>}
           </li>; })}</ul>}
       </Card>
       {img && <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4" onClick={() => setImg(null)}><img src={img} className="max-h-[88vh] max-w-full rounded-2xl shadow-2xl" alt="Ảnh chấm công" /></div>}
-      {cam && <Camera kind={cam} onClose={() => setCam(null)} onDone={() => { setCam(null); reload(); a.refreshMe(); }} />}
+      {cam && <Camera kind={cam} onClose={() => setCam(null)} onDone={() => { setCam(null); reload(); rsv(); a.refreshMe(); }} />}
     </div>
   );
 }
