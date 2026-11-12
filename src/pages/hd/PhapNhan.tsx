@@ -1,5 +1,6 @@
 // Bản 33 — Menu "Pháp nhân": nạp Excel, theo dõi, sửa trực tiếp, chuẩn hóa pháp nhân nhận HĐ (gắn khách theo username)
 import React, { useEffect, useMemo, useState } from 'react';
+import { Pager, usePager } from '../../components/Pager';
 import { Layout } from '../../components/Layout';
 import { Badge, Button, Empty, Input, Loading, Modal, Select, ask, cx, toast, useAction, useLoad } from '../../components/ui';
 import { db } from '../../lib/sb';
@@ -43,6 +44,7 @@ export default function PhapNhan() {
   const [hoSo, setHoSo] = useState<Row | null>(null);
   const { data: hs, reload: rlHs } = useLoad(() => rows.length ? db.rpc<Record<string, { hdnt: number; hdmb: number; tong: number }>>('ho_so_buyer_status', { p_ids: rows.map(r => r.id) }).catch(() => ({})) : Promise.resolve({}), [rows.map(r => r.id).join()]);
   const groups = useMemo(() => { const m = new Map<string, Row[]>(); rows.forEach(r => { const k = r.customer_id || 'u:' + lc(r.username); m.set(k, [...(m.get(k) || []), r]); }); return Array.from(m.values()); }, [rows]);
+  const pg = usePager('hd_phapnhan', [qq, flag, sale, groups.length]);
   const dirty = (r: Row) => { const d = edit[r.id]; if (!d) return false; const o = toDraft(r); return (Object.keys(o) as (keyof Draft)[]).some(k => (d[k] || '').trim() !== (o[k] || '').trim()); };
   const setE = (r: Row, k: keyof Draft, v: string) => setEdit(x => ({ ...x, [r.id]: { ...(x[r.id] || toDraft(r)), [k]: v } }));
   const val = (r: Row, k: keyof Draft) => (edit[r.id] || toDraft(r))[k];
@@ -87,7 +89,7 @@ export default function PhapNhan() {
       {nDirty > 0 && <button className="text-xs text-ink-500 underline" onClick={() => setEdit({})}>Bỏ sửa</button>}
       <span className="ml-auto text-xs text-ink-500">{data ? `${data.total} pháp nhân` : ''}</span></div>
     {loading && !data ? <Loading /> : error ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{String(error)}</div> : !rows.length ? <Empty>Không có pháp nhân nào{flag || qq ? ' khớp bộ lọc' : ''}</Empty> :
-    <div className="space-y-3">{groups.map(g => { const h = g[0];
+    <div className="space-y-3">{pg.slice(groups).map(g => { const h = g[0];
       return <div key={h.customer_id || 'u' + h.username} className="rounded-2xl border border-ink-200 bg-white">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink-100 px-3 py-2 text-sm">
           <b>{h.username || '(chưa có username)'}</b>
@@ -128,6 +130,7 @@ export default function PhapNhan() {
               {r.note && <span className="text-ink-400">· {r.note}</span>}
               {r.updated_at && <span className="text-ink-400">· sửa {new Date(r.updated_at).toLocaleString('vi-VN')}</span>}</div>
           </div>; })}</div></div>; })}
+      <Pager p={pg} total={groups.length} className="rounded-2xl border border-ink-200 bg-white" />
       {data?.total > rows.length && <div className="text-center text-xs text-ink-500">Đang hiện {rows.length}/{data.total} — gõ tìm hoặc lọc để thu hẹp</div>}
     </div>}
     {adding && <Modal open onClose={() => setAdding(null)} title="Thêm pháp nhân nhận HĐ" footer={<><Button onClick={() => setAdding(null)}>Hủy</Button>

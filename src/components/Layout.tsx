@@ -72,8 +72,9 @@ export function useNav() {
     ['Kế toán – Hóa đơn', [
       { to: '/hd/kt', label: 'Bàn làm việc kế toán', icon: '🧾', show: a.isAdmin || a.has('ke_toan') },
       { to: '/hd', label: 'Hóa đơn của tôi', icon: '📮', show: a.isSales },
-      { to: '/hd/luu-tru', label: 'Lưu trữ HĐ đã ký', icon: '🗄️', show: a.isAdmin || a.has('ke_toan', 'bgd') }, // bản 41: scan + bản cứng
-      { to: '/hd/cp', label: 'Chuyển phát HĐ', icon: '📦', show: a.isAdmin || a.isLead || a.has('ke_toan', 'bgd') }, // bản 40 — sale dùng tab trong Hóa đơn của tôi
+      // Bản 45: ai thấy 'Hóa đơn của tôi' thì dùng tab Đã ký / Chuyển phát HĐ trong đó — không hiện 2 mục trùng. Kế toán / BGĐ không phải sale vẫn thấy.
+      { to: '/hd/luu-tru', label: 'Lưu trữ HĐ đã ký', icon: '🗄️', show: !a.isSales && a.has('ke_toan', 'bgd') }, // bản 41: scan + bản cứng
+      { to: '/hd/cp', label: 'Chuyển phát HĐ', icon: '📦', show: !a.isSales && (a.isLead || a.has('ke_toan', 'bgd')) }, // bản 40
       { to: '/hd/ql', label: 'Duyệt giá & tồn HĐ', icon: '✅', show: a.isLead || a.has('ke_toan', 'bgd') },
       { to: '/acc/mine', label: 'Đối soát xe của tôi', icon: '🚚', show: a.isSales },
       { to: '/acc', label: 'Danh sách xe đối soát', icon: '🚚', show: a.isAdmin || a.has('ke_toan') },

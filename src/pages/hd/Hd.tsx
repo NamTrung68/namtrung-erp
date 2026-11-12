@@ -23,6 +23,7 @@ import { exportMisaDoiChieu, misaCall, misaCfgOf, misaOn } from '../../lib/misa'
 import { DocBtns, KyBtn, KyList } from './HdDocs';
 import { ShipCreate, ShipList, useShipCounts } from './ChuyenPhat';
 import { MstChip } from '../../components/MstCheck';
+import { Pager, usePager } from '../../components/Pager';
 
 // ---------------- dùng chung ----------------
 const bien = (t: any) => (Number(t.gia_khach) > 0 && Number(t.dg_nhap) > 0 ? Number(t.gia_khach) / Number(t.dg_nhap) - 1 : null);
@@ -44,11 +45,12 @@ function useInv(statuses: string[], extra: Record<string, any> = {}, dep: any[] 
     return rs.flatMap(r => r?.rows || []);
   }, [statuses.join(), JSON.stringify(extra), ...dep]);
 }
-function InvRows({ rows, loading, onOpen, empty, action, sale = false, sel, onSel }: { rows: any[]; loading: boolean; onOpen: (id: string) => void; empty: string; action?: (v: any) => React.ReactNode; sale?: boolean; sel?: Record<string, boolean>; onSel?: (id: string, on: boolean) => void }) {
-  const a = useApp();
+/** Danh sách phiếu HĐ — tự phân trang (20/trang mặc định, nhớ số dòng/trang theo pk) */
+function InvRows({ rows, loading, onOpen, empty, action, sale = false, sel, onSel, pk = 'hd_rows' }: { rows: any[]; loading: boolean; onOpen: (id: string) => void; empty: string; action?: (v: any) => React.ReactNode; sale?: boolean; sel?: Record<string, boolean>; onSel?: (id: string, on: boolean) => void; pk?: string }) {
+  const a = useApp(); const pg = usePager(pk, [rows.length]);
   if (loading && !rows.length) return <Loading />;
   if (!rows.length) return empty ? <div className="px-4 py-6 text-center text-sm text-ink-400">{empty}</div> : null;
-  return <div className="divide-y divide-ink-100">{rows.map(v => { const [who, what] = nextStep(v); const tong = Number(v.tien_hang || 0) + Number(v.tien_thue || 0);
+  return <><div className="divide-y divide-ink-100">{pg.slice(rows).map(v => { const [who, what] = nextStep(v); const tong = Number(v.tien_hang || 0) + Number(v.tien_thue || 0);
     return <div key={v.id} className={cx('flex cursor-pointer flex-wrap items-center gap-x-5 gap-y-1.5 px-4 py-3 hover:bg-ink-50', sel?.[v.id] && 'bg-brand-50/60')} onClick={() => onOpen(v.id)}>
       {onSel && <input type="checkbox" className="h-5 w-5" checked={!!sel?.[v.id]} onClick={e => e.stopPropagation()} onChange={e => onSel(v.id, e.target.checked)} />}
       <div className="w-28 shrink-0"><div className="text-[15px] font-bold text-ink-900">{v.code}{v.version > 1 && <span className="ml-1 text-[11px] font-normal text-ink-500">v{v.version}</span>}</div>
@@ -67,7 +69,7 @@ function InvRows({ rows, loading, onOpen, empty, action, sale = false, sel, onSe
         {v.status === 'da_ky' && v.ma_tra_cuu && <div className="mt-1"><TraCuu ma={v.ma_tra_cuu} /><div className="mt-1"><KyBtn v={v} /></div></div>}
         {who && <div className="mt-0.5 text-[11px] text-ink-500"><b className={who === 'Sale' ? 'text-brand-700' : 'text-amber-700'}>{who}</b>: {what}</div>}</div>
       {action && <div onClick={e => e.stopPropagation()}>{action(v)}</div>}
-    </div>; })}</div>;
+    </div>; })}</div><Pager p={pg} total={rows.length} /></>;
 }
 function Block({ n, title, sub, actions, children, tone }: { n?: string; title: string; sub?: React.ReactNode; actions?: React.ReactNode; children?: React.ReactNode; tone?: 'red' | 'amber' }) {
   return <section className="mb-4 overflow-hidden rounded-2xl border border-ink-200 bg-white shadow-soft">
@@ -123,15 +125,15 @@ export function HdSale() {
 }
 function SaleList({ statuses, sale, hd, rev, onOpen, empty, hint }: { statuses: string[]; sale: string; hd: string; rev: number; onOpen: (id: string) => void; empty: string; hint: string }) {
   const { data, loading } = useInv(statuses, { sale, hd, ...(statuses.includes('da_ky') ? { dir: 'desc' } : {}) }, [rev]); // đã ký: mới nhất lên đầu
-  return <><p className="mb-3 text-sm text-ink-600">{hint}</p><Card bodyClass="p-0"><InvRows rows={data || []} loading={loading} onOpen={onOpen} empty={empty} sale /></Card></>;
+  return <><p className="mb-3 text-sm text-ink-600">{hint}</p><Card bodyClass="p-0"><InvRows rows={data || []} loading={loading} onOpen={onOpen} empty={empty} sale pk={'hd_sale_' + statuses.join('_')} /></Card></>;
 }
 
 /** Bản 35: Đã ký — bấm mã tra cứu xem HĐ trên MISA; cột chứng từ xuất nhanh ĐĐH / BBGN / HĐ mua bán / HĐ nguyên tắc (1 HĐ, cả đơn, nhiều HĐ) */
 function KyTab({ sale, hd, rev, onOpen, onShipped, limit }: { sale: string; hd: string; rev: number; onOpen: (id: string) => void; onShipped?: () => void; limit?: number }) {
-  const { data, loading } = useInv(['da_ky'], { sale, hd, dir: 'desc', ...(limit ? { limit } : {}) }, [rev]);
+  const { data, loading } = useInv(['da_ky'], { sale, hd, dir: 'desc', limit: limit || 500 }, [rev]); // bản 45: đã phân trang → lấy 500 HĐ mới nhất (thay cho màn Lưu trữ riêng)
   const [ship, setShip] = useState<{ ids: string[]; clear: () => void } | null>(null);
   return <><p className="mb-3 text-sm text-ink-600">Bấm mã tra cứu (ô xanh) để xem HĐ trên MISA, <b>⬇ Tải HĐ (PDF)</b> để tải bản đã ký (lưu sẵn trên Drive công ty). Cột bên phải: 🧾 Đơn đặt hàng · 🚚 Biên bản giao nhận · 📜 HĐ mua bán / 🤝 HĐ nguyên tắc · 🗂️ Cả bộ (ĐĐH + BBGN + HĐ đã ký) — ô có ✓ là đã tải. Dưới biểu tượng là <b>trạng thái hồ sơ</b>; bấm ⋯ để đánh dấu đã gửi khách hoặc tải bản đã ký lên. Ngày chứng từ = ngày HĐ đã ký.</p>
-    <KyList data={data} onShip={(ids, clear) => setShip({ ids, clear })} render={(rows, sel, onSel, st, reload) => <Card bodyClass="p-0"><InvRows rows={rows} loading={loading} onOpen={onOpen} empty="Chưa có HĐ đã ký" sale sel={sel} onSel={onSel}
+    <KyList data={data} onShip={(ids, clear) => setShip({ ids, clear })} render={(rows, sel, onSel, st, reload) => <Card bodyClass="p-0"><InvRows rows={rows} loading={loading} onOpen={onOpen} empty="Chưa có HĐ đã ký" sale sel={sel} onSel={onSel} pk="hd_ky"
       action={v => <DocBtns v={v} st={st[v.id] || null} onChanged={reload} compact />} /></Card>} />
     {ship && <ShipCreate ids={ship.ids} onClose={() => setShip(null)} onDone={() => { ship.clear(); setShip(null); onShipped?.(); }} />}</>;
 }
@@ -177,6 +179,7 @@ function Ready({ sale, hd, rev, onChanged }: { sale: string; hd: string; rev: nu
     }
     return Array.from(m.values()).sort((x, y) => (x.key === THIEU ? -1 : y.key === THIEU ? 1 : x.khach.localeCompare(y.khach)));
   }, [items, q, f, kh]);
+  const pg = usePager('hd_ready', [groups.length, q, f, kh, sale, hd]);
   const khOpts = useMemo(() => Array.from(new Map(items.map(t => [khKey(t), khName(t)])).entries()).sort((x, y) => x[1].localeCompare(y[1])) as [string, string][], [items]);
   const donItems = (md: string) => items.filter(t => (t.md || 'Chưa có ID đơn') === md && t.ton > 0.0001 && !locked(t));
   const tien = (ts: any[]) => ts.reduce((x, t) => x + Number(t.ton) * Number(t.gia_khach || 0), 0);
@@ -206,7 +209,7 @@ function Ready({ sale, hd, rev, onChanged }: { sale: string; hd: string; rev: nu
       <summary className="cursor-pointer font-semibold">{dirty.length} đơn chưa sạch — xử lý tay</summary>
       <div className="mt-1 grid gap-0.5 sm:grid-cols-2">{dirty.slice(0, 60).map((d: any) => <div key={d.md}><b>{d.md}</b> — {d.ly_do}</div>)}</div></details>}
     {loading && !items.length ? <Loading /> : !groups.length ? <Card><Empty>Không có hàng chờ xuất HĐ. Hàng xuất hiện ở đây khi kế toán nạp HĐ chính thức APT.</Empty></Card> :
-    <div className="space-y-3 pb-20">{groups.map(g => { const ds: [string, any[]][] = Array.from(g.don.entries()) as any; const oldest = Math.max(...ds.flatMap(([, ts]) => ts.map(t => ageDays(t.ngay_vao) ?? 0)));
+    <div className="pb-20"><div className="space-y-3">{pg.slice(groups).map(g => { const ds: [string, any[]][] = Array.from(g.don.entries()) as any; const oldest = Math.max(...ds.flatMap(([, ts]) => ts.map(t => ageDays(t.ngay_vao) ?? 0)));
       const sales = showSale ? Array.from(new Set(ds.flatMap(([, ts]) => ts.map(t => a.personName(t.sale_id) || 'Chưa có sale')))) : [];
       return <div key={g.key} className={cx('rounded-2xl border bg-white shadow-soft', g.key === THIEU ? 'border-red-300' : 'border-ink-200')}>
         <div className={cx('flex flex-wrap items-center gap-2 border-b border-ink-100 px-4 py-2.5', g.key === THIEU && 'bg-red-50/70')}>
@@ -236,7 +239,8 @@ function Ready({ sale, hd, rev, onChanged }: { sale: string; hd: string; rev: nu
                   {locked(t) && <div className="font-semibold text-red-600">⛔ {t.lech_note || 'Lệch so với nháp — chờ kế toán'}</div>}</div>
                 <div className="w-24 text-right tabular-nums">{num(t.ton, 2)} {t.dvt}</div>
                 <div className="w-24 text-right"><Money v={t.gia_khach} /><div className={cx('text-[10px]', b !== null && (b < BIEN_CAM || b > BIEN_DUYET) ? 'font-semibold text-amber-700' : 'text-ink-400')}>{b === null ? '' : 'biên ' + pctTxt(b)}</div></div></label>; })}</div>}
-          </div>; })}</div></div>; })}</div>}
+          </div>; })}</div></div>; })}</div>
+      <Pager p={pg} total={groups.length} className="mt-3 rounded-2xl border border-ink-200 bg-white" /></div>}
     {(chosenMd.length > 0 || chosenIt.length > 0) && <div className="fixed inset-x-3 bottom-3 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-2 rounded-2xl border border-ink-300 bg-white px-4 py-3 shadow-lg">
       <div className="min-w-0 flex-1 text-sm">{chosenMd.length > 0 && <div><b>{chosenMd.length} đơn</b> · {money(tien(chosenMdItems))} · {khOf(chosenMdItems)} khách</div>}
         {chosenIt.length > 0 && <div><b>{chosenIt.length} mã</b> · {money(tien(chosenIt))}</div>}</div>
@@ -271,6 +275,7 @@ export function HdKeToan() {
   const [pick, setPick] = useState<Record<string, boolean>>({}); const [runner, setRunner] = useState<string[] | null>(null);
   const onSel = (id: string, on: boolean) => setPick(p => ({ ...p, [id]: on }));
   const ky = useInv(['xac_nhan_ky'], {}, [rev]);
+  const pgLech = usePager('kt_lech', [(lech || []).length]);
   const traSua = useInv(['tra_sua', 'da_nhap'], {}, [rev]);
   if (!acc) return <Layout title="Bàn làm việc kế toán"><Card>Chỉ Kế toán, BGĐ.</Card></Layout>;
   const S = st || {}; const rows = moi.data || [];
@@ -302,11 +307,11 @@ export function HdKeToan() {
         return <button key={t.id} onClick={() => go('/acc?truck=' + t.id)} className="rounded-lg border border-ink-200 px-2 py-1 hover:border-brand-400"><b>{t.name}</b>{t.is_test ? ' (thử)' : ''} · {t.stats?.apt ?? 0} dòng · khớp mã {t.stats?.khop_ma ?? '—'} · theo đơn {t.stats?.ghep_don ?? '—'}{n ? <span className="ml-1 font-semibold text-red-600">· {n} chờ sale</span> : ''}</button>; })}</div>}
       <div className="px-4 pt-3 text-sm font-semibold text-ink-800">Dòng HĐ cần kế toán xử lý</div>
       {lLoad ? <Loading /> : !(lech || []).length ? <div className="px-4 py-4 text-sm text-ink-400">Không có dòng lệch hay chưa ghép. 👍</div> :
-        <div className="divide-y divide-ink-100">{(lech || []).map(t => <div key={t.id} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
+        <><div className="divide-y divide-ink-100">{pgLech.slice(lech || []).map(t => <div key={t.id} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
           <div className="w-44 text-xs font-semibold">{t.ma_hang}<div className="font-normal text-ink-500">HĐ {t.so_hd_vao} · {fmtDate(t.ngay_vao)}</div></div>
           <div className="min-w-[220px] flex-1"><div className="line-clamp-1">{t.ten}</div><div className="text-xs">{locked(t) ? <span className="font-semibold text-red-600">⛔ {t.lech_note}</span> : <span className="text-amber-700">Chưa ghép được dòng nháp (tên / SL không khớp)</span>}</div></div>
           <div className="w-24 text-right text-xs">SL {num(t.sl_nhap, 2)}<div><Money v={t.dg_nhap} /></div></div>
-          <Button size="sm" variant={locked(t) ? 'danger' : undefined} onClick={() => setLechT(t)}>{locked(t) ? 'Xử lý lệch' : 'Ghép tay'}</Button></div>)}</div>}
+          <Button size="sm" variant={locked(t) ? 'danger' : undefined} onClick={() => setLechT(t)}>{locked(t) ? 'Xử lý lệch' : 'Ghép tay'}</Button></div>)}</div><Pager p={pgLech} total={(lech || []).length} /></>}
     </Block>
 
     <Block n="2" title={api ? 'Yêu cầu mới → tạo nháp MISA' : 'Yêu cầu mới → export MISA'} sub={<>Chỉ yêu cầu đã gửi (biên 2–4%, hoặc đã được duyệt giá). Tạo nháp / export xong, sale không hủy được nữa. {api ? <><b>⚡ API</b>: tick phiếu (hoặc để trống = mọi phiếu sẵn sàng) → ERP kiểm, gửi MISA, lấy PDF, báo sale. <b>Làm tay</b> khi MISA lỗi: Excel → nhập MISA → khối ③. </> : <>Yêu cầu <b>đã export</b> vẫn nằm đây tới khi nạp PDF nháp. </>}<b>{chuaExport.length}</b> chưa tạo nháp · <b>{choPdf.length}</b> chờ PDF nháp.</>}
@@ -316,24 +321,24 @@ export function HdKeToan() {
         <Button variant={api ? undefined : 'primary'} loading={busy} disabled={!chuaExport.length} onClick={api && picked.length ? () => reExport(picked) : exportAll}>⬇ {api ? 'Excel nhập MISA — làm tay' : 'Export file nhập MISA'} ({api && picked.length ? picked.length : chuaExport.length})</Button>
         {api && <Button variant="primary" disabled={!chuaExport.length} onClick={taoNhap}>⚡ Tạo nháp MISA ({picked.length || apiReady.length})</Button>}</>}>
       {duyet.length > 0 && <div className="border-b border-ink-100 bg-red-50/40"><div className="px-4 pt-2 text-xs font-semibold text-red-700">Chờ duyệt giá (biên &gt; 4%) — 1 người duyệt là đủ</div>
-        <InvRows rows={duyet} loading={false} onOpen={setOpen} empty="" action={v => <Button size="sm" variant="primary" onClick={() => approve(v)}>Duyệt</Button>} /></div>}
+        <InvRows pk="kt_duyet" rows={duyet} loading={false} onOpen={setOpen} empty="" action={v => <Button size="sm" variant="primary" onClick={() => approve(v)}>Duyệt</Button>} /></div>}
       {chuaExport.length > 0 && <div className="px-4 pt-2 text-xs font-semibold text-amber-700">Chưa export ({chuaExport.length})</div>}
-      <InvRows rows={chuaExport} loading={moi.loading} onOpen={setOpen} empty={choPdf.length ? '' : 'Không có yêu cầu mới chờ export'} sel={api ? pick : undefined} onSel={api ? onSel : undefined} />
+      <InvRows pk="kt_export" rows={chuaExport} loading={moi.loading} onOpen={setOpen} empty={choPdf.length ? '' : 'Không có yêu cầu mới chờ export'} sel={api ? pick : undefined} onSel={api ? onSel : undefined} />
       {choPdf.length > 0 && <div className="border-t border-ink-100"><div className="px-4 pt-2 text-xs font-semibold text-ink-600">Đã export — chờ nạp PDF nháp ({choPdf.length})</div>
-        <InvRows rows={choPdf} loading={false} onOpen={setOpen} empty="" action={v => v.misa && v.misa.st === 'da_tao' && !v.misa.cu ? (v.misa.khop === false ? <Button size="sm" onClick={() => setOpen(v.id)}>Xử lý lệch</Button> : <Button size="sm" variant="primary" loading={busy} onClick={() => layPdf(v)}>⬇ Lấy PDF</Button>) : <Button size="sm" onClick={() => reExport([v.id])}>Export lại</Button>} /></div>}
+        <InvRows pk="kt_chopdf" rows={choPdf} loading={false} onOpen={setOpen} empty="" action={v => v.misa && v.misa.st === 'da_tao' && !v.misa.cu ? (v.misa.khop === false ? <Button size="sm" onClick={() => setOpen(v.id)}>Xử lý lệch</Button> : <Button size="sm" variant="primary" loading={busy} onClick={() => layPdf(v)}>⬇ Lấy PDF</Button>) : <Button size="sm" onClick={() => reExport([v.id])}>Export lại</Button>} /></div>}
     </Block>
 
     <Block n="3" title="PDF nháp từ MISA" sub={<>Tải PDF nháp hàng loạt, tên file dạng <code>NHAP_MST_TổngTiền_yyyymmdd</code> — ERP khớp theo MST + tổng tiền và báo sale.</>}
       actions={<Button variant="dark" onClick={() => setPdf(true)}>⇪ Tải PDF nháp / đã ký</Button>}>
       <div className="px-4 py-3 text-sm text-ink-600">{choPdf.length ? <><b>{choPdf.length}</b> yêu cầu đã export đang chờ PDF nháp (danh sách ở khối ②). Nạp PDF xong, yêu cầu tự rời khối ② và báo sale.</> : 'Không có yêu cầu đã export chờ PDF nháp.'}</div>
       {(traSua.data || []).filter(v => v.status === 'tra_sua').length > 0 && <div className="border-t border-ink-100"><div className="px-4 pt-2 text-xs font-semibold text-red-700">Sale trả sửa — chờ sale sửa và gửi lại (xóa nháp cũ trên MISA)</div>
-        <InvRows rows={(traSua.data || []).filter(v => v.status === 'tra_sua')} loading={false} onOpen={setOpen} empty="" /></div>}
+        <InvRows pk="kt_trasua" rows={(traSua.data || []).filter(v => v.status === 'tra_sua')} loading={false} onOpen={setOpen} empty="" /></div>}
       {(traSua.data || []).filter(v => v.status === 'da_nhap').length > 0 && <div className="border-t border-ink-100 px-4 py-2 text-xs text-ink-500">{(traSua.data || []).filter(v => v.status === 'da_nhap').length} yêu cầu có nháp, đang chờ sale duyệt.</div>}
     </Block>
 
     <Block n="4" title="Chờ ký — sale đã chốt" sub={<>Ký trên MISA đúng bản sale chốt → dán <b>mã tra cứu</b> MISA vào ô của phiếu → bấm <b>✓ Đã ký</b>. Sale được báo và bấm mã để xem HĐ.{api && <> Nháp tạo bằng API: ERP <b>tự dò MISA 15 phút/lần</b> (7h–21h) và tự chuyển Đã ký{mcfg.last_sync_at ? ` — lần dò gần nhất ${fmtDateTime(mcfg.last_sync_at)}` : ''}.</>}</>}
       actions={api ? <Button loading={busy} onClick={doMisa}>⟳ Dò MISA ngay</Button> : undefined}>
-      <InvRows rows={ky.data || []} loading={ky.loading} onOpen={setOpen} empty="Không có yêu cầu chờ ký" action={v => <SignBox v={v} onDone={reload} compact />} />
+      <InvRows pk="kt_choky" rows={ky.data || []} loading={ky.loading} onOpen={setOpen} empty="Không có yêu cầu chờ ký" action={v => <SignBox v={v} onDone={reload} compact />} />
     </Block>
 
     {imp === 'xe' && <ImportTruck onClose={() => setImp('')} onDone={id => { setImp(''); go('/acc?truck=' + id); }} />}
@@ -376,7 +381,7 @@ export function HdQuanLy() {
   return <Layout title="Duyệt giá & tồn HĐ">
     <Block title="Chờ duyệt giá" sub="Yêu cầu có dòng biên trên 4% so với giá APT. Dưới 2% hệ thống đã chặn, 2–4% không cần duyệt."
       actions={approver && rows.length > 1 ? <Button variant="primary" onClick={() => approve(rows.map(v => v.id))}>Duyệt tất cả ({rows.length})</Button> : null} tone={rows.length ? 'amber' : undefined}>
-      <InvRows rows={rows} loading={duyet.loading} onOpen={setOpen} empty="Không có yêu cầu chờ duyệt giá" action={approver ? v => <Button size="sm" variant="primary" onClick={() => approve([v.id])}>Duyệt</Button> : undefined} />
+      <InvRows pk="ql_duyet" rows={rows} loading={duyet.loading} onOpen={setOpen} empty="Không có yêu cầu chờ duyệt giá" action={approver ? v => <Button size="sm" variant="primary" onClick={() => approve([v.id])}>Duyệt</Button> : undefined} />
     </Block>
     <Block title="Tồn HĐ đầu vào chưa xuất" sub="Hàng đã có HĐ APT nhưng sale chưa tạo yêu cầu xuất HĐ."><div className="p-4"><TonReport /></div></Block>
     {open && <InvoiceDetail id={open} acc={a.isAdmin || a.has('ke_toan')} onClose={() => setOpen(null)} onChanged={() => setRev(x => x + 1)} />}
