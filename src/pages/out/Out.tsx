@@ -1,5 +1,6 @@
 // Xuất HĐ đầu ra: kế toán nạp sổ HĐ chính thức (mã hàng MISA) → sale lập phiếu (giá + đơn vị nhận HĐ) → kế toán xuất nháp → sale xác nhận ký → kế toán ký
 import React, { useMemo, useState } from 'react';
+import { PnCompare } from '../hd/PnCheck';
 import { MstCheck, MstChip } from '../../components/MstCheck';
 import { DocBtns, KyBtn } from '../hd/HdDocs';
 import { mstLevel, PROVIDER, type MstResult } from '../../lib/mst';
@@ -589,7 +590,7 @@ export function InvoiceDetail({ id, acc, onClose, onChanged }: { id: string; acc
     {s === 'da_ky' && !v.ma_tra_cuu && !fl.some(f => f.kind === 'ky') && <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">Đã ký HĐ số <b>{v.so_hd}</b> ngày {fmtDate(v.ngay_hd)} — kế toán đã gửi mail. Sale báo khách kiểm tra email.</div>}
     {s === 'da_nhap' && !fl.length && <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">Phiếu chưa có PDF nháp từ MISA (phiếu sổ cũ). Kế toán tải PDF nháp lên để sale gửi khách.</div>}
     <div className="grid gap-x-6 sm:grid-cols-2 text-sm">
-      <div><div className="text-xs font-bold uppercase text-ink-400">Đơn vị mua</div><div className="font-semibold">{v.buyer_name}</div><div className="mt-1 flex flex-wrap items-center gap-1">{v.tax_code ? <MstChip mst={v.tax_code} /> : 'MST: —'}{v.mst_check && <MstTag c={v.mst_check} />}</div><div>Địa chỉ: {v.address || '—'}</div><div>Email: {v.email || '—'}</div><div>Thanh toán: {v.payment}</div>
+      <div><div className="text-xs font-bold uppercase text-ink-400">Đơn vị mua</div><div className="font-semibold">{v.buyer_name}</div><div className="mt-1 flex flex-wrap items-center gap-1">{v.tax_code ? <MstChip mst={v.tax_code} /> : 'MST: —'}{v.mst_check && <MstTag c={v.mst_check} />}</div><div>Địa chỉ: {v.address || '—'}</div><div>Email: {v.email || '—'}</div><div>Thanh toán: {v.payment}</div>{v.status !== 'huy' && <PnCompare id={v.id} v={v} />}
         {v.buyer_info && <pre className="mt-1 whitespace-pre-wrap rounded bg-ink-50 p-2 text-xs">{v.buyer_info}</pre>}</div>
       <div><div className="text-xs font-bold uppercase text-ink-400">Phiếu</div><div>Sale: {a.personName(v.sale_id)}</div><div>Lập lúc {fmtDateTime(v.created_at)}</div>{v.note && <div>Ghi chú: {v.note}</div>}
         <div className="mt-1">Tiền hàng <b><Money v={t.tt} /></b> · Thuế <b><Money v={t.thue} /></b> · Tổng <b><Money v={t.tt + t.thue} /></b></div></div></div>

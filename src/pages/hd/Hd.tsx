@@ -24,6 +24,7 @@ import { DocBtns, KyBtn, KyList } from './HdDocs';
 import { ShipCreate, ShipList, useShipCounts } from './ChuyenPhat';
 import { MstChip } from '../../components/MstCheck';
 import { Pager, usePager } from '../../components/Pager';
+import { PnTag, pnCheck, pnLabel, type PnCheck } from './PnCheck';
 
 // ---------------- dùng chung ----------------
 const bien = (t: any) => (Number(t.gia_khach) > 0 && Number(t.dg_nhap) > 0 ? Number(t.gia_khach) / Number(t.dg_nhap) - 1 : null);
@@ -46,20 +47,10 @@ function useInv(statuses: string[], extra: Record<string, any> = {}, dep: any[] 
   }, [statuses.join(), JSON.stringify(extra), ...dep]);
 }
 /** Danh sách phiếu HĐ — tự phân trang (20/trang mặc định, nhớ số dòng/trang theo pk) */
-/** Bản 46: nhãn đối chiếu người mua với HĐ đã ký trước (cùng MST) — kế toán thấy ngay yêu cầu nào đúng y pháp nhân cũ */
-const PN_DIFF: Record<string, string> = { ten: 'tên', dia_chi: 'địa chỉ', email: 'email' };
-function PnTag({ c }: { c: any }) {
-  if (!c) return null;
-  const last = c.last ? `HĐ ${c.last.so_hd || c.last.code}${c.last.ngay_hd ? ' ngày ' + fmtDate(c.last.ngay_hd) : ''}` : '';
-  if (c.st === 'khop') return <span title={`Tên, MST, địa chỉ, email y hệt ${last} đã ký — tạo nháp không cần kiểm lại thông tin người mua`} className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">✓ Pháp nhân đã xuất · khớp {last}</span>;
-  if (c.st === 'lech') return <span title={`Đã ký: ${c.last?.buyer_name || ''} · ${c.last?.address || ''}${c.last?.email ? ' · ' + c.last.email : ''}`} className="rounded-md bg-red-50 px-1.5 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">⚠ Khác {(c.diff || []).map((k: string) => PN_DIFF[k] || k).join(', ')} so với {last} — kiểm tra</span>;
-  if (c.st === 'moi') return <span title="MST này chưa có HĐ đã ký nào — kiểm tra kỹ tên, địa chỉ với đăng ký thuế" className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">★ Pháp nhân lần đầu xuất — kiểm tra</span>;
-  return <span className="rounded-md bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-600">Không có MST</span>;
-}
 function InvRows({ rows, loading, onOpen, empty, action, sale = false, sel, onSel, pk = 'hd_rows', pn = false }: { rows: any[]; loading: boolean; onOpen: (id: string) => void; empty: string; action?: (v: any) => React.ReactNode; sale?: boolean; sel?: Record<string, boolean>; onSel?: (id: string, on: boolean) => void; pk?: string; pn?: boolean }) {
   const a = useApp(); const pg = usePager(pk, [rows.length]);
   const pnIds = pn ? pg.slice(rows).map(v => v.id).join(',') : '';
-  const { data: pnc } = useLoad(() => pnIds ? db.rpc<Record<string, any>>('out_pn_check', { p_ids: pnIds.split(',') }).catch(() => ({})) : Promise.resolve({} as Record<string, any>), [pnIds]);
+  const { data: pnc } = useLoad(() => pnIds ? pnCheck(pnIds.split(',')).catch(() => ({})) : Promise.resolve({} as Record<string, any>), [pnIds]);
   if (loading && !rows.length) return <Loading />;
   if (!rows.length) return empty ? <div className="px-4 py-6 text-center text-sm text-ink-400">{empty}</div> : null;
   return <><div className="divide-y divide-ink-100">{pg.slice(rows).map(v => { const [who, what] = nextStep(v); const tong = Number(v.tien_hang || 0) + Number(v.tien_thue || 0);
@@ -295,7 +286,22 @@ export function HdKeToan() {
   const chuaExport = rows.filter(v => v.status === 'cho_nhap' && !v.misa_at); const choPdf = rows.filter(v => v.status === 'cho_nhap' && v.misa_at); const duyet = rows.filter(v => v.status === 'cho_duyet_gia');
   const apiReady = chuaExport.filter(v => !v.misa || ['loi', 'da_xoa'].includes(v.misa.st) || v.misa.cu);
   const picked = chuaExport.filter(v => pick[v.id]).map(v => v.id);
-  const taoNhap = () => { const ids = picked.length ? picked : apiReady.map(v => v.id); if (!ids.length) { toast.info('Không có phiếu sẵn sàng tạo nháp'); return; } setRunner(ids); };
+  // Bản 47: chốt kiểm người mua trước khi tạo nháp — phiếu lệch / MST lần đầu / MST sai phải kế toán xác nhận đã kiểm
+  const taoNhap = () => run(async () => {
+    const ids = picked.length ? picked : apiReady.map(v => v.id); if (!ids.length) { toast.info('Không có phiếu sẵn sàng tạo nháp'); return; }
+    const c: Record<string, PnCheck> = await pnCheck(ids).catch(() => ({}));
+    const ok = ids.filter(id => c[id]?.st === 'khop'); const bad = ids.filter(id => c[id]?.st !== 'khop');
+    if (!bad.length) { setRunner(ids); return; }
+    const code = (id: string) => rows.find(v => v.id === id)?.code || id; const ten = (id: string) => rows.find(v => v.id === id)?.buyer_name || '';
+    const opts: [string, string][] = [...(ok.length ? [['khop', `Chỉ tạo ${ok.length} phiếu ✓ khớp — để lại ${bad.length} phiếu kiểm sau`] as [string, string]] : []),
+      ['all', `Tạo cả ${ids.length} phiếu — tôi đã kiểm ${bad.length} phiếu cần kiểm`]];
+    const pickV = await ask({ title: `${bad.length}/${ids.length} phiếu chưa khớp nguồn chứng thực`, ok: 'Tạo nháp MISA',
+      message: <><div className="mb-2 text-sm">Nguồn chứng thực = HĐ đã ký hoặc HĐ nguyên tắc cùng MST. Mở từng phiếu để xem bảng so từng trường.</div>
+        <div className="max-h-56 space-y-1 overflow-auto text-xs">{bad.map(id => <div key={id} className="rounded-lg bg-ink-50 px-2 py-1"><b>{code(id)}</b> · {ten(id)}<div className={c[id]?.st === 'moi' ? 'text-amber-700' : 'text-red-700'}>{pnLabel(c[id]) || 'Chưa kiểm được'}</div></div>)}</div></>,
+      input: { label: 'Tạo nháp cho', options: opts, value: opts[0][0], required: true } });
+    if (!pickV) return;
+    const go2 = pickV === 'khop' ? ok : ids; if (!go2.length) return; setRunner(go2);
+  });
   const doMisa = () => run(async () => { const r = await misaCall<any>('sync'); reload(); toast.ok(`Đã dò MISA ${r.checked || 0} nháp: ${r.phat_hanh || 0} đã phát hành${r.bi_xoa ? ` · ${r.bi_xoa} bị xóa trên web` : ''}`); });
   const layPdf = (v: any) => run(async () => { await misaCall('pdf', { hd_id: v.misa.hd_id }); reload(); }, 'Đã lấy PDF nháp — đã báo sale');
   const exportAll = () => run(async () => { const n = await exportMisaFile(null, id => a.personName(id)); reload(); toast.ok(`Đã export ${n} yêu cầu — nhập vào MISA, tạo nháp, tải PDF về khối ③`); });
@@ -327,7 +333,8 @@ export function HdKeToan() {
           <Button size="sm" variant={locked(t) ? 'danger' : undefined} onClick={() => setLechT(t)}>{locked(t) ? 'Xử lý lệch' : 'Ghép tay'}</Button></div>)}</div><Pager p={pgLech} total={(lech || []).length} /></>}
     </Block>
 
-    <Block n="2" title={api ? 'Yêu cầu mới → tạo nháp MISA' : 'Yêu cầu mới → export MISA'} sub={<>Chỉ yêu cầu đã gửi (biên 2–4%, hoặc đã được duyệt giá). Tạo nháp / export xong, sale không hủy được nữa. {api ? <><b>⚡ API</b>: tick phiếu (hoặc để trống = mọi phiếu sẵn sàng) → ERP kiểm, gửi MISA, lấy PDF, báo sale. <b>Làm tay</b> khi MISA lỗi: Excel → nhập MISA → khối ③. </> : <>Yêu cầu <b>đã export</b> vẫn nằm đây tới khi nạp PDF nháp. </>}<b>{chuaExport.length}</b> chưa tạo nháp · <b>{choPdf.length}</b> chờ PDF nháp.</>}
+    <Block n="2" title={api ? 'Yêu cầu mới → tạo nháp MISA' : 'Yêu cầu mới → export MISA'} sub={<>Chỉ yêu cầu đã gửi (biên 2–4%, hoặc đã được duyệt giá). Tạo nháp / export xong, sale không hủy được nữa. {api ? <><b>⚡ API</b>: tick phiếu (hoặc để trống = mọi phiếu sẵn sàng) → ERP kiểm, gửi MISA, lấy PDF, báo sale. <b>Làm tay</b> khi MISA lỗi: Excel → nhập MISA → khối ③. </> : <>Yêu cầu <b>đã export</b> vẫn nằm đây tới khi nạp PDF nháp. </>}<b>{chuaExport.length}</b> chưa tạo nháp · <b>{choPdf.length}</b> chờ PDF nháp.
+        <div className="mt-1">Nhãn người mua: <span className="font-semibold text-emerald-700">✓ Khớp</span> = tên + MST + địa chỉ trùng HĐ đã ký / HĐ nguyên tắc → tạo nháp không cần soát · <span className="font-semibold text-red-700">⚠ Khác</span> = sửa phiếu hoặc hỏi sale · <span className="font-semibold text-amber-700">★ Lần đầu</span> = so với đăng ký thuế (🔍). Bấm ⚡ Tạo nháp: phiếu chưa khớp phải xác nhận.</div></>}
       actions={<>{api && picked.length > 0 && <button className="text-xs text-ink-500 underline" onClick={() => setPick({})}>Bỏ chọn ({picked.length})</button>}
         {api && chuaExport.length > 0 && picked.length < chuaExport.length && <button className="text-xs text-brand-700 underline" onClick={() => setPick(Object.fromEntries(chuaExport.map(v => [v.id, true])))}>Chọn tất cả ({chuaExport.length})</button>}
         {choPdf.length > 0 && <Button loading={busy} onClick={() => reExport(choPdf.map(v => v.id))}>↻ Export lại đã export ({choPdf.filter(v => !v.misa || v.misa.st === 'da_xoa').length})</Button>}

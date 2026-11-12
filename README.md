@@ -257,3 +257,12 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Nhãn **✓ Đã xuất N HĐ đúng thông tin** (cùng MST + tên + địa chỉ với HĐ đã ký) / **⚠ MST này đã xuất HĐ với tên / địa chỉ khác**; bộ lọc *Đã xuất HĐ — đúng thông tin*, *MST đã xuất HĐ với tên / địa chỉ khác*, *Chưa xuất HĐ lần nào*.
 - **Bàn làm việc kế toán** (và các tab chưa ký của sale): mỗi yêu cầu có nhãn so với HĐ **đã ký** cùng MST — **✓ Pháp nhân đã xuất · khớp HĐ số…** (tên, địa chỉ, email y hệt → tạo nháp không cần kiểm lại người mua), **⚠ Khác tên / địa chỉ / email so với HĐ…**, **★ Pháp nhân lần đầu xuất**. So sánh bỏ qua hoa thường, khoảng trắng thừa, dấu chấm cuối; **không** bỏ dấu tiếng Việt.
 - Hàm `app.pn_norm`, `app.mst_norm`, `out_pn_check`; `out_buyers_page` thêm `da_xuat` / `xuat_cuoi` / `ky_mst`. Nâng cấp: `supabase/migrations/0054_v46.sql`. Kiểm thử: `supabase/tests/99y_v46.sql`.
+
+## Bản 47 — Pháp nhân chứng thực + chốt kiểm trước khi tạo nháp MISA (13/11/2026)
+
+- **Nguồn chứng thực** của 1 MST: HĐ **đã ký** hoặc pháp nhân **đã ký HĐ nguyên tắc**. Yêu cầu HĐ so với nguồn này: ✓ Khớp / ⚠ Khác tên · địa chỉ / ★ MST lần đầu / ⛔ MST sai dạng.
+- So địa chỉ bỏ qua cách viết: TP = Thành phố, TDP = Tổ dân phố, "Số nhà" = "Số", tiền tố Tỉnh / Thành phố, đuôi "Việt Nam", dấu câu. Không bỏ dấu tiếng Việt; Thôn ≠ Tổ dân phố, Thị trấn ≠ Xã.
+- Chi tiết yêu cầu: bảng so từng trường (yêu cầu ↔ HĐ đã ký / HĐNT). **⚡ Tạo nháp MISA**: phiếu chưa khớp phải chọn "chỉ tạo phiếu khớp" hoặc xác nhận đã kiểm.
+- Pháp nhân nhận HĐ: lọc chính **Đã ký HĐ nguyên tắc / Đã từng xuất HĐ / Chưa xuất HĐ**; lọc phụ "Cần sửa".
+- Dọn dữ liệu 1 lần: thêm pháp nhân từ HĐ đã ký còn thiếu; xóa pháp nhân không đủ (username + HĐNT) mà MST chưa từng xuất HĐ — sao lưu ở `app.out_buyers_bak_v47`.
+- Nâng cấp: `supabase/migrations/0055_v47.sql`. Kiểm thử: `supabase/tests/99z_v47.sql`.
