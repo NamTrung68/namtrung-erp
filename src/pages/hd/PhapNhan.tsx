@@ -9,7 +9,7 @@ import { BuyerHoSo } from './HoSo';
 import { readXlsx, writeXlsx } from '../../lib/xlsx';
 import { parseBuyers } from '../../lib/xuathd';
 import { downloadMau } from '../../lib/mau';
-import { today } from '../../lib/format';
+import { fmtDate, today } from '../../lib/format';
 import { CopyBtn, MstCheck, MstChip } from '../../components/MstCheck';
 
 /** MST hợp lệ: 10 số, 10-3 số, hoặc CCCD 12 số (giống kiểm tra trước khi gửi MISA) */
@@ -21,11 +21,14 @@ const FLAGS: [string, string, string][] = [
   ['', 'Tất cả', 'ink'], ['chua_gan', 'Username chưa có khách ERP', 'amber'], ['mst_sai', 'MST sai dạng', 'red'], ['thieu_dc', 'Thiếu địa chỉ', 'amber'],
   ['trung_mst', 'Cùng MST khác tên', 'red'], ['khong_md', 'Khách chưa có ★ mặc định', 'amber'],
   ['co_hdnt', 'Đã ký HĐ nguyên tắc', 'ink'], ['thieu_dd', 'Thiếu người đại diện', 'amber'], ['thieu_nhan', 'Thiếu SĐT / địa chỉ nhận chuyển phát', 'amber'],
+  // Bản 46: so với HĐ đã ký (cùng MST + tên + địa chỉ)
+  ['da_xuat', '✓ Đã xuất HĐ — đúng thông tin', 'green'], ['lech_xuat', 'MST đã xuất HĐ với tên / địa chỉ khác', 'red'], ['chua_xuat', 'Chưa xuất HĐ lần nào', 'ink'],
 ];
 
 interface Row { id: string; customer_id: string | null; username: string | null; own_username: string | null; name: string; tax_code: string; address: string | null; email: string | null; note: string | null;
   is_default: boolean; kh_name: string | null; kh_code: string | null; sale_id: string | null; mst_sai: boolean; thieu_dc: boolean; trung_mst: boolean; khong_md: boolean; so_phieu: number; updated_at: string | null;
-  dai_dien: string | null; chuc_vu: string | null; dia_chi_giao: string | null; ma_hdnt: string | null; ngay_hdnt: string | null; nguoi_nhan: string | null; sdt_nhan: string | null }
+  dai_dien: string | null; chuc_vu: string | null; dia_chi_giao: string | null; ma_hdnt: string | null; ngay_hdnt: string | null; nguoi_nhan: string | null; sdt_nhan: string | null;
+  da_xuat?: number; xuat_cuoi?: string | null; ky_mst?: number }
 type Draft = { username: string; name: string; tax_code: string; address: string; email: string; note: string; dai_dien: string; chuc_vu: string; dia_chi_giao: string; ma_hdnt: string; ngay_hdnt: string; nguoi_nhan: string; sdt_nhan: string };
 const toDraft = (r: Partial<Row>): Draft => ({ username: r.username || '', name: r.name || '', tax_code: r.tax_code || '', address: r.address || '', email: r.email || '', note: r.note || '',
   dai_dien: r.dai_dien || '', chuc_vu: r.chuc_vu || '', dia_chi_giao: r.dia_chi_giao || '', ma_hdnt: r.ma_hdnt || '', ngay_hdnt: r.ngay_hdnt || '', nguoi_nhan: r.nguoi_nhan || '', sdt_nhan: r.sdt_nhan || '' });
@@ -45,6 +48,18 @@ export default function PhapNhan() {
   const { data: hs, reload: rlHs } = useLoad(() => rows.length ? db.rpc<Record<string, { hdnt: number; hdmb: number; tong: number }>>('ho_so_buyer_status', { p_ids: rows.map(r => r.id) }).catch(() => ({})) : Promise.resolve({}), [rows.map(r => r.id).join()]);
   const groups = useMemo(() => { const m = new Map<string, Row[]>(); rows.forEach(r => { const k = r.customer_id || 'u:' + lc(r.username); m.set(k, [...(m.get(k) || []), r]); }); return Array.from(m.values()); }, [rows]);
   const pg = usePager('hd_phapnhan', [qq, flag, sale, groups.length]);
+  // Bản 46: tick nhiều pháp nhân → xóa nhanh
+  const [pick, setPick] = useState<Record<string, boolean>>({});
+  const picked = rows.filter(r => pick[r.id]);
+  const togglePage = (on: boolean) => setPick(x => { const y = { ...x }; pg.slice(groups).flat().forEach(r => { if (on) y[r.id] = true; else delete y[r.id]; }); return y; });
+  const pageAll = pg.slice(groups).flat().length > 0 && pg.slice(groups).flat().every(r => pick[r.id]);
+  const delMany = () => run(async () => {
+    const used = picked.filter(r => r.so_phieu > 0);
+    if (!(await ask({ title: `Xóa ${picked.length} pháp nhân đã chọn?`, danger: true, ok: `Xóa ${picked.length}`,
+      message: <><div className="max-h-40 overflow-auto text-xs">{picked.slice(0, 30).map(r => <div key={r.id}>• {r.name} · {r.tax_code}{r.so_phieu ? ` · đã dùng ${r.so_phieu} phiếu` : ''}</div>)}{picked.length > 30 && <div>… và {picked.length - 30} pháp nhân khác</div>}</div>
+        {used.length > 0 && <div className="mt-2 text-amber-700">{used.length} pháp nhân đã dùng ở phiếu — phiếu cũ giữ nguyên thông tin, chỉ không gợi ý pháp nhân này nữa.{!acc ? ' Sale chỉ xóa được pháp nhân chưa dùng — nhờ kế toán xóa.' : ''}</div>}</> }))) return;
+    const n = await db.rpc<number>('out_buyer_delete', { p_ids: picked.map(r => r.id) }); setPick({}); reload(); toast.ok(`Đã xóa ${n} pháp nhân`);
+  });
   const dirty = (r: Row) => { const d = edit[r.id]; if (!d) return false; const o = toDraft(r); return (Object.keys(o) as (keyof Draft)[]).some(k => (d[k] || '').trim() !== (o[k] || '').trim()); };
   const setE = (r: Row, k: keyof Draft, v: string) => setEdit(x => ({ ...x, [r.id]: { ...(x[r.id] || toDraft(r)), [k]: v } }));
   const val = (r: Row, k: keyof Draft) => (edit[r.id] || toDraft(r))[k];
@@ -80,11 +95,14 @@ export default function PhapNhan() {
     <p className="mb-3 text-sm text-ink-600">Mỗi <b>username</b> khách có thể có nhiều pháp nhân nhận HĐ; <b>★</b> là pháp nhân tự điền khi sale lập phiếu. Sửa thẳng trên ô rồi bấm <b>Lưu</b>. Đổi username = chuyển pháp nhân sang khách khác (ERP tự gắn theo username). Muốn sửa hàng loạt: <b>Xuất Excel</b> → sửa → <b>Nạp Excel</b> (cùng username + MST thì cập nhật, không tạo trùng).</p>
     <div className="mb-3 flex flex-wrap gap-2">{FLAGS.map(([k, l, c]) => { const n = k ? counts[k] : counts.tat_ca;
       return <button key={k} onClick={() => setFlag(k)} className={cx('rounded-xl border px-3 py-1.5 text-left text-xs', flag === k ? 'border-brand-500 bg-brand-50' : 'border-ink-200 bg-white hover:border-brand-300')}>
-        <div className={cx('text-lg font-bold', k && n ? (c === 'red' ? 'text-red-600' : 'text-amber-600') : 'text-ink-900')}>{n ?? '…'}</div><div className="text-ink-600">{l}</div></button>; })}
+        <div className={cx('text-lg font-bold', k && n ? (c === 'red' ? 'text-red-600' : c === 'green' ? 'text-emerald-600' : c === 'amber' ? 'text-amber-600' : 'text-ink-900') : 'text-ink-900')}>{n ?? '…'}</div><div className="text-ink-600">{l}</div></button>; })}
       {counts.khach !== undefined && <div className="self-center text-xs text-ink-500">{counts.khach} khách / username</div>}</div>
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <Input className="max-w-sm" placeholder="Tìm tên, MST, username, địa chỉ, khách…" value={q} onChange={e => setQ(e.target.value)} />
       <Select className="w-52" placeholder="Tất cả sale" options={[['', 'Tất cả sale'], ...sales.map(s => [s, a.personName(s)] as [string, string])]} value={sale} onChange={setSale} />
+      {rows.length > 0 && <label className="flex items-center gap-1.5 text-xs text-ink-600"><input type="checkbox" className="h-4 w-4" checked={pageAll} onChange={e => togglePage(e.target.checked)} />Chọn cả trang</label>}
+      {picked.length > 0 && <><Button variant="danger" loading={busy} onClick={delMany}>🗑 Xóa {picked.length} pháp nhân đã chọn</Button>
+        <button className="text-xs text-ink-500 underline" onClick={() => setPick({})}>Bỏ chọn</button></>}
       {nDirty > 0 && <Button variant="primary" loading={busy} onClick={saveAll}>Lưu {nDirty} dòng đã sửa</Button>}
       {nDirty > 0 && <button className="text-xs text-ink-500 underline" onClick={() => setEdit({})}>Bỏ sửa</button>}
       <span className="ml-auto text-xs text-ink-500">{data ? `${data.total} pháp nhân` : ''}</span></div>
@@ -98,9 +116,10 @@ export default function PhapNhan() {
           <span className="text-xs text-ink-400">{g.length} pháp nhân</span>
           <button className="ml-auto text-xs font-semibold text-brand-700 underline" onClick={() => setAdding({ ...EMPTY, username: h.username || '' })}>+ thêm pháp nhân cho {h.username || 'khách này'}</button></div>
         <div className="divide-y divide-ink-100">{g.map(r => { const d = dirty(r); const m = val(r, 'tax_code');
-          return <div key={r.id} className={cx('grid gap-1.5 px-3 py-2 lg:grid-cols-[28px_2.2fr_1fr_2.4fr_1.4fr_1fr_auto]', d && 'bg-brand-50/50')}>
+          return <div key={r.id} className={cx('grid gap-1.5 px-3 py-2 lg:grid-cols-[52px_2.2fr_1fr_2.4fr_1.4fr_1fr_auto]', d && 'bg-brand-50/50', pick[r.id] && 'bg-red-50/60')}>
+            <div className="flex items-center gap-1.5"><input type="checkbox" className="h-4 w-4" title="Chọn để xóa nhanh" checked={!!pick[r.id]} onChange={e => setPick(x => ({ ...x, [r.id]: e.target.checked }))} />
             <button title={r.is_default ? 'Pháp nhân mặc định' : 'Đặt làm mặc định'} disabled={!r.customer_id || r.is_default || busy} onClick={() => setDefault(r)}
-              className={cx('self-center text-lg leading-none', r.is_default ? 'text-amber-500' : 'text-ink-300 hover:text-amber-400 disabled:hover:text-ink-300')}>{r.is_default ? '★' : '☆'}</button>
+              className={cx('self-center text-lg leading-none', r.is_default ? 'text-amber-500' : 'text-ink-300 hover:text-amber-400 disabled:hover:text-ink-300')}>{r.is_default ? '★' : '☆'}</button></div>
             <input className={cx(inp, !val(r, 'name').trim() ? 'border-red-300' : 'border-ink-200', 'font-semibold')} value={val(r, 'name')} onChange={e => setE(r, 'name', e.target.value)} title="Tên đơn vị" />
             <div className="flex items-center gap-0.5"><input className={cx(inp, 'font-mono font-semibold', mstOk(m) ? 'border-ink-200' : 'border-red-300 bg-red-50')} value={m} onChange={e => setE(r, 'tax_code', e.target.value.replace(/\s/g, ''))} title="MST / CCCD" />
               {mstOk(m) && <><CopyBtn text={m} title="Copy MST" /><MstChip btnOnly mst={m} onApply={v => setEdit(x => ({ ...x, [r.id]: { ...(x[r.id] || toDraft(r)), name: v.name, address: v.address } }))} /></>}</div>
@@ -126,6 +145,8 @@ export default function PhapNhan() {
             <div className="flex flex-wrap gap-1 text-[11px] lg:col-start-2 lg:col-end-8">
               {r.trung_mst && <Badge color="red">Cùng MST {r.tax_code} có tên khác — chuẩn hóa</Badge>}
               {r.mst_sai && <Badge color="red">MST sai dạng</Badge>}{r.khong_md && <Badge color="amber">Khách chưa có ★</Badge>}
+              {Number(r.da_xuat) > 0 ? <Badge color="green">✓ Đã xuất {r.da_xuat} HĐ đúng thông tin{r.xuat_cuoi ? ` · gần nhất ${fmtDate(r.xuat_cuoi)}` : ''}</Badge>
+                : Number(r.ky_mst) > 0 ? <Badge color="red">⚠ MST này đã xuất HĐ với tên / địa chỉ khác — kiểm tra lại</Badge> : null}
               {r.so_phieu > 0 && <span className="text-ink-500">đã dùng {r.so_phieu} phiếu</span>}
               {r.note && <span className="text-ink-400">· {r.note}</span>}
               {r.updated_at && <span className="text-ink-400">· sửa {new Date(r.updated_at).toLocaleString('vi-VN')}</span>}</div>
