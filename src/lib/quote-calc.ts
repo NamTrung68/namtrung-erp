@@ -239,14 +239,17 @@ export function calcQuote(h: QuoteHeader, rawLines: QuoteLine[], opts: { tyLeCoc
 }
 
 // Kiểm tra khung giá phía trình duyệt (để cảnh báo sớm; server kiểm lại)
-export function priceFrame(h: QuoteHeader, t: QuoteTotals, cfg: { tyGiaSan?: number; phiDVSan?: number; tyLeXuatMin?: number } = {}) {
+/** cfg.kh: khung giá riêng của khách (anh đặt) — thay mức sàn UT / DV / cước khối chung */
+export function priceFrame(h: QuoteHeader, t: QuoteTotals, cfg: { tyGiaSan?: number; phiDVSan?: number; tyLeXuatMin?: number; kh?: { phi_ut_min?: number | null; phi_dv_min?: number | null; cuoc_khoi_min?: number | null } | null } = {}) {
+  const kh = cfg.kh || {}; const has = (x: unknown) => x !== null && x !== undefined && (x as any) !== '';
   const cam: string[] = []; const duyet: string[] = [];
   if (n(h.tyGia) < n(h.tyGiaVon, 3955)) cam.push(`Tỷ giá ${h.tyGia} thấp hơn tỷ giá vốn ${h.tyGiaVon}`);
-  if (n(h.phiUTPct) < n(h.phiUTSan, 0.8)) cam.push(`Phí ủy thác ${h.phiUTPct}% thấp hơn sàn ${h.phiUTSan}%`);
+  const utMin = has(kh.phi_ut_min) ? n(kh.phi_ut_min) : n(h.phiUTSan, 0.8);
+  if (n(h.phiUTPct) < utMin) cam.push(`Phí ủy thác ${h.phiUTPct}% thấp hơn sàn ${utMin}%${has(kh.phi_ut_min) ? ' (khung riêng của khách)' : ''}`);
   if (n(h.tyGia) < n(cfg.tyGiaSan, 4015)) duyet.push(`Tỷ giá < ${cfg.tyGiaSan ?? 4015}`);
-  const dvMin = n(cfg.phiDVSan, 1.2);
+  const dvMin = has(kh.phi_dv_min) ? n(kh.phi_dv_min) : n(cfg.phiDVSan, 1.2);
   if (n(h.phiDVCoDinh) > 0 ? n(h.phiDVCoDinh) < Math.round(t.tienHang * dvMin / 100) : n(h.phiDVPct) < dvMin) duyet.push(`Phí dịch vụ < ${dvMin}%`);
-  const gv = n((h.giaVonKhoi || {})[h.khoNhan || 'HN'], 800000);
+  const gv = has(kh.cuoc_khoi_min) ? n(kh.cuoc_khoi_min) : n((h.giaVonKhoi || {})[h.khoNhan || 'HN'], 800000);
   if (n(h.soKhoi) > 0 && t.cuoc / n(h.soKhoi) < gv) duyet.push(`Cước < giá vốn khối ${gv.toLocaleString('vi-VN')}đ`);
   if (h.cheDoXuat === 'thap' && n(h.pctXuat) < n(cfg.tyLeXuatMin, 70)) duyet.push(`Xuất thấp < ${cfg.tyLeXuatMin ?? 70}%`);
   return { cam, duyet };

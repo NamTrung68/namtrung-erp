@@ -238,3 +238,9 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - "Công tác, gặp khách" chọn được **Theo giờ** (đi gặp khách rồi về thẳng): khoảng đó tính là giờ làm, không trừ quỹ. Gặp khách buổi sáng / chiều chỉ che buổi đó.
 - "Chấm công của tôi" lấy phút muộn / sớm từ máy chủ (`att_my_month`) — trước tự tính từ 08:00 nên người nghỉ buổi sáng bị báo muộn hơn 300 phút.
 - Nâng cấp: `supabase/migrations/0051_v43.sql`. Kiểm thử: `supabase/tests/99v_v43.sql`.
+
+## Bản 44 — Khung giá riêng theo khách (12/11/2026)
+
+- Hồ sơ khách → ô **⭐ Khung giá riêng của khách** (chỉ Admin / BGĐ sửa): phí ủy thác tối thiểu %, phí dịch vụ tối thiểu %, cước tối thiểu đ/m³, ghi chú. Ô trống = theo mức sàn chung.
+- Báo giá của khách đó kiểm CẤM / Cần duyệt theo khung riêng (trình duyệt + máy chủ `app.quote_check_kh`) → trong khung thì sale gửi luôn, không cần duyệt. Màn báo giá hiện dòng "Khách có khung giá riêng".
+- Bảng `customer_price_floor`, đặt qua `customer_price_floor_set` (ghi nhật ký). Nâng cấp: `supabase/migrations/0052_v44.sql`. Kiểm thử: `supabase/tests/99w_v44.sql`, `tests/e2e/v44.cjs`.

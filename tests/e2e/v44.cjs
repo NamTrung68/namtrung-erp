@@ -1,0 +1,33 @@
+// v44: khung giá riêng theo khách — Admin đặt trong hồ sơ khách, sale lập báo giá UT 0% gửi luôn
+const { chromium } = require('playwright'); const { execSync } = require('child_process');
+const BASE = 'http://localhost:8080/'; const SHOTS = process.env.SHOTS || '/tmp/v44-shots';
+const errors = []; const ok = (c, m) => { if (!c) errors.push('FAIL ' + m); else console.log('  ✓ ' + m); };
+const sql = q => execSync(`psql -h /var/tmp/pg -p 5433 -U postgres -d nt_e2e -Atqc "${q.replace(/"/g, '\\"')}"`).toString().trim();
+require('fs').mkdirSync(SHOTS, { recursive: true });
+(async () => {
+  const A = sql("select id from profiles where email='a@nt.vn'");
+  const C = sql(`insert into customers(code, contact_name, phone, customer_type, source, owner_id) values ('KH44', 'Khách thân 44', '+84 912 000 441', 'nha_buon', 'tu_tim_zalo', '${A}') returning id`).split('\n')[0];
+  const b = await chromium.launch();
+  const login = async email => { const p = await (await b.newContext({ viewport: { width: 1440, height: 950 } })).newPage(); p.on('pageerror', e => errors.push(`[${email}] ${e.message}`));
+    await p.goto(BASE); await p.fill('input[type=email]', email); await p.fill('input[type=password]', 'Test1234!'); await p.click('button[type=submit]'); await p.waitForSelector('h2.display'); return p; };
+  const g = await login('namtrung20266@gmail.com');
+  await g.goto(BASE + '#/crm/customers?id=' + C); await g.waitForTimeout(2000);
+  const box = g.locator('div.rounded-xl', { hasText: 'Khung giá riêng của khách' }).last();
+  ok(await box.count() === 1, 'Admin thấy ô Khung giá riêng trong hồ sơ khách');
+  const inp = box.locator('input'); await inp.nth(0).fill('0'); await inp.nth(1).fill('0.2'); await inp.nth(2).fill('400000'); await inp.nth(3).fill('Khách thân');
+  await box.locator('button:has-text("Lưu khung giá riêng")').click(); await g.waitForTimeout(1200);
+  await box.screenshot({ path: SHOTS + '/1-khung.png' });
+  ok(sql(`select phi_ut_min||'|'||phi_dv_min||'|'||cuoc_khoi_min from customer_price_floor where customer_id='${C}'`) === '0.000|0.200|400000', 'lưu khung giá riêng');
+  const a = await login('a@nt.vn');
+  await a.goto(BASE + `#/crm/quote?customer=${C}`); await a.waitForTimeout(1800);
+  await a.locator('tbody textarea').first().fill('Tấm lót bát đũa'); const nums = a.locator('tbody tr').first().locator('input:not([type=file])'); await nums.nth(2).fill('500'); await nums.nth(3).fill('3.2');
+  const fld = l => a.locator('label', { hasText: l }).locator('input').first();
+  await fld('Phí ủy thác').fill('0'); await fld('Phí dịch vụ').fill('0.2'); await a.waitForTimeout(800);
+  await a.screenshot({ path: SHOTS + '/2-baogia.png', fullPage: true });
+  const txt = await a.locator('main aside').last().innerText();
+  ok(txt.includes('khung giá riêng') && !txt.includes('CẤM') && !/Cần duyệt: Phí dịch vụ/.test(txt), 'báo giá UT 0% / DV 0,2%: không CẤM, không cần duyệt');
+  await a.click('button:has-text("Lưu và gửi khách")'); await a.waitForTimeout(2000);
+  ok(sql(`select status from quotations where customer_id='${C}' order by created_at desc limit 1`) === 'da_gui', 'gửi khách luôn (không chờ duyệt)');
+  await b.close();
+  if (errors.length) { console.log(errors.join('\n')); process.exit(1); } console.log('V44 E2E OK');
+})().catch(e => { console.error(e); process.exit(1); });

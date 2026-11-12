@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Layout } from '../../components/Layout';
-import { Badge, Button, Chips, cx, Empty, Field, Input, Loading, Modal, Select, Tabs, Textarea, toast, useAction, useLoad, Table, Td, ask, StatusChips } from '../../components/ui';
+import { Badge, Button, Chips, cx, Empty, Field, Input, Loading, Modal, NumInput, Select, Tabs, Textarea, toast, useAction, useLoad, Table, Td, ask, StatusChips } from '../../components/ui';
 import { db, fetchAll } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { addDays, daysBetween, fmtDate, fmtDateTime, money, today } from '../../lib/format';
@@ -259,6 +259,7 @@ function CustomerPanel({ id, onClose, onSaved }: { id: string | null; onClose: (
           <Field label="Dịch vụ quan tâm"><Chips options={a.opts('service')} value={f.services} onChange={set('services')} /></Field>
           <Field label="Đặc thù hàng hóa"><Chips options={a.opts('goods_trait')} value={f.goods_traits} onChange={set('goods_traits')} /></Field>
           <Field label="Ghi chú (nhu cầu, tính cách, điều cần lưu ý)"><Textarea rows={3} value={f.note} onChange={ev('note')} /></Field>
+          {c && <PriceFloor customerId={c.id} />}
         </div>}
         {tab === 'care' && c && <CareHistory customerId={c.id} />}
         {tab === 'quotes' && c && <CustomerQuotes customerId={c.id} />}
@@ -351,3 +352,24 @@ export const QUOTE_STATUS: Record<string, [string, string]> = {
   da_chot: ['Đã chốt đơn', 'green'], tu_choi: ['Khách từ chối', 'red'], het_han: ['Hết hạn', 'slate'], da_thay_the: ['Đã thay thế', 'gray'],
 };
 export const QuoteStatus = ({ s }: { s: string }) => <Badge color={QUOTE_STATUS[s]?.[1]}>{QUOTE_STATUS[s]?.[0] || s}</Badge>;
+
+/** Bản 44: khung giá riêng của khách — Admin / BGĐ đặt; sale chỉ xem. Ô trống = theo mức sàn chung */
+function PriceFloor({ customerId }: { customerId: string }) {
+  const a = useApp(); const can = a.has('admin', 'bgd'); const { busy, run } = useAction();
+  const { data, reload } = useLoad(() => db.from('customer_price_floor').select('*').eq('customer_id', customerId).maybeSingle().then((x: any) => x, () => null), [customerId]);
+  const qd = a.settings.quote_defaults || {};
+  const [f, setF] = useState<any>({ phi_ut_min: null, phi_dv_min: null, cuoc_khoi_min: null, note: '' });
+  useEffect(() => { const d: any = data || {}; setF({ phi_ut_min: d.phi_ut_min ?? null, phi_dv_min: d.phi_dv_min ?? null, cuoc_khoi_min: d.cuoc_khoi_min ?? null, note: d.note || '' }); }, [data]);
+  if (!can && !data) return null;
+  const save = (clear = false) => run(async () => { await db.rpc('customer_price_floor_set', { p_customer: customerId, p: clear ? {} : f }); reload(); }, clear ? 'Đã bỏ khung giá riêng' : 'Đã lưu khung giá riêng');
+  return <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+    <div className="mb-2 flex flex-wrap items-center gap-2 text-sm"><b>⭐ Khung giá riêng của khách</b><span className="text-xs text-ink-500">{can ? 'Chỉ Admin / BGĐ sửa. Ô trống = theo mức chung. Báo giá trong khung này sale gửi luôn, không cần duyệt.' : 'Do BGĐ đặt — báo giá trong khung này gửi luôn, không cần duyệt.'}</span></div>
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <Field label="Phí ủy thác tối thiểu %" hint={`Chung: ${qd.phiUTSan ?? 0.8}%`}><NumInput disabled={!can} value={f.phi_ut_min} onChange={v => setF({ ...f, phi_ut_min: v })} placeholder="theo chung" /></Field>
+      <Field label="Phí dịch vụ tối thiểu %" hint={`Chung: ${qd.phiDVSan ?? 1.2}%`}><NumInput disabled={!can} value={f.phi_dv_min} onChange={v => setF({ ...f, phi_dv_min: v })} placeholder="theo chung" /></Field>
+      <Field label="Cước tối thiểu (đ/m³)" hint="Chung: giá vốn khối theo kho"><NumInput disabled={!can} value={f.cuoc_khoi_min} onChange={v => setF({ ...f, cuoc_khoi_min: v })} placeholder="theo chung" /></Field>
+      <Field label="Ghi chú"><Input disabled={!can} value={f.note} onChange={e => setF({ ...f, note: e.target.value })} placeholder="VD: khách thân, đơn đều" /></Field>
+    </div>
+    {can && <div className="mt-2 flex gap-2"><Button size="sm" variant="primary" loading={busy} onClick={() => save()}>Lưu khung giá riêng</Button>{data && <Button size="sm" variant="ghost" loading={busy} onClick={() => save(true)}>Bỏ khung riêng</Button>}</div>}
+  </div>;
+}
