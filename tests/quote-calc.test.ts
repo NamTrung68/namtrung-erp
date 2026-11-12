@@ -63,3 +63,17 @@ test('Bỏ qua dòng thiếu tên hoặc SL ≤ 0', () => {
   const r = calcQuote(header(), [...lines, { name: '', qty: 5, unit_price_cny: 1 }, { name: 'X', qty: 0, unit_price_cny: 1 }]);
   assert.equal(r.lines.length, 1);
 });
+
+test('làm tròn gõ nhầm (401500) không làm giá xuất về 0; giá xuất = 0 bị chặn lưu', async () => {
+  const { calcQuote, defaultHeader, roundTo } = await import('../src/lib/quote-calc');
+  const h = { ...defaultHeader({}), tyGia: 4015, soKg: 50, donGiaKg: 7000, shipNoiDiaCNY: 115, phiKeKhai: 200000, phiDVPct: 2, phiUTPct: 1.2, cheDoXuat: 'du' as const, pctXuat: 100, vatPct: 8 };
+  const line = [{ name: 'Tấm lót bát đũa', qty: 500, unit_price_cny: 3.2, duty_pct: 0, vat_pct: null, freight_pct: null, manual_price: null }];
+  const ok = calcQuote({ ...h, lamTron: 1 }, line);
+  const bad = calcQuote({ ...h, lamTron: 401500 }, line);
+  assert.ok(ok.lines[0].giaXuat > 15000);
+  assert.equal(bad.lines[0].giaXuat, ok.lines[0].giaXuat, 'bước làm tròn lạ → dùng 1 đ');
+  assert.ok(bad.totals.warnings.some(w => w.includes('Làm tròn')));
+  assert.equal(calcQuote({ ...h, lamTron: 1000 }, line).lines[0].giaXuat, roundTo(ok.lines[0].giaXuat, 1000));
+  const z = calcQuote({ ...h, cheDoXuat: 'thap' as const, pctXuat: 0 }, line);
+  assert.ok(z.errors.some(e => e.includes('giá xuất = 0')));
+});

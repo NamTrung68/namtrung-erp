@@ -4,7 +4,7 @@ import { Badge, Button, cx, Field, Input, Loading, Modal, NumInput, Select, Text
 import { db, storage } from '../../lib/sb';
 import { compressImage, prepareUpload } from '../../lib/image';
 import { go, useApp, useRoute } from '../../state';
-import { calcQuote, defaultHeader, priceFrame, QuoteHeader, QuoteLine } from '../../lib/quote-calc';
+import { calcQuote, defaultHeader, LAM_TRON, lamTronOf, priceFrame, QuoteHeader, QuoteLine } from '../../lib/quote-calc';
 import { fmtDate, money, num, today, addDays } from '../../lib/format';
 import { QuoteStatus } from './Customers';
 import { vietQrUrl } from '../../lib/vietqr';
@@ -153,7 +153,7 @@ export default function QuoteEditor() {
               <Field label="Phí kiểm tra chất lượng"><NumInput disabled={dis} value={h.phiKTCL} onChange={set('phiKTCL')} /></Field>
               <Field label="Phí khác"><NumInput disabled={dis} value={h.phiKhac} onChange={set('phiKhac')} /></Field>
               <Field label="Tên phí khác (in trên báo giá)" className="col-span-2"><Input disabled={dis} placeholder="VD: Phí kiểm dịch, phí lưu kho…" value={h.tenPhiKhac} onChange={e => set('tenPhiKhac')(e.target.value)} /></Field>
-              <Field label="Làm tròn giá đến"><NumInput disabled={dis} value={h.lamTron} onChange={set('lamTron')} /></Field>
+              <Field label="Làm tròn giá đến"><Select disabled={dis} options={LAM_TRON.map(v => [String(v), v === 1 ? '1 đ (không làm tròn)' : v.toLocaleString('vi-VN') + ' đ'] as [string, string])} value={String(lamTronOf(h.lamTron))} onChange={v => setH(x => ({ ...x, lamTron: Number(v) }))} /></Field>
               {h.cheDoXuat === 'cao' && <Field label="% TNDN trên phần chênh"><NumInput disabled={dis} value={h.tndnPct} onChange={set('tndnPct')} /></Field>}
               <Field label="Ghi chú trên báo giá" className="col-span-2 md:col-span-4 xl:col-span-6"><Input disabled={dis} value={note} onChange={e => setNote(e.target.value)} /></Field>
             </div>
