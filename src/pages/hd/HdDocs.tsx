@@ -28,7 +28,7 @@ function InfoModal({ invs, onClose, onOk }: { invs: DocInv[]; onClose: () => voi
   const miss = invs.filter(thieu); const keyOf = (v: DocInv) => v.buyer?.id || 'mst:' + (v.tax_code || v.id);
   const uniq = Array.from(new Map(miss.map(v => [keyOf(v), v])).values());
   const [f, setF] = useState<Record<string, { dai_dien: string; chuc_vu: string }>>(() => Object.fromEntries(uniq.map(v => [keyOf(v), { dai_dien: v.buyer?.dai_dien || '', chuc_vu: v.buyer?.chuc_vu || '' }])));
-  const [save, setSave] = useState(true); const { busy, run } = useAction();
+  const a = useApp(); const [save, setSave] = useState(() => a.isAdmin || a.has('ke_toan') || !!a.settings.accounting?.pn_mo); const { busy, run } = useAction();
   const go = (fill: boolean) => run(async () => {
     if (fill && save) for (const v of uniq) { const x = f[keyOf(v)]; if (v.buyer?.id && (x.dai_dien.trim() || x.chuc_vu.trim())) await db.rpc('out_buyer_doc_info', { p_id: v.buyer.id, p: { dai_dien: x.dai_dien, chuc_vu: x.chuc_vu } }).catch(e => toast.err(e)); }
     onOk(invs.map(v => { const x = fill ? f[keyOf(v)] : null; return x ? { ...v, buyer: { ...(v.buyer || {}), dai_dien: x.dai_dien.trim() || v.buyer?.dai_dien, chuc_vu: x.chuc_vu.trim() || v.buyer?.chuc_vu } } : v; }));
