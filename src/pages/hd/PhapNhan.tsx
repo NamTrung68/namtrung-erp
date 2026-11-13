@@ -17,18 +17,20 @@ export const mstOk = (s: string) => /^(\d{10}|\d{10}-\d{3}|\d{12})$/.test(String
 const emailOk = (s: string) => !s.trim() || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s.trim());
 const lc = (s: any) => String(s || '').trim().toLowerCase();
 
-const FLAGS: [string, string, string][] = [
-  ['', 'Tất cả', 'ink'], ['chua_gan', 'Username chưa có khách ERP', 'amber'], ['mst_sai', 'MST sai dạng', 'red'], ['thieu_dc', 'Thiếu địa chỉ', 'amber'],
-  ['trung_mst', 'Cùng MST khác tên', 'red'], ['khong_md', 'Khách chưa có ★ mặc định', 'amber'],
-  ['co_hdnt', 'Đã ký HĐ nguyên tắc', 'ink'], ['thieu_dd', 'Thiếu người đại diện', 'amber'], ['thieu_nhan', 'Thiếu SĐT / địa chỉ nhận chuyển phát', 'amber'],
-  // Bản 46: so với HĐ đã ký (cùng MST + tên + địa chỉ)
-  ['da_xuat', '✓ Đã xuất HĐ — đúng thông tin', 'green'], ['lech_xuat', 'MST đã xuất HĐ với tên / địa chỉ khác', 'red'], ['chua_xuat', 'Chưa xuất HĐ lần nào', 'ink'],
+// Bản 47: lọc chính = pháp nhân đã chứng thực (HĐ nguyên tắc / đã xuất HĐ); lọc phụ = dữ liệu cần sửa
+const MAIN: [string, string, string, string][] = [
+  ['', 'Tất cả', 'ink', ''], ['hdnt', '✓ Đã ký HĐ nguyên tắc', 'green', 'Có mã HĐ nguyên tắc'], ['da_xuat', '✓ Đã từng xuất HĐ', 'green', 'MST đã có HĐ đã ký'],
+  ['chua_xuat', 'Chưa xuất HĐ', 'ink', 'MST chưa có HĐ đã ký nào'],
+];
+const FIX: [string, string][] = [
+  ['lech_ky', 'Tên / địa chỉ khác HĐ đã ký'], ['mst_sai', 'MST sai dạng'], ['trung_mst', 'Cùng MST khác tên'], ['thieu_dc', 'Thiếu địa chỉ'],
+  ['chua_gan', 'Username chưa có khách ERP'], ['khong_md', 'Khách chưa có ★'], ['thieu_dd', 'Thiếu người đại diện'], ['thieu_nhan', 'Thiếu SĐT / địa chỉ nhận chuyển phát'],
 ];
 
 interface Row { id: string; customer_id: string | null; username: string | null; own_username: string | null; name: string; tax_code: string; address: string | null; email: string | null; note: string | null;
   is_default: boolean; kh_name: string | null; kh_code: string | null; sale_id: string | null; mst_sai: boolean; thieu_dc: boolean; trung_mst: boolean; khong_md: boolean; so_phieu: number; updated_at: string | null;
   dai_dien: string | null; chuc_vu: string | null; dia_chi_giao: string | null; ma_hdnt: string | null; ngay_hdnt: string | null; nguoi_nhan: string | null; sdt_nhan: string | null;
-  da_xuat?: number; xuat_cuoi?: string | null; ky_mst?: number }
+  hdnt?: boolean; da_xuat?: number; khop_ky?: number; xuat_cuoi?: string | null }
 type Draft = { username: string; name: string; tax_code: string; address: string; email: string; note: string; dai_dien: string; chuc_vu: string; dia_chi_giao: string; ma_hdnt: string; ngay_hdnt: string; nguoi_nhan: string; sdt_nhan: string };
 const toDraft = (r: Partial<Row>): Draft => ({ username: r.username || '', name: r.name || '', tax_code: r.tax_code || '', address: r.address || '', email: r.email || '', note: r.note || '',
   dai_dien: r.dai_dien || '', chuc_vu: r.chuc_vu || '', dia_chi_giao: r.dia_chi_giao || '', ma_hdnt: r.ma_hdnt || '', ngay_hdnt: r.ngay_hdnt || '', nguoi_nhan: r.nguoi_nhan || '', sdt_nhan: r.sdt_nhan || '' });
@@ -93,10 +95,13 @@ export default function PhapNhan() {
     <Button variant="primary" onClick={() => setAdding({ ...EMPTY })}>+ Thêm pháp nhân</Button></div>}>
     {!acc && <p className="mb-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-900">Bạn đang xem <b>pháp nhân của khách mình phụ trách</b>. Sửa tên / MST / địa chỉ / email / người đại diện cho chuẩn rồi bấm Lưu — bấm <b>🔍</b> cạnh MST để lấy thông tin đăng ký thuế. Mã HĐ nguyên tắc do kế toán điền.</p>}
     <p className="mb-3 text-sm text-ink-600">Mỗi <b>username</b> khách có thể có nhiều pháp nhân nhận HĐ; <b>★</b> là pháp nhân tự điền khi sale lập phiếu. Sửa thẳng trên ô rồi bấm <b>Lưu</b>. Đổi username = chuyển pháp nhân sang khách khác (ERP tự gắn theo username). Muốn sửa hàng loạt: <b>Xuất Excel</b> → sửa → <b>Nạp Excel</b> (cùng username + MST thì cập nhật, không tạo trùng).</p>
-    <div className="mb-3 flex flex-wrap gap-2">{FLAGS.map(([k, l, c]) => { const n = k ? counts[k] : counts.tat_ca;
-      return <button key={k} onClick={() => setFlag(k)} className={cx('rounded-xl border px-3 py-1.5 text-left text-xs', flag === k ? 'border-brand-500 bg-brand-50' : 'border-ink-200 bg-white hover:border-brand-300')}>
-        <div className={cx('text-lg font-bold', k && n ? (c === 'red' ? 'text-red-600' : c === 'green' ? 'text-emerald-600' : c === 'amber' ? 'text-amber-600' : 'text-ink-900') : 'text-ink-900')}>{n ?? '…'}</div><div className="text-ink-600">{l}</div></button>; })}
-      {counts.khach !== undefined && <div className="self-center text-xs text-ink-500">{counts.khach} khách / username</div>}</div>
+    <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">{MAIN.map(([k, l, c, sub]) => { const n = k ? counts[k] : counts.tat_ca;
+      return <button key={k} onClick={() => setFlag(k)} className={cx('rounded-xl border px-3 py-2 text-left', flag === k ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-200' : 'border-ink-200 bg-white hover:border-brand-300')}>
+        <div className={cx('text-2xl font-bold', c === 'green' ? 'text-emerald-600' : 'text-ink-900')}>{n ?? '…'}</div><div className="text-sm font-semibold text-ink-800">{l}</div>
+        <div className="text-[11px] text-ink-500">{k ? sub : counts.khach !== undefined ? `${counts.khach} khách / username` : ''}</div></button>; })}</div>
+    <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs"><span className="font-semibold text-ink-500">Cần sửa:</span>
+      {FIX.map(([k, l]) => { const n = Number(counts[k] || 0); return <button key={k} onClick={() => setFlag(flag === k ? '' : k)} disabled={!n && flag !== k}
+        className={cx('rounded-full border px-2.5 py-0.5 font-semibold disabled:opacity-40', flag === k ? 'border-red-500 bg-red-50 text-red-700' : n ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-ink-200 bg-white text-ink-500')}>{l} · {counts[k] ?? '…'}</button>; })}</div>
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <Input className="max-w-sm" placeholder="Tìm tên, MST, username, địa chỉ, khách…" value={q} onChange={e => setQ(e.target.value)} />
       <Select className="w-52" placeholder="Tất cả sale" options={[['', 'Tất cả sale'], ...sales.map(s => [s, a.personName(s)] as [string, string])]} value={sale} onChange={setSale} />
@@ -145,8 +150,9 @@ export default function PhapNhan() {
             <div className="flex flex-wrap gap-1 text-[11px] lg:col-start-2 lg:col-end-8">
               {r.trung_mst && <Badge color="red">Cùng MST {r.tax_code} có tên khác — chuẩn hóa</Badge>}
               {r.mst_sai && <Badge color="red">MST sai dạng</Badge>}{r.khong_md && <Badge color="amber">Khách chưa có ★</Badge>}
-              {Number(r.da_xuat) > 0 ? <Badge color="green">✓ Đã xuất {r.da_xuat} HĐ đúng thông tin{r.xuat_cuoi ? ` · gần nhất ${fmtDate(r.xuat_cuoi)}` : ''}</Badge>
-                : Number(r.ky_mst) > 0 ? <Badge color="red">⚠ MST này đã xuất HĐ với tên / địa chỉ khác — kiểm tra lại</Badge> : null}
+              {r.hdnt && <Badge color="green">✓ HĐ nguyên tắc {r.ma_hdnt}</Badge>}
+              {Number(r.da_xuat) > 0 && <Badge color="green">✓ Đã xuất {r.da_xuat} HĐ{r.xuat_cuoi ? ` · gần nhất ${fmtDate(r.xuat_cuoi)}` : ''}</Badge>}
+              {Number(r.da_xuat) > 0 && !Number(r.khop_ky) && <Badge color="red">⚠ Tên / địa chỉ khác HĐ đã ký — kiểm tra</Badge>}
               {r.so_phieu > 0 && <span className="text-ink-500">đã dùng {r.so_phieu} phiếu</span>}
               {r.note && <span className="text-ink-400">· {r.note}</span>}
               {r.updated_at && <span className="text-ink-400">· sửa {new Date(r.updated_at).toLocaleString('vi-VN')}</span>}</div>

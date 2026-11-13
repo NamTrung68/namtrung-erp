@@ -23,7 +23,7 @@ select pg_temp.as_user('kt@nt.vn'); set role authenticated;
 do $$ declare r jsonb; begin
   r := public.out_pn_check(array['00000000-0000-0000-0045-0000000000a2', '00000000-0000-0000-0045-0000000000a3', '00000000-0000-0000-0045-0000000000a4', '00000000-0000-0000-0045-0000000000a5']::uuid[]);
   perform pg_temp.check(r->'00000000-0000-0000-0045-0000000000a2'->>'st' = 'khop', 'khác hoa thường / khoảng trắng → vẫn khớp');
-  perform pg_temp.check(r->'00000000-0000-0000-0045-0000000000a2'->'last'->>'so_hd' = '101', 'khớp: trả số HĐ đã ký');
+  perform pg_temp.check(r->'00000000-0000-0000-0045-0000000000a2'->'src'->>'so' = '101', 'khớp: trả số HĐ đã ký');
   perform pg_temp.check(r->'00000000-0000-0000-0045-0000000000a3'->>'st' = 'lech', 'đổi địa chỉ → lệch');
   perform pg_temp.check(r->'00000000-0000-0000-0045-0000000000a3'->'diff' = '["dia_chi"]', 'lệch đúng trường địa chỉ');
   perform pg_temp.check(r->'00000000-0000-0000-0045-0000000000a4'->>'st' = 'moi', 'MST chưa từng xuất → mới');
@@ -32,7 +32,7 @@ do $$ declare r jsonb; begin
   r := public.out_pn_check(array['00000000-0000-0000-0045-0000000000a1']::uuid[]);
   perform pg_temp.check(r->'00000000-0000-0000-0045-0000000000a1'->>'st' = 'moi', 'không so với chính nó');
 end $$;
-select pg_temp.check((public.out_buyers_page('{"flag":"da_xuat"}')->'counts') ? 'lech_xuat', 'out_buyers_page có đếm đã xuất / lệch');
+select pg_temp.check((public.out_buyers_page('{"flag":"da_xuat"}')->'counts') ? 'lech_ky', 'out_buyers_page có đếm đã xuất / lệch');
 reset role;
 -- sale khác nhóm không xem được
 select pg_temp.as_user('hr@nt.vn'); set role authenticated;
