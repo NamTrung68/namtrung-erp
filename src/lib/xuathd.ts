@@ -34,7 +34,9 @@ export function parseSoXuat(rows: any[][]): { rows: SoRow[]; legacy: LegacyGroup
     stt: find(h => h === 'STT'), ma: find(h => h === 'MA HANG'), ten: find(h => h.startsWith('TEN HANG')), dvt: find(h => h.startsWith('DON VI TINH') || h === 'DVT'),
     ts: find(h => h.startsWith('THUE SUAT')), sln: find(h => h.startsWith('SO LUONG NHAP')), dgn: find(h => h.startsWith('DON GIA NHAP')),
     sohd: find(h => h.startsWith('SO HOA DON')), kh: find(h => h.startsWith('KY HIEU')), ngay: find(h => h.startsWith('NGAY NHAP')), ncc: find(h => h.includes('NHA CUNG CAP')),
-    id: find(h => h === 'ID' || h.startsWith('ID ') || h.startsWith('ID\n') || /^ID\b/.test(h)), nvkd: find(h => h === 'NVKD' || h.startsWith('NVKD')), user: find(h => h === 'USER' || h.startsWith('USERNAME')),
+    // bản 51: file HĐ tồn — "Mã đơn hàng", "Tên sale" / "Sale"
+    id: find(h => h === 'ID' || h.startsWith('ID ') || h.startsWith('ID\n') || /^ID\b/.test(h) || h.startsWith('MA DON')),
+    nvkd: find(h => h === 'NVKD' || h.startsWith('NVKD') || h === 'SALE' || h.startsWith('TEN SALE') || h.startsWith('NHAN VIEN KINH DOANH')), user: find(h => h === 'USER' || h.startsWith('USERNAME')),
     slx: -1, dgx: -1, sohdx: -1, ngayx: -1, info: find(h => h.startsWith('THONG TIN BAO XUAT')), tt: find(h => h.startsWith('TRANG THAI')), kdky: find(h => h.startsWith('KD XAC NHAN')), gc: -1,
   };
   c.slx = find(h => h.startsWith('SO LUONG XUAT')); c.dgx = find(h => h.startsWith('DON GIA XUAT'), Math.max(0, c.slx));

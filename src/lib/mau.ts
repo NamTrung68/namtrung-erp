@@ -28,12 +28,19 @@ export const TPL_HD: any[][] = [
   [2478, 'HH00056-2080-2026', 'Túi xách bỉm sữa (túi mẹ và bé), vải polyester, mới 100%', 'Cái', 0.08, 110, 94232, 10365520, 829241.6, 2080, 'C26TYT', '30/10/2026', 'ALPHATIC'],
 ];
 
-export type MauKind = 'apt' | 'xe' | 'hd' | 'buyers' | 'orders';
+export type MauKind = 'apt' | 'xe' | 'hd' | 'buyers' | 'orders' | 'ton';
+/** Bản 51: HĐ tồn = cột HĐ chính thức APT + Mã đơn hàng, Username, Tên sale */
+export const TPL_HD_TON: any[][] = [
+  [...TPL_HD[0], 'Mã đơn hàng', 'Username', 'Tên sale'],
+  [...TPL_HD[1], 'MD2638', 'manhhuynh', 'Lê Thị Minh Khơi'],
+  [...TPL_HD[2], 'MD2638', '', 'Lê Thị Minh Khơi'],
+];
 export const MAU: Record<MauKind, { name: string; file: string; rows: any[][]; sheet: string; note: string; extra?: { sheet: string; rows: any[][] }[] }> = {
   apt: { name: 'Nháp HĐ APT', file: 'Mau_1_Nhap_HD_APT', rows: TPL_APT, sheet: 'Nhap APT', note: 'Cột bắt buộc: STT, MÃ KHAI BÁO, Tên hàng, Lượng, Đơn giá bán' },
   xe: { name: 'File xe hệ thống', file: 'Mau_2_File_xe_he_thong', rows: TPL_XE, sheet: 'Khai bao', note: 'Cột bắt buộc: ID ĐƠN, USERNAME KHÁCH, SALE, MÃ KHAI BÁO, Tên KHAI BÁO, SỐ LƯỢNG, DVT, GIÁ TRÊN TỜ KHAI' },
   hd: { name: 'HĐ chính thức APT', file: 'Mau_3_HD_chinh_thuc_APT', rows: TPL_HD, sheet: 'HD APT', note: 'Cột bắt buộc: Mã hàng (HH…-số HĐ-năm), Tên hàng hoá, Số lượng nhập, Đơn giá nhập, Số hóa đơn' },
   buyers: { name: 'Pháp nhân nhận HĐ', file: 'Mau_4_Phap_nhan_nhan_HD', rows: TPL_BUYERS, sheet: 'Thong tin KH', note: '18 cột như file Xuất Excel (sheet Hướng dẫn). Ô trống = giữ nguyên, "-" = xóa trắng', extra: [{ sheet: 'Huong dan', rows: TPL_BUYERS_GUIDE }] },
+  ton: { name: 'HĐ tồn', file: 'Mau_6_HD_ton', rows: TPL_HD_TON, sheet: 'HD ton', note: 'Cột HĐ chính thức APT + Mã đơn hàng, Username, Tên sale. Không có sale → không nạp; giá xuất = đơn giá nhập × 1,03' },
   orders: { name: 'Đơn hàng', file: 'Mau_5_Don_hang', rows: TPL_ORDERS, sheet: 'Don hang', note: 'Cột: Mã đơn hàng, Username, Sale, Tên hàng, Số lượng, Đơn giá xuất' },
 };
 export const downloadMau = (k: MauKind) => writeXlsx(MAU[k].file, MAU[k].rows, MAU[k].sheet, true, { extra: MAU[k].extra, fmt: k === 'buyers' ? { 0: 'plain', 17: 'plain' } : undefined });
