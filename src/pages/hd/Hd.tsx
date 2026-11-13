@@ -16,6 +16,7 @@ import { BIEN_CAM, BIEN_DUYET, ImportSo, InvoiceDetail, InvoiceEditor, LechModal
 import { BulkInvoices } from '../out/Bulk';
 import { UploadHdPdf } from '../out/HdFiles';
 import { ImportHd } from './ImportHd';
+import { ImportTon } from './ImportTon';
 import { exportHdChinhThuc, listHdVao } from '../../lib/hdExport';
 import { Chips, Modal } from '../../components/ui';
 import { MisaRun, MisaTag } from '../out/MisaRun';
@@ -263,7 +264,7 @@ export function HdKeToan() {
   const a = useApp(); const acc = a.isAdmin || a.has('ke_toan'); const { busy, run } = useAction();
   const [rev, setRev] = useState(0); const reload = () => setRev(x => x + 1);
   const { query } = useRoute();
-  const [imp, setImp] = useState<'' | 'xe' | 'hd' | 'ds' | 'xls'>(''); const [pdf, setPdf] = useState(false); const [open, setOpen] = useState<string | null>(query.inv || null); const [lechT, setLechT] = useState<any>(null);
+  const [imp, setImp] = useState<'' | 'xe' | 'hd' | 'ds' | 'xls' | 'ton'>(''); const [pdf, setPdf] = useState(false); const [open, setOpen] = useState<string | null>(query.inv || null); const [lechT, setLechT] = useState<any>(null);
   React.useEffect(() => { if (query.inv) setOpen(query.inv); }, [query.inv]);
   const close = () => { setOpen(null); if (location.hash.includes('inv=')) go('/hd/kt'); };
   const { data: st } = useLoad(() => db.rpc<any>('out_items_stats', { p_mode: 'acc' }), [rev]);
@@ -319,8 +320,8 @@ export function HdKeToan() {
       <Stat label="Chờ ký" value={(ky.data || []).length} tone={(ky.data || []).length ? 'amber' : undefined} /></div>
 
     <Block n="1" title="Xe & HĐ APT" sub="Chu kỳ 1: nạp nháp APT + file xe → hệ thống ghép, tính biên. Chu kỳ 2: nạp HĐ chính thức APT → ghép về nháp, đối chiếu từng dòng."
-      actions={<><Button variant="primary" onClick={() => setImp('xe')}>⇪ ① Nạp nháp APT + file xe</Button><Button variant="dark" onClick={() => setImp('hd')}>⇪ ② Nạp HĐ chính thức APT</Button><Button onClick={() => setImp('xls')}>⬇ Excel HĐ chính thức · VAT dự kiến</Button><Button onClick={() => setImp('ds')}>⇪ Đơn hàng · pháp nhân</Button></>}>
-      <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 bg-ink-50/60 px-4 py-2 text-xs text-ink-600">File mẫu: <MauBtn k="xe" /><MauBtn k="apt" /><MauBtn k="hd" /><MauBtn k="buyers" /><MauBtn k="orders" />
+      actions={<><Button variant="primary" onClick={() => setImp('xe')}>⇪ ① Nạp nháp APT + file xe</Button><Button variant="dark" onClick={() => setImp('hd')}>⇪ ② Nạp HĐ chính thức APT</Button><Button onClick={() => setImp('ton')}>⇪ Nạp HĐ tồn</Button><Button onClick={() => setImp('xls')}>⬇ Excel HĐ chính thức · VAT dự kiến</Button><Button onClick={() => setImp('ds')}>⇪ Đơn hàng · pháp nhân</Button></>}>
+      <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 bg-ink-50/60 px-4 py-2 text-xs text-ink-600">File mẫu: <MauBtn k="xe" /><MauBtn k="apt" /><MauBtn k="hd" /><MauBtn k="ton" /><MauBtn k="buyers" /><MauBtn k="orders" />
         <span className="text-ink-400">Đọc theo tiêu đề cột — thêm / đổi thứ tự cột vẫn được.</span></div>
       {(trucks || []).length > 0 && <div className="flex flex-wrap gap-2 border-b border-ink-100 px-4 py-2 text-xs">Xe gần đây: {(trucks || []).map(t => { const n = (blk || []).filter(l => l.truck_id === t.id && l.status === 'blocked').length;
         return <button key={t.id} onClick={() => go('/acc?truck=' + t.id)} className="rounded-lg border border-ink-200 px-2 py-1 hover:border-brand-400"><b>{t.name}</b>{t.is_test ? ' (thử)' : ''} · {t.stats?.apt ?? 0} dòng · khớp mã {t.stats?.khop_ma ?? '—'} · theo đơn {t.stats?.ghep_don ?? '—'}{n ? <span className="ml-1 font-semibold text-red-600">· {n} chờ sale</span> : ''}</button>; })}</div>}
@@ -362,6 +363,7 @@ export function HdKeToan() {
     </Block>
 
     {imp === 'xe' && <ImportTruck onClose={() => setImp('')} onDone={id => { setImp(''); go('/acc?truck=' + id); }} />}
+    {imp === 'ton' && <ImportTon onClose={() => setImp('')} onDone={() => { setImp(''); reload(); }} />}
     {imp === 'hd' && <ImportHd onClose={() => setImp('')} onDone={() => { setImp(''); reload(); }} />}
     {imp === 'xls' && <ExportHdModal onClose={() => setImp('')} />}
     {imp === 'ds' && <ImportSo onClose={() => setImp('')} onDone={() => { setImp(''); reload(); }} />}

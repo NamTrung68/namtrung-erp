@@ -19,7 +19,7 @@ const lc = (s: any) => String(s || '').trim().toLowerCase();
 
 // Bản 47: lọc chính = pháp nhân đã chứng thực (HĐ nguyên tắc / đã xuất HĐ); lọc phụ = dữ liệu cần sửa
 const MAIN: [string, string, string, string][] = [
-  ['', 'Tất cả', 'ink', ''], ['hdnt', '✓ Đã ký HĐ nguyên tắc', 'green', 'Có mã HĐ nguyên tắc'], ['da_xuat', '✓ Đã từng xuất HĐ', 'green', 'MST đã có HĐ đã ký'],
+  ['', 'Tất cả', 'ink', ''], ['hdnt', '✓ Đã ký HĐ nguyên tắc', 'green', 'Có mã HĐ nguyên tắc'], ['chua_hdnt', 'Chưa có HĐ nguyên tắc', 'amber', 'Chưa có mã HĐ nguyên tắc'], ['da_xuat', '✓ Đã từng xuất HĐ', 'green', 'MST đã có HĐ đã ký'],
   ['chua_xuat', 'Chưa xuất HĐ', 'ink', 'MST chưa có HĐ đã ký nào'],
 ];
 const FIX: [string, string][] = [
@@ -109,9 +109,9 @@ export default function PhapNhan() {
         : <>🔒 <b>Đang khóa</b> — chỉ Kế toán / Admin sửa pháp nhân.{canToggle ? '' : ' Thông tin sai hoặc thiếu: báo kế toán sửa.'}</>}</div>}
     {!acc && <p className="mb-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-900">Bạn đang xem <b>pháp nhân của khách mình phụ trách</b>. Sửa tên / MST / địa chỉ / email / người đại diện cho chuẩn rồi bấm Lưu — bấm <b>🔍</b> cạnh MST để lấy thông tin đăng ký thuế. Mã HĐ nguyên tắc do kế toán điền.</p>}
     <p className="mb-3 text-sm text-ink-600">Mỗi <b>username</b> khách có thể có nhiều pháp nhân nhận HĐ; <b>★</b> là pháp nhân tự điền khi sale lập phiếu. Sửa thẳng trên ô rồi bấm <b>Lưu</b>. Đổi username = chuyển pháp nhân sang khách khác (ERP tự gắn theo username). Muốn sửa hàng loạt: <b>Xuất Excel</b> → sửa → <b>Nạp Excel</b> (cùng username + MST thì cập nhật, không tạo trùng).</p>
-    <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">{MAIN.map(([k, l, c, sub]) => { const n = k ? counts[k] : counts.tat_ca;
+    <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">{MAIN.map(([k, l, c, sub]) => { const n = k ? counts[k] : counts.tat_ca;
       return <button key={k} onClick={() => setFlag(k)} className={cx('rounded-xl border px-3 py-2 text-left', flag === k ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-200' : 'border-ink-200 bg-white hover:border-brand-300')}>
-        <div className={cx('text-2xl font-bold', c === 'green' ? 'text-emerald-600' : 'text-ink-900')}>{n ?? '…'}</div><div className="text-sm font-semibold text-ink-800">{l}</div>
+        <div className={cx('text-2xl font-bold', c === 'green' ? 'text-emerald-600' : c === 'amber' ? 'text-amber-600' : 'text-ink-900')}>{n ?? '…'}</div><div className="text-sm font-semibold text-ink-800">{l}</div>
         <div className="text-[11px] text-ink-500">{k ? sub : counts.khach !== undefined ? `${counts.khach} khách / username` : ''}</div></button>; })}</div>
     <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs"><span className="font-semibold text-ink-500">Cần sửa:</span>
       {FIX.map(([k, l]) => { const n = Number(counts[k] || 0); return <button key={k} onClick={() => setFlag(flag === k ? '' : k)} disabled={!n && flag !== k}
