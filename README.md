@@ -266,3 +266,10 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Pháp nhân nhận HĐ: lọc chính **Đã ký HĐ nguyên tắc / Đã từng xuất HĐ / Chưa xuất HĐ**; lọc phụ "Cần sửa".
 - Dọn dữ liệu 1 lần: thêm pháp nhân từ HĐ đã ký còn thiếu; xóa pháp nhân không đủ (username + HĐNT) mà MST chưa từng xuất HĐ — sao lưu ở `app.out_buyers_bak_v47`.
 - Nâng cấp: `supabase/migrations/0055_v47.sql`. Kiểm thử: `supabase/tests/99z_v47.sql`.
+
+## Bản 48 — Công tắc Mở / Khóa cập nhật Pháp nhân nhận HĐ (13/11/2026)
+
+- Pháp nhân nhận HĐ → nút **🔓 Mở cho Sale / CSKH cập nhật** / **🔒 Khóa cập nhật** (chỉ Kế toán / Admin). Thanh trạng thái báo đang mở hay khóa.
+- **Mở**: Sale / CSKH / TN / TP thêm, sửa pháp nhân của khách mình phụ trách (mã HĐ nguyên tắc vẫn chỉ kế toán). Mở thì ERP báo Sale / CSKH.
+- **Khóa**: chỉ Kế toán / Admin thêm, sửa, xóa, đặt ★; Sale / CSKH chỉ xem, vẫn chọn được pháp nhân khi lập phiếu. Chặn ở máy chủ (`app.pn_guard` trong `out_buyer_save` / `out_buyer_delete` / `out_buyer_doc_info` / `out_buyer_set_default`), ghi nhật ký PN_MO / PN_KHOA.
+- Nâng cấp: `supabase/migrations/0056_v48.sql` (đặt sẵn trạng thái mở). Kiểm thử: `supabase/tests/99za_v48.sql`.

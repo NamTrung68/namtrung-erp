@@ -44,6 +44,17 @@ export default function PhapNhan() {
   useEffect(() => { const t = setTimeout(() => setQq(q), 300); return () => clearTimeout(t); }, [q]);
   const { data, loading, error } = useLoad(() => db.rpc<any>('out_buyers_page', { p: { q: qq, flag, sale, limit: 2000 } }), [qq, flag, sale, rev]);
   const rows: Row[] = data?.rows || []; const counts = data?.counts || {}; const acc: boolean = data ? !!data.acc : a.isAdmin || a.has('ke_toan');
+  // Bản 48: công tắc Mở / Khóa — khóa thì chỉ Kế toán / Admin sửa; Sale / CSKH chỉ xem
+  const canToggle = a.isAdmin || a.has('ke_toan');
+  const { data: accCfg, reload: rlCfg } = useLoad(() => db.from<any[]>('settings').select('value').eq('key', 'accounting').then(x => x?.[0]?.value || {}), [rev]);
+  const pnMo = !!(accCfg as any)?.pn_mo; const canEdit = canToggle || pnMo;
+  const toggleMo = () => run(async () => {
+    const open = !pnMo;
+    if (!(await ask({ title: open ? 'Mở cho Sale / CSKH cập nhật pháp nhân?' : 'Khóa cập nhật pháp nhân?', ok: open ? '🔓 Mở' : '🔒 Khóa',
+      message: open ? 'Sale / CSKH / Trưởng nhóm được thêm, sửa pháp nhân của khách mình phụ trách (mã HĐ nguyên tắc vẫn chỉ kế toán). ERP gửi thông báo cho Sale / CSKH.'
+        : 'Chỉ Kế toán / Admin được thêm, sửa, xóa pháp nhân. Sale / CSKH vẫn xem được, chọn được pháp nhân khi lập phiếu.' }))) return;
+    await db.rpc('out_pn_lock_set', { p_open: open }); rlCfg(); toast.ok(open ? 'Đã mở — đã báo Sale / CSKH' : 'Đã khóa — chỉ Kế toán / Admin sửa');
+  });
   const [edit, setEdit] = useState<Record<string, Draft>>({}); const [adding, setAdding] = useState<Draft | null>(null); const [imp, setImp] = useState(false);
   // Bản 41: hồ sơ scan HĐ nguyên tắc / mua bán theo pháp nhân
   const [hoSo, setHoSo] = useState<Row | null>(null);
@@ -92,7 +103,11 @@ export default function PhapNhan() {
   const inp = 'h-8 w-full rounded-lg border bg-white px-2 text-xs focus:border-brand-500 focus:outline-none';
   return <Layout title="Pháp nhân nhận HĐ" actions={<div className="flex flex-wrap gap-2">
     {acc && <Button onClick={() => setImp(true)}>⇪ Nạp Excel</Button>}<Button loading={busy} onClick={exportX}>⬇ Xuất Excel</Button>
-    <Button variant="primary" onClick={() => setAdding({ ...EMPTY })}>+ Thêm pháp nhân</Button></div>}>
+    {canToggle && <Button variant={pnMo ? 'danger' : undefined} loading={busy} onClick={toggleMo}>{pnMo ? '🔒 Khóa cập nhật' : '🔓 Mở cho Sale / CSKH cập nhật'}</Button>}
+    {canEdit && <Button variant="primary" onClick={() => setAdding({ ...EMPTY })}>+ Thêm pháp nhân</Button>}</div>}>
+    {accCfg && <div className={cx('mb-3 rounded-xl border px-3 py-2 text-sm', pnMo ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-ink-200 bg-ink-50 text-ink-700')}>
+      {pnMo ? <>🔓 <b>Đang mở</b> — Sale / CSKH bổ sung, sửa pháp nhân của khách mình phụ trách (tên, MST, địa chỉ, email, người đại diện, người nhận chuyển phát). Mã HĐ nguyên tắc do kế toán điền.{canToggle ? ' Xong thì bấm 🔒 Khóa cập nhật.' : ''}</>
+        : <>🔒 <b>Đang khóa</b> — chỉ Kế toán / Admin sửa pháp nhân.{canToggle ? '' : ' Thông tin sai hoặc thiếu: báo kế toán sửa.'}</>}</div>}
     {!acc && <p className="mb-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-900">Bạn đang xem <b>pháp nhân của khách mình phụ trách</b>. Sửa tên / MST / địa chỉ / email / người đại diện cho chuẩn rồi bấm Lưu — bấm <b>🔍</b> cạnh MST để lấy thông tin đăng ký thuế. Mã HĐ nguyên tắc do kế toán điền.</p>}
     <p className="mb-3 text-sm text-ink-600">Mỗi <b>username</b> khách có thể có nhiều pháp nhân nhận HĐ; <b>★</b> là pháp nhân tự điền khi sale lập phiếu. Sửa thẳng trên ô rồi bấm <b>Lưu</b>. Đổi username = chuyển pháp nhân sang khách khác (ERP tự gắn theo username). Muốn sửa hàng loạt: <b>Xuất Excel</b> → sửa → <b>Nạp Excel</b> (cùng username + MST thì cập nhật, không tạo trùng).</p>
     <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">{MAIN.map(([k, l, c, sub]) => { const n = k ? counts[k] : counts.tat_ca;
@@ -105,7 +120,7 @@ export default function PhapNhan() {
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <Input className="max-w-sm" placeholder="Tìm tên, MST, username, địa chỉ, khách…" value={q} onChange={e => setQ(e.target.value)} />
       <Select className="w-52" placeholder="Tất cả sale" options={[['', 'Tất cả sale'], ...sales.map(s => [s, a.personName(s)] as [string, string])]} value={sale} onChange={setSale} />
-      {rows.length > 0 && <label className="flex items-center gap-1.5 text-xs text-ink-600"><input type="checkbox" className="h-4 w-4" checked={pageAll} onChange={e => togglePage(e.target.checked)} />Chọn cả trang</label>}
+      {rows.length > 0 && canEdit && <label className="flex items-center gap-1.5 text-xs text-ink-600"><input type="checkbox" className="h-4 w-4" checked={pageAll} onChange={e => togglePage(e.target.checked)} />Chọn cả trang</label>}
       {picked.length > 0 && <><Button variant="danger" loading={busy} onClick={delMany}>🗑 Xóa {picked.length} pháp nhân đã chọn</Button>
         <button className="text-xs text-ink-500 underline" onClick={() => setPick({})}>Bỏ chọn</button></>}
       {nDirty > 0 && <Button variant="primary" loading={busy} onClick={saveAll}>Lưu {nDirty} dòng đã sửa</Button>}
@@ -119,33 +134,33 @@ export default function PhapNhan() {
           {h.customer_id ? <span className="text-ink-700">{h.kh_code ? h.kh_code + ' · ' : ''}{h.kh_name}</span> : <Badge color="amber">Username chưa có khách ERP</Badge>}
           {h.sale_id && <span className="text-xs text-ink-500">Sale: {a.personName(h.sale_id)}</span>}
           <span className="text-xs text-ink-400">{g.length} pháp nhân</span>
-          <button className="ml-auto text-xs font-semibold text-brand-700 underline" onClick={() => setAdding({ ...EMPTY, username: h.username || '' })}>+ thêm pháp nhân cho {h.username || 'khách này'}</button></div>
+          {canEdit && <button className="ml-auto text-xs font-semibold text-brand-700 underline" onClick={() => setAdding({ ...EMPTY, username: h.username || '' })}>+ thêm pháp nhân cho {h.username || 'khách này'}</button>}</div>
         <div className="divide-y divide-ink-100">{g.map(r => { const d = dirty(r); const m = val(r, 'tax_code');
           return <div key={r.id} className={cx('grid gap-1.5 px-3 py-2 lg:grid-cols-[52px_2.2fr_1fr_2.4fr_1.4fr_1fr_auto]', d && 'bg-brand-50/50', pick[r.id] && 'bg-red-50/60')}>
-            <div className="flex items-center gap-1.5"><input type="checkbox" className="h-4 w-4" title="Chọn để xóa nhanh" checked={!!pick[r.id]} onChange={e => setPick(x => ({ ...x, [r.id]: e.target.checked }))} />
-            <button title={r.is_default ? 'Pháp nhân mặc định' : 'Đặt làm mặc định'} disabled={!r.customer_id || r.is_default || busy} onClick={() => setDefault(r)}
+            <div className="flex items-center gap-1.5"><input type="checkbox" disabled={!canEdit} className="h-4 w-4 disabled:opacity-30" title="Chọn để xóa nhanh" checked={!!pick[r.id]} onChange={e => setPick(x => ({ ...x, [r.id]: e.target.checked }))} />
+            <button title={r.is_default ? 'Pháp nhân mặc định' : 'Đặt làm mặc định'} disabled={!canEdit || !r.customer_id || r.is_default || busy} onClick={() => setDefault(r)}
               className={cx('self-center text-lg leading-none', r.is_default ? 'text-amber-500' : 'text-ink-300 hover:text-amber-400 disabled:hover:text-ink-300')}>{r.is_default ? '★' : '☆'}</button></div>
-            <input className={cx(inp, !val(r, 'name').trim() ? 'border-red-300' : 'border-ink-200', 'font-semibold')} value={val(r, 'name')} onChange={e => setE(r, 'name', e.target.value)} title="Tên đơn vị" />
-            <div className="flex items-center gap-0.5"><input className={cx(inp, 'font-mono font-semibold', mstOk(m) ? 'border-ink-200' : 'border-red-300 bg-red-50')} value={m} onChange={e => setE(r, 'tax_code', e.target.value.replace(/\s/g, ''))} title="MST / CCCD" />
-              {mstOk(m) && <><CopyBtn text={m} title="Copy MST" /><MstChip btnOnly mst={m} onApply={v => setEdit(x => ({ ...x, [r.id]: { ...(x[r.id] || toDraft(r)), name: v.name, address: v.address } }))} /></>}</div>
-            <input className={cx(inp, val(r, 'address').trim() ? 'border-ink-200' : 'border-amber-300')} value={val(r, 'address')} onChange={e => setE(r, 'address', e.target.value)} placeholder="Địa chỉ" />
-            <input className={cx(inp, emailOk(val(r, 'email')) ? 'border-ink-200' : 'border-red-300')} value={val(r, 'email')} onChange={e => setE(r, 'email', e.target.value)} placeholder="Email nhận HĐ" />
-            <input className={cx(inp, 'border-ink-200')} value={val(r, 'username')} onChange={e => setE(r, 'username', e.target.value)} placeholder="Username" title="Đổi username = chuyển sang khách khác" />
-            <div className="flex items-center gap-1.5">{d ? <Button size="sm" variant="primary" loading={busy} onClick={() => save(r)}>Lưu</Button> : null}
+            <input readOnly={!canEdit} className={cx(inp, !val(r, 'name').trim() ? 'border-red-300' : 'border-ink-200', 'font-semibold')} value={val(r, 'name')} onChange={e => setE(r, 'name', e.target.value)} title="Tên đơn vị" />
+            <div className="flex items-center gap-0.5"><input readOnly={!canEdit} className={cx(inp, 'font-mono font-semibold', mstOk(m) ? 'border-ink-200' : 'border-red-300 bg-red-50')} value={m} onChange={e => setE(r, 'tax_code', e.target.value.replace(/\s/g, ''))} title="MST / CCCD" />
+              {mstOk(m) && <><CopyBtn text={m} title="Copy MST" />{canEdit && <MstChip btnOnly mst={m} onApply={v => setEdit(x => ({ ...x, [r.id]: { ...(x[r.id] || toDraft(r)), name: v.name, address: v.address } }))} />}</>}</div>
+            <input readOnly={!canEdit} className={cx(inp, val(r, 'address').trim() ? 'border-ink-200' : 'border-amber-300')} value={val(r, 'address')} onChange={e => setE(r, 'address', e.target.value)} placeholder="Địa chỉ" />
+            <input readOnly={!canEdit} className={cx(inp, emailOk(val(r, 'email')) ? 'border-ink-200' : 'border-red-300')} value={val(r, 'email')} onChange={e => setE(r, 'email', e.target.value)} placeholder="Email nhận HĐ" />
+            <input readOnly={!canEdit} className={cx(inp, 'border-ink-200')} value={val(r, 'username')} onChange={e => setE(r, 'username', e.target.value)} placeholder="Username" title="Đổi username = chuyển sang khách khác" />
+            <div className="flex items-center gap-1.5">{d && canEdit ? <Button size="sm" variant="primary" loading={busy} onClick={() => save(r)}>Lưu</Button> : null}
               <button className={cx('rounded-md border px-1.5 py-0.5 text-[11px] font-semibold', r.ma_hdnt && !hs?.[r.id]?.hdnt ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-ink-200 text-ink-600 hover:border-brand-400')}
                 title={r.ma_hdnt ? (hs?.[r.id]?.hdnt ? 'Đã có bản scan HĐ nguyên tắc' : 'Đã ký HĐ nguyên tắc nhưng chưa có bản scan') : 'Hồ sơ scan của pháp nhân'} onClick={() => setHoSo(r)}>🗂 {hs?.[r.id]?.tong || 0}</button>
-              <button className="px-1 text-xs text-red-600 hover:underline" onClick={() => del(r)}>Xóa</button></div>
+              {canEdit && <button className="px-1 text-xs text-red-600 hover:underline" onClick={() => del(r)}>Xóa</button>}</div>
             {/* Bản 35: thông tin in bộ chứng từ (ĐĐH, biên bản giao nhận, HĐ mua bán / HĐ nguyên tắc) */}
             <div className="grid gap-1.5 sm:grid-cols-2 lg:col-start-2 lg:col-end-8 lg:grid-cols-[1.3fr_1fr_1.7fr_130px_2fr]">
-              <input className={cx(inp, 'border-ink-200')} value={val(r, 'dai_dien')} onChange={e => setE(r, 'dai_dien', e.target.value)} placeholder="Người đại diện (VD: Ông Trương Văn Dương)" title="Người đại diện — in trên hợp đồng / biên bản" />
-              <input className={cx(inp, 'border-ink-200')} value={val(r, 'chuc_vu')} onChange={e => setE(r, 'chuc_vu', e.target.value)} placeholder="Chức vụ" title="Chức vụ người đại diện" />
+              <input readOnly={!canEdit} className={cx(inp, 'border-ink-200')} value={val(r, 'dai_dien')} onChange={e => setE(r, 'dai_dien', e.target.value)} placeholder="Người đại diện (VD: Ông Trương Văn Dương)" title="Người đại diện — in trên hợp đồng / biên bản" />
+              <input readOnly={!canEdit} className={cx(inp, 'border-ink-200')} value={val(r, 'chuc_vu')} onChange={e => setE(r, 'chuc_vu', e.target.value)} placeholder="Chức vụ" title="Chức vụ người đại diện" />
               <input disabled={!acc} className={cx(inp, 'border-ink-200 disabled:bg-ink-50 disabled:text-ink-600', val(r, 'ma_hdnt') && 'border-emerald-300 bg-emerald-50/50 font-semibold')} value={val(r, 'ma_hdnt')} onChange={e => setE(r, 'ma_hdnt', e.target.value)} placeholder={acc ? 'Mã HĐ nguyên tắc (nếu đã ký)' : 'Chưa có HĐ nguyên tắc'} title={acc ? 'Có mã HĐNT → bộ chứng từ dùng HĐNT, không cần HĐ mua bán từng HĐ' : 'Mã HĐ nguyên tắc do kế toán điền'} />
               <input disabled={!acc} type="date" className={cx(inp, 'border-ink-200 disabled:bg-ink-50')} value={val(r, 'ngay_hdnt')} onChange={e => setE(r, 'ngay_hdnt', e.target.value)} title="Ngày ký HĐ nguyên tắc (trống: đọc từ mã dạng 28/08/2026/...)" />
-              <input className={cx(inp, 'border-ink-200')} value={val(r, 'dia_chi_giao')} onChange={e => setE(r, 'dia_chi_giao', e.target.value)} placeholder="Địa chỉ giao hàng (trống = địa chỉ ĐKKD)" /></div>
+              <input readOnly={!canEdit} className={cx(inp, 'border-ink-200')} value={val(r, 'dia_chi_giao')} onChange={e => setE(r, 'dia_chi_giao', e.target.value)} placeholder="Địa chỉ giao hàng (trống = địa chỉ ĐKKD)" /></div>
             {/* Bản 40: người nhận bản cứng HĐ đã ký (chuyển phát) — tự điền khi tạo phiếu chuyển phát */}
             <div className="grid gap-1.5 sm:grid-cols-2 lg:col-start-2 lg:col-end-8 lg:grid-cols-[1.3fr_1fr_3.7fr]">
-              <input className={cx(inp, 'border-ink-200')} value={val(r, 'nguoi_nhan')} onChange={e => setE(r, 'nguoi_nhan', e.target.value)} placeholder="📦 Người nhận chuyển phát HĐ" title="Người nhận bản cứng HĐ đã ký" />
-              <input className={cx(inp, val(r, 'sdt_nhan').trim() && !sdtOk(val(r, 'sdt_nhan')) ? 'border-red-300' : 'border-ink-200')} inputMode="tel" value={val(r, 'sdt_nhan')} onChange={e => setE(r, 'sdt_nhan', e.target.value)} placeholder="📞 SĐT nhận" />
+              <input readOnly={!canEdit} className={cx(inp, 'border-ink-200')} value={val(r, 'nguoi_nhan')} onChange={e => setE(r, 'nguoi_nhan', e.target.value)} placeholder="📦 Người nhận chuyển phát HĐ" title="Người nhận bản cứng HĐ đã ký" />
+              <input readOnly={!canEdit} className={cx(inp, val(r, 'sdt_nhan').trim() && !sdtOk(val(r, 'sdt_nhan')) ? 'border-red-300' : 'border-ink-200')} inputMode="tel" value={val(r, 'sdt_nhan')} onChange={e => setE(r, 'sdt_nhan', e.target.value)} placeholder="📞 SĐT nhận" />
               <span className="self-center text-[11px] text-ink-400">Địa chỉ nhận = địa chỉ giao hàng (trống thì dùng địa chỉ ĐKKD).</span></div>
             <div className="flex flex-wrap gap-1 text-[11px] lg:col-start-2 lg:col-end-8">
               {r.trung_mst && <Badge color="red">Cùng MST {r.tax_code} có tên khác — chuẩn hóa</Badge>}

@@ -425,7 +425,7 @@ export function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; 
           {(buyers || []).map(x => <button key={x.id} className="rounded-lg border border-brand-200 bg-brand-50 px-2 py-1 font-semibold text-brand-800 hover:border-brand-500"
             onClick={() => setB((y: any) => ({ ...y, name: x.name, mst: x.tax_code || '', addr: x.address || '', email: x.email || '' }))}>{x.is_default ? '★ ' : ''}{x.name}{x.tax_code ? ' · ' + x.tax_code : ''}</button>)}</div>
         {!!(buyers || []).length && <div className="mt-1 text-[11px] text-ink-500">Pháp nhân nhận HĐ của khách (★ = mặc định) — bấm để điền.
-          {(() => { const cur = (buyers || []).find((x: any) => x.name === b.name && (x.tax_code || '') === (b.mst || '')); return cur && !cur.is_default ? <button className="ml-1 font-semibold text-brand-700 underline" onClick={() => setDefault(cur.id)}>Đặt “{cur.name}” làm mặc định</button> : null; })()}</div>}</div>
+          {(() => { const cur = (buyers || []).find((x: any) => x.name === b.name && (x.tax_code || '') === (b.mst || '')); return cur && !cur.is_default && (a.isAdmin || a.has('ke_toan') || !!a.settings.accounting?.pn_mo) ? <button className="ml-1 font-semibold text-brand-700 underline" onClick={() => setDefault(cur.id)}>Đặt “{cur.name}” làm mặc định</button> : null; })()}</div>}</div>
       <div className="grid grid-cols-2 gap-2">
         <Field className="col-span-2" label="Tên đơn vị mua hàng *"><Input value={b.name} onChange={e => setF('name', e.target.value)} placeholder="HỘ KINH DOANH … / CÔNG TY …" /></Field>
         <Field label="Mã số thuế" hint={look}><Input value={b.mst} onChange={e => setF('mst', e.target.value.replace(/\s/g, ''))} onBlur={() => lookup()} /></Field>
