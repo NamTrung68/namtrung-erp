@@ -101,7 +101,8 @@ export function misaMap(invs: any[], personName: (id: string) => string): any[][
   return [['Số thứ tự hóa đơn', 'Mã phiếu ERP', 'Sale', 'Đơn vị mua hàng', 'Mã số thuế', 'Số dòng'], ...invs.map((v, i) => [i + 1, v.code, personName(v.sale_id), v.buyer_name, v.tax_code || '', (v.out_invoice_lines || []).length])];
 }
 /** Danh sách đơn vị nhận HĐ (sheet "Thong tin KH": MST, Tên đơn vị, Địa chỉ, mail nhận HĐ) */
-export interface BuyerRow { tax_code: string; name: string; address: string; email: string; username: string; dai_dien?: string; chuc_vu?: string; dia_chi_giao?: string; ma_hdnt?: string; ngay_hdnt?: string }
+export interface BuyerRow { tax_code: string; name: string; address: string; email: string; username: string; dai_dien?: string; chuc_vu?: string; dia_chi_giao?: string; ma_hdnt?: string; ngay_hdnt?: string;
+  mac_dinh?: string; note?: string; nguoi_nhan?: string; sdt_nhan?: string }
 /** Ngày dd/mm/yyyy, yyyy-mm-dd hoặc số ngày Excel → yyyy-mm-dd; trống → ''; sai → '?' */
 const dmy = (v: any): string => { if (v === null || v === undefined || v === '') return ''; if (typeof v === 'number') return new Date(Math.round((v - 25569) * 864e5)).toISOString().slice(0, 10);
   if (v instanceof Date) return v.toISOString().slice(0, 10); const s = String(v).trim(); let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
@@ -116,10 +117,14 @@ export function parseBuyers(sheets: { sheet: string; rows: any[][] }[]): BuyerRo
     const idd = f(h => h.startsWith('NGUOI DAI DIEN') || h === 'DAI DIEN'), icv = f(h => h.startsWith('CHUC VU')), igh = f(h => h.startsWith('DIA CHI GIAO')),
       inm = f(h => h.startsWith('MA HD NGUYEN TAC') || h.startsWith('MA HOP DONG NGUYEN TAC') || h === 'MA HDNT'), ind = f(h => h.startsWith('NGAY HD NGUYEN TAC') || h.startsWith('NGAY HOP DONG NGUYEN TAC') || h === 'NGAY HDNT');
     const ia2 = ia === igh ? f(h => h.startsWith('DIA CHI') && !h.startsWith('DIA CHI GIAO')) : ia;
+    // Bản 49: thêm Mặc định, Ghi chú, Người nhận chuyển phát, SĐT nhận
+    const imd = f(h => h.startsWith('MAC DINH')), ino = f(h => h.startsWith('GHI CHU')), inn = f(h => h.startsWith('NGUOI NHAN')), isd = f(h => h.startsWith('SDT NHAN') || h.startsWith('SO DIEN THOAI NHAN'));
     const o = (r: any[], i: number) => (i >= 0 ? clean(r?.[i]) : '');
+    const d = (r: any[]) => { const v = ind >= 0 ? r?.[ind] : ''; return clean(v) === '-' ? '-' : dmy(v); };
     return sh.rows.slice(hi + 1).map(r => ({ tax_code: intStr(r?.[im]).replace(/\s/g, ''), name: clean(r?.[it]), address: o(r, ia2), email: ie >= 0 ? clean(r?.[ie]) : '', username: iu >= 0 ? clean(r?.[iu]) : '',
-      dai_dien: o(r, idd), chuc_vu: o(r, icv), dia_chi_giao: o(r, igh), ma_hdnt: o(r, inm), ngay_hdnt: ind >= 0 ? dmy(r?.[ind]) : '' }))
-      .filter(x => x.name && x.tax_code);
+      dai_dien: o(r, idd), chuc_vu: o(r, icv), dia_chi_giao: o(r, igh), ma_hdnt: o(r, inm), ngay_hdnt: d(r),
+      mac_dinh: o(r, imd), note: o(r, ino), nguoi_nhan: o(r, inn), sdt_nhan: isd >= 0 ? intStr(r?.[isd]) : '' }))
+      .filter(x => x.tax_code);
   }
   throw new Error('Không thấy sheet có cột "MST" và "Tên đơn vị"');
 }
@@ -153,6 +158,31 @@ export const TPL_ORDERS: any[][] = [['Mã đơn hàng', 'Username', 'Sale', 'Tê
   ['MD2638', 'manhhuynh', 'Lê Thị Minh Khơi', 'Hộp đựng giấy vải polyester', 400, 54000],
   ['MD2638', 'manhhuynh', 'Lê Thị Minh Khơi', 'Cốc sứ trắng men 350ml', 120, 80000],
   ['MD2474', 'lethucphuong11', 'Vũ Thị Thúy', '', '', '']];
-export const TPL_BUYERS: any[][] = [['MST', 'Tên đơn vị', 'Địa chỉ', 'Mail nhận HĐ', 'Username'],
-  ['0700871570', 'CÔNG TY TNHH ABC', 'Số 1 Đê La Thành, Hà Nội', 'ketoan@abc.vn', 'abc_shop'],
-  ['001190005010', 'Nguyễn Văn A (cá nhân, MST = số CCCD)', 'Hà Nội', 'a@gmail.com', 'nguyenvana']];
+/** Bản 49: 18 cột — trùng thứ tự file "Xuất Excel" ở trang Pháp nhân để xuất → sửa → nạp lại. Cột (chỉ xem) bỏ qua khi nạp */
+export const BUYER_HEAD = ['MST', 'Tên đơn vị', 'Địa chỉ', 'Mail nhận HĐ', 'Username', 'Mặc định', 'Khách ERP (chỉ xem)', 'Sale (chỉ xem)', 'Số phiếu đã dùng (chỉ xem)', 'Cảnh báo (chỉ xem)', 'Ghi chú',
+  'Người đại diện', 'Chức vụ', 'Địa chỉ giao hàng', 'Mã HĐ nguyên tắc', 'Ngày HĐ nguyên tắc', 'Người nhận chuyển phát', 'SĐT nhận'];
+export const TPL_BUYERS: any[][] = [BUYER_HEAD,
+  ['0700871570', 'CÔNG TY TNHH ABC', 'Số 1 Đê La Thành, Phường Ô Chợ Dừa, Thành phố Hà Nội', 'ketoan@abc.vn', 'abc_shop', '★', '', '', '', '', '',
+    'Ông Nguyễn Văn B', 'Giám đốc', 'Kho số 5 ngõ 10 Láng Hạ, Hà Nội', '28/08/2026/HĐNTHH/NT/ABC', '28/08/2026', 'Chị Lan (kế toán)', '0912345678'],
+  ['001190005010', 'Nguyễn Văn A (cá nhân, MST = số CCCD 12 số)', 'Hà Nội', 'a@gmail.com', 'nguyenvana', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+  ['0109999999', '', '', '-', 'abc_shop', '', '', '', '', '', 'VD dòng cập nhật: tên trống = giữ tên cũ; "-" ở Mail = xóa email', '', '', '', '', '', '', '0987654321']];
+export const TPL_BUYERS_GUIDE: any[][] = [['Cột', 'Bắt buộc', 'Ô để trống thì', 'Ghi chú'],
+  ['MST', 'Có', '—', '10 số, 10-3 số, hoặc CCCD 12 số. Cùng Username + MST = cập nhật dòng đã có, không tạo trùng'],
+  ['Tên đơn vị', 'Có với pháp nhân mới', 'Giữ tên cũ (pháp nhân đã có)', 'Đúng như đăng ký thuế'],
+  ['Địa chỉ', '', 'Giữ cũ / để trống', 'Địa chỉ đăng ký kinh doanh — in trên HĐ'],
+  ['Mail nhận HĐ', '', 'Giữ cũ / để trống', 'Chỉ 1 email'],
+  ['Username', 'Nên có', 'Giữ cũ', 'Username khách trên hệ thống — ERP tự gắn khách ERP + sale'],
+  ['Mặc định', '', 'Không đổi ★ (khách chưa có ★ thì tự thành ★)', 'Gõ ★ hoặc x hoặc 1 = pháp nhân mặc định khi sale lập phiếu'],
+  ['Khách ERP / Sale / Số phiếu / Cảnh báo', '', 'Bỏ qua', 'Cột chỉ xem — ERP tự tính, sửa cũng không có tác dụng'],
+  ['Ghi chú', '', 'Giữ cũ / "Nạp Excel"', ''],
+  ['Người đại diện', '', 'Giữ cũ / để trống', 'In trên biên bản giao nhận, HĐ mua bán'],
+  ['Chức vụ', '', 'Giữ cũ / để trống', ''],
+  ['Địa chỉ giao hàng', '', 'Giữ cũ / trống = dùng địa chỉ ĐKKD', 'Cũng là địa chỉ nhận chuyển phát HĐ'],
+  ['Mã HĐ nguyên tắc', '', 'Giữ cũ / để trống', 'VD 28/08/2026/HĐNTHH/NT/ABC — ngày tự đọc từ mã nếu không điền ngày'],
+  ['Ngày HĐ nguyên tắc', '', 'Giữ cũ / tự đọc từ mã', 'dd/mm/yyyy'],
+  ['Người nhận chuyển phát', '', 'Giữ cũ / để trống', 'Người nhận bản cứng HĐ đã ký'],
+  ['SĐT nhận', '', 'Giữ cũ / để trống', '0xxxxxxxxx'],
+  ['', '', '', ''],
+  ['QUY TẮC', '', '', 'Ô TRỐNG = giữ nguyên giá trị đang có trên ERP (không xóa). Muốn XÓA TRẮNG một ô: gõ dấu gạch ngang "-".'],
+  ['', '', '', 'Cách nhanh nhất: trang Pháp nhân → Xuất Excel → sửa trên file đó → Nạp Excel (đúng 18 cột này).'],
+  ['', '', '', 'Nạp xong ERP cho xem trước: Mới / Cập nhật (ghi rõ đổi gì) / Không đổi / Lỗi — bấm Lưu mới ghi.']];

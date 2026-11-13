@@ -7,7 +7,7 @@ import { db } from '../../lib/sb';
 import { useApp } from '../../state';
 import { BuyerHoSo } from './HoSo';
 import { readXlsx, writeXlsx } from '../../lib/xlsx';
-import { parseBuyers } from '../../lib/xuathd';
+import { BUYER_HEAD, TPL_BUYERS_GUIDE, parseBuyers } from '../../lib/xuathd';
 import { downloadMau } from '../../lib/mau';
 import { fmtDate, today } from '../../lib/format';
 import { CopyBtn, MstCheck, MstChip } from '../../components/MstCheck';
@@ -91,12 +91,11 @@ export default function PhapNhan() {
   const addSave = () => run(async () => { const id = await db.rpc<string>('out_buyer_save', { p_id: null, p: { ...adding, is_default: false } }); if (adding && id) await saveShip(id, adding); setAdding(null); reload(); }, 'Đã thêm pháp nhân');
   const exportX = () => run(async () => {
     const all: Row[] = (await db.rpc<any>('out_buyers_page', { p: { limit: 20000 } })).rows || [];
-    const head = ['MST', 'Tên đơn vị', 'Địa chỉ', 'Mail nhận HĐ', 'Username', 'Mặc định', 'Khách ERP', 'Sale', 'Số phiếu đã dùng', 'Cảnh báo', 'Ghi chú',
-      'Người đại diện', 'Chức vụ', 'Địa chỉ giao hàng', 'Mã HĐ nguyên tắc', 'Ngày HĐ nguyên tắc', 'Người nhận chuyển phát', 'SĐT nhận'];
+    const head = BUYER_HEAD;
     await writeXlsx('Phap_nhan_nhan_HD_' + today(), [head, ...all.map(r => [r.tax_code || '', r.name, r.address || '', r.email || '', r.username || '', r.is_default ? '★' : '', [r.kh_code, r.kh_name].filter(Boolean).join(' · '),
-      a.personName(r.sale_id || ''), r.so_phieu, [!r.customer_id && 'username chưa có khách', r.mst_sai && 'MST sai dạng', r.thieu_dc && 'thiếu địa chỉ', r.trung_mst && 'cùng MST khác tên'].filter(Boolean).join('; '), r.note || '',
+      a.personName(r.sale_id || ''), r.so_phieu, [!r.customer_id && 'username chưa có khách', r.mst_sai && 'MST sai dạng', r.thieu_dc && 'thiếu địa chỉ', r.trung_mst && 'cùng MST khác tên', Number(r.da_xuat) > 0 && !Number(r.khop_ky) && 'tên / địa chỉ khác HĐ đã ký'].filter(Boolean).join('; '), r.note || '',
       r.dai_dien || '', r.chuc_vu || '', r.dia_chi_giao || '', r.ma_hdnt || '', r.ngay_hdnt ? r.ngay_hdnt.split('-').reverse().join('/') : '', r.nguoi_nhan || '', r.sdt_nhan || ''])],
-      'Thong tin KH', true, { fmt: { 0: 'plain', 14: 'plain', 17: 'plain' } });
+      'Thong tin KH', true, { fmt: { 0: 'plain', 14: 'plain', 17: 'plain' }, extra: [{ sheet: 'Huong dan', rows: TPL_BUYERS_GUIDE }] });
   }, 'Đã xuất Excel — sửa xong nạp lại ở nút “Nạp Excel”');
   const nDirty = rows.filter(dirty).length;
   const sales = useMemo(() => Array.from(new Set(rows.map(r => r.sale_id).filter(Boolean))) as string[], [rows]);
@@ -208,10 +207,17 @@ function ImportBuyers({ current, onClose, onDone }: { current: Row[]; onClose: (
       const seen = new Set<string>();
       setRes(list.map(x => { const key = lc(x.username) + '|' + x.tax_code.trim(); const dup = seen.has(key); seen.add(key);
         const old = base.find(r => lc(r.username) === lc(x.username) && (r.tax_code || '').trim() === x.tax_code.trim());
-        const errs = [!mstOk(x.tax_code) && 'MST sai dạng', !emailOk(x.email) && 'email sai', dup && 'trùng dòng trên trong file', x.ngay_hdnt === '?' && 'ngày HĐNT sai dạng (dd/mm/yyyy)'].filter(Boolean) as string[];
-        const ch = old ? [old.name.trim() !== x.name.trim() && `tên: ${old.name} → ${x.name}`, x.address && (old.address || '').trim() !== x.address.trim() && 'địa chỉ', x.email && (old.email || '').trim() !== x.email.trim() && 'email',
-          x.dai_dien && (old.dai_dien || '') !== x.dai_dien && 'người đại diện', x.chuc_vu && (old.chuc_vu || '') !== x.chuc_vu && 'chức vụ', x.dia_chi_giao && (old.dia_chi_giao || '') !== x.dia_chi_giao && 'địa chỉ giao',
-          x.ma_hdnt && (old.ma_hdnt || '') !== x.ma_hdnt && 'mã HĐNT', x.ngay_hdnt && (old.ngay_hdnt || '') !== x.ngay_hdnt && 'ngày HĐNT'].filter(Boolean) as string[] : [];
+        // Bản 49: ô trống = giữ cũ; "-" = xóa trắng
+        const sdtX = (x.sdt_nhan || '').trim();
+        const errs = [!mstOk(x.tax_code) && 'MST sai dạng', x.email !== '-' && !emailOk(x.email) && 'email sai', dup && 'trùng dòng trên trong file', x.ngay_hdnt === '?' && 'ngày HĐNT sai dạng (dd/mm/yyyy)',
+          !old && !x.name.trim() && 'pháp nhân mới — thiếu Tên đơn vị', sdtX && sdtX !== '-' && !sdtOk(sdtX) && 'SĐT nhận sai dạng'].filter(Boolean) as string[];
+        const cf = (lab: string, nv?: string, ov?: string | null) => { const n = (nv || '').trim(); if (!n) return false; if (n === '-') return ov ? `xóa ${lab}` : false; return n !== (ov || '').trim() && lab; };
+        const isMd = ['★', 'x', '1', 'có', 'co', 'true', 'yes'].includes((x.mac_dinh || '').trim().toLowerCase());
+        const ch = old ? [x.name.trim() && old.name.trim() !== x.name.trim() && `tên: ${old.name} → ${x.name}`, cf('địa chỉ', x.address, old.address), cf('email', x.email, old.email),
+          cf('người đại diện', x.dai_dien, old.dai_dien), cf('chức vụ', x.chuc_vu, old.chuc_vu), cf('địa chỉ giao', x.dia_chi_giao, old.dia_chi_giao),
+          cf('mã HĐNT', x.ma_hdnt, old.ma_hdnt), cf('ngày HĐNT', x.ngay_hdnt, old.ngay_hdnt), cf('ghi chú', x.note, old.note), cf('người nhận', x.nguoi_nhan, old.nguoi_nhan),
+          sdtX && sdtX !== '-' ? sdtX.replace(/\D/g, '').slice(-9) !== (old.sdt_nhan || '').replace(/\D/g, '').slice(-9) && 'SĐT nhận' : cf('SĐT nhận', sdtX, old.sdt_nhan),
+          isMd && !old.is_default && '★ mặc định'].filter(Boolean) as string[] : [];
         return { ...x, st: errs.length ? 'loi' : !old ? 'moi' : ch.length ? 'sua' : 'giu', errs, ch };
       })); } catch (e: any) { setErr(e.message || String(e)); } };
   const ok = (res || []).filter(x => x.st === 'moi' || x.st === 'sua');
@@ -219,7 +225,8 @@ function ImportBuyers({ current, onClose, onDone }: { current: Row[]; onClose: (
   const save = () => run(async () => { let moi = 0, sua = 0; const bad: any[] = [];
     for (let i = 0; i < ok.length; i += 300) { setStep(`Đang nạp ${Math.min(i + 300, ok.length)}/${ok.length}…`); const part = ok.slice(i, i + 300);
       const r = await db.rpc<any>('out_buyers_import_v2', { p_rows: part.map(x => ({ tax_code: x.tax_code, name: x.name, address: x.address, email: x.email, username: x.username,
-        dai_dien: x.dai_dien, chuc_vu: x.chuc_vu, dia_chi_giao: x.dia_chi_giao, ma_hdnt: x.ma_hdnt, ngay_hdnt: x.ngay_hdnt })) });
+        dai_dien: x.dai_dien, chuc_vu: x.chuc_vu, dia_chi_giao: x.dia_chi_giao, ma_hdnt: x.ma_hdnt, ngay_hdnt: x.ngay_hdnt,
+        mac_dinh: x.mac_dinh, note: x.note, nguoi_nhan: x.nguoi_nhan, sdt_nhan: x.sdt_nhan })) });
       moi += r.moi || 0; sua += r.sua || 0; (r.loi || []).forEach((e: any) => bad.push(e)); }
     setStep('');
     if (bad.length) { setLoi(bad); toast.err(`Đã lưu ${moi + sua}/${ok.length} (${moi} mới, ${sua} cập nhật) — ${bad.length} dòng bị bỏ qua, xem danh sách`); }
@@ -231,7 +238,7 @@ function ImportBuyers({ current, onClose, onDone }: { current: Row[]; onClose: (
     <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
       <label className="cursor-pointer rounded-xl border border-dashed border-ink-300 px-3 py-2 hover:border-brand-400"><input type="file" accept=".xlsx" className="hidden" onChange={e => e.target.files?.[0] && read(e.target.files[0])} />⇪ Chọn file .xlsx</label>
       <button className="text-xs font-semibold text-brand-700 underline" onClick={() => downloadMau('buyers')}>⬇ File mẫu</button>
-      <span className="text-xs text-ink-500">Cột: MST, Tên đơn vị, Địa chỉ, Mail nhận HĐ, Username (+ tùy chọn: Người đại diện, Chức vụ, Địa chỉ giao hàng, Mã HĐ nguyên tắc, Ngày HĐ nguyên tắc). Cùng username + MST = cập nhật; ô trống không xóa dữ liệu đang có.</span></div>
+      <span className="text-xs text-ink-500">Dùng <b>file mẫu</b> hoặc file <b>Xuất Excel</b> (18 cột, có sheet Hướng dẫn). <b>Ô trống = giữ nguyên</b> giá trị đang có; gõ <b>-</b> để xóa trắng ô đó. Cùng Username + MST = cập nhật, không tạo trùng. Cột "(chỉ xem)" bỏ qua.</span></div>
     {err && <div className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
     {loi && <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"><b>{loi.length} dòng chưa lưu được</b> (các dòng khác đã lưu) — sửa trên menu hoặc trong file rồi nạp lại:
       <div className="mt-1 max-h-40 overflow-auto">{loi.map((e, i) => <div key={i}>• {e.username || '—'} · {e.tax_code} · {e.name}: {e.error}</div>)}</div>
@@ -243,7 +250,7 @@ function ImportBuyers({ current, onClose, onDone }: { current: Row[]; onClose: (
         {['', 'Username', 'MST', 'Tên đơn vị', 'Địa chỉ', 'Email', 'Ghi chú'].map(h => <th key={h} className="px-2 py-1.5">{h}</th>)}</tr></thead>
         <tbody className="divide-y divide-ink-100">{res.map((x, i) => <tr key={i} className={x.st === 'loi' ? 'bg-red-50/60' : x.st === 'giu' ? 'text-ink-400' : ''}>
           <td className="px-2 py-1"><Badge color={ST[x.st][1]}>{ST[x.st][0]}</Badge></td><td className="px-2 py-1">{x.username || '—'}</td><td className="px-2 py-1 font-mono">{x.tax_code}</td>
-          <td className="px-2 py-1">{x.name}</td><td className="max-w-[260px] px-2 py-1">{x.address}</td><td className="px-2 py-1">{x.email}</td>
+          <td className="px-2 py-1">{x.name || <span className="text-ink-400">(giữ tên cũ)</span>}</td><td className="max-w-[260px] px-2 py-1">{x.address}</td><td className="px-2 py-1">{x.email}</td>
           <td className="px-2 py-1 text-red-700">{x.errs.join(', ')}<span className="text-brand-700">{x.ch.join(' · ')}</span></td></tr>)}</tbody></table></div></>}
   </Modal>;
 }
