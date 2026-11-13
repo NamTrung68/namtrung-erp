@@ -280,3 +280,8 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - **Ô trống = giữ nguyên** giá trị đang có (pháp nhân cũ) / dùng mặc định (pháp nhân mới: ghi chú "Nạp Excel", ngày HĐNT đọc từ mã, khách chưa có ★ thì tự thành ★). Gõ **"-"** để xóa trắng ô.
 - Tên đơn vị để trống được nếu cùng Username + MST đã có (giữ tên cũ). Kiểm MST, email, SĐT nhận trước khi lưu; xem trước ghi rõ đổi gì / xóa gì.
 - `writeXlsx` hỗ trợ thêm sheet phụ (`extra`). Nâng cấp: `supabase/migrations/0057_v49.sql`. Kiểm thử: `supabase/tests/99zb_v49.sql`.
+
+## Bản 50 — Lọc "Chưa có HĐ nguyên tắc" (13/11/2026)
+
+- Pháp nhân nhận HĐ: thêm ô lọc chính **Chưa có HĐ nguyên tắc** (cạnh Đã ký HĐ nguyên tắc). `out_buyers_page` thêm cờ / đếm `chua_hdnt`.
+- Nâng cấp: `supabase/migrations/0058_v50.sql`. Kiểm thử: trong `supabase/tests/99zb_v49.sql`.

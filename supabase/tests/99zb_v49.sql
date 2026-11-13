@@ -33,3 +33,9 @@ do $$ declare r jsonb; b public.out_buyers; begin
 end $$;
 reset role;
 select 'V49 TESTS PASSED' as result;
+-- bản 50: lọc chưa có HĐ nguyên tắc
+select pg_temp.as_user('kt@nt.vn'); set role authenticated;
+select pg_temp.check((select bool_and(not (x->>'hdnt')::boolean) and count(*) > 0 from jsonb_array_elements(public.out_buyers_page('{"flag":"chua_hdnt"}')->'rows') x), 'lọc chưa có HĐNT');
+select pg_temp.check((public.out_buyers_page('{}')->'counts'->>'chua_hdnt')::int + (public.out_buyers_page('{}')->'counts'->>'hdnt')::int = (public.out_buyers_page('{}')->'counts'->>'tat_ca')::int, 'đếm HĐNT + chưa HĐNT = tất cả');
+reset role;
+select 'V50 TESTS PASSED' as result;
