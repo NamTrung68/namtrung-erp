@@ -273,3 +273,10 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - **Mở**: Sale / CSKH / TN / TP thêm, sửa pháp nhân của khách mình phụ trách (mã HĐ nguyên tắc vẫn chỉ kế toán). Mở thì ERP báo Sale / CSKH.
 - **Khóa**: chỉ Kế toán / Admin thêm, sửa, xóa, đặt ★; Sale / CSKH chỉ xem, vẫn chọn được pháp nhân khi lập phiếu. Chặn ở máy chủ (`app.pn_guard` trong `out_buyer_save` / `out_buyer_delete` / `out_buyer_doc_info` / `out_buyer_set_default`), ghi nhật ký PN_MO / PN_KHOA.
 - Nâng cấp: `supabase/migrations/0056_v48.sql` (đặt sẵn trạng thái mở). Kiểm thử: `supabase/tests/99za_v48.sql`.
+
+## Bản 49 — Nạp Excel pháp nhân đủ 18 cột (13/11/2026)
+
+- File mẫu = đúng 18 cột của file **Xuất Excel** (thêm Mặc định ★, Ghi chú, Người nhận chuyển phát, SĐT nhận) + sheet **Huong dan**. Xuất → sửa → nạp lại được ngay.
+- **Ô trống = giữ nguyên** giá trị đang có (pháp nhân cũ) / dùng mặc định (pháp nhân mới: ghi chú "Nạp Excel", ngày HĐNT đọc từ mã, khách chưa có ★ thì tự thành ★). Gõ **"-"** để xóa trắng ô.
+- Tên đơn vị để trống được nếu cùng Username + MST đã có (giữ tên cũ). Kiểm MST, email, SĐT nhận trước khi lưu; xem trước ghi rõ đổi gì / xóa gì.
+- `writeXlsx` hỗ trợ thêm sheet phụ (`extra`). Nâng cấp: `supabase/migrations/0057_v49.sql`. Kiểm thử: `supabase/tests/99zb_v49.sql`.

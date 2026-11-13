@@ -1,6 +1,6 @@
 // File mẫu để nạp đúng cột (bản 24). Đọc theo TIÊU ĐỀ cột: thêm / bớt / đổi thứ tự cột khác vẫn được, chỉ cần giữ đúng tên các cột bắt buộc.
 import { writeXlsx } from './xlsx';
-import { TPL_BUYERS, TPL_ORDERS } from './xuathd';
+import { TPL_BUYERS, TPL_BUYERS_GUIDE, TPL_ORDERS } from './xuathd';
 
 /** Nháp hóa đơn APT gửi (Google Sheet / Excel). Bắt buộc: STT, MÃ KHAI BÁO, Tên hàng, Lượng, Đơn giá bán */
 export const TPL_APT: any[][] = [
@@ -29,11 +29,11 @@ export const TPL_HD: any[][] = [
 ];
 
 export type MauKind = 'apt' | 'xe' | 'hd' | 'buyers' | 'orders';
-export const MAU: Record<MauKind, { name: string; file: string; rows: any[][]; sheet: string; note: string }> = {
+export const MAU: Record<MauKind, { name: string; file: string; rows: any[][]; sheet: string; note: string; extra?: { sheet: string; rows: any[][] }[] }> = {
   apt: { name: 'Nháp HĐ APT', file: 'Mau_1_Nhap_HD_APT', rows: TPL_APT, sheet: 'Nhap APT', note: 'Cột bắt buộc: STT, MÃ KHAI BÁO, Tên hàng, Lượng, Đơn giá bán' },
   xe: { name: 'File xe hệ thống', file: 'Mau_2_File_xe_he_thong', rows: TPL_XE, sheet: 'Khai bao', note: 'Cột bắt buộc: ID ĐƠN, USERNAME KHÁCH, SALE, MÃ KHAI BÁO, Tên KHAI BÁO, SỐ LƯỢNG, DVT, GIÁ TRÊN TỜ KHAI' },
   hd: { name: 'HĐ chính thức APT', file: 'Mau_3_HD_chinh_thuc_APT', rows: TPL_HD, sheet: 'HD APT', note: 'Cột bắt buộc: Mã hàng (HH…-số HĐ-năm), Tên hàng hoá, Số lượng nhập, Đơn giá nhập, Số hóa đơn' },
-  buyers: { name: 'Pháp nhân nhận HĐ', file: 'Mau_4_Phap_nhan_nhan_HD', rows: TPL_BUYERS, sheet: 'Thong tin KH', note: 'Cột: MST (hoặc CCCD 12 số), Tên đơn vị, Địa chỉ, Mail nhận HĐ, Username (khớp khách)' },
+  buyers: { name: 'Pháp nhân nhận HĐ', file: 'Mau_4_Phap_nhan_nhan_HD', rows: TPL_BUYERS, sheet: 'Thong tin KH', note: '18 cột như file Xuất Excel (sheet Hướng dẫn). Ô trống = giữ nguyên, "-" = xóa trắng', extra: [{ sheet: 'Huong dan', rows: TPL_BUYERS_GUIDE }] },
   orders: { name: 'Đơn hàng', file: 'Mau_5_Don_hang', rows: TPL_ORDERS, sheet: 'Don hang', note: 'Cột: Mã đơn hàng, Username, Sale, Tên hàng, Số lượng, Đơn giá xuất' },
 };
-export const downloadMau = (k: MauKind) => writeXlsx(MAU[k].file, MAU[k].rows, MAU[k].sheet);
+export const downloadMau = (k: MauKind) => writeXlsx(MAU[k].file, MAU[k].rows, MAU[k].sheet, true, { extra: MAU[k].extra, fmt: k === 'buyers' ? { 0: 'plain', 17: 'plain' } : undefined });
