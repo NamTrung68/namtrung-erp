@@ -298,6 +298,14 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Lỗi: dòng HĐ tồn cố ý không ghép nháp APT nên bị bộ lọc "Chưa ghép nháp" bắt nhầm (hiện nút Ghép tay, đếm vào "Dòng HĐ chưa ghép nháp") dù đã đủ đơn / sale / khách.
 - Sửa: bộ lọc và số đếm `chua_ghep` (`out_items_page`, `out_items_stats`) bỏ qua dòng `match_src = 'ton'`. Nâng cấp: `supabase/migrations/0060_v51b.sql`.
 
+### Bản 53 — Nạp xe bằng 1 FILE TỔNG (nháp APT + file xe gộp sẵn)
+- Nạp xe (Bàn làm việc kế toán → ① hoặc Kế toán – Hóa đơn → Nạp xe mới) có thêm lựa chọn **1 file tổng**; lối 2 file cũ vẫn giữ. ERP nhớ lựa chọn lần trước.
+- Cột (đọc theo tiêu đề, thứ tự tùy ý): STT · Mã hàng APT (kiện) · Đơn hàng · **Sale** · Mã đơn (MD) · **Mã khai báo** · **Username khách** · Mã hàng HH · **Tên hàng** · **Lượng** · ĐVT · TS NK(%) · TS MT · **Đơn giá bán (APT)** · **Giá xuất khách** · Mã HS (TKN) · Số lượng hệ thống · Thuế NK Khaibao · Thuế VAT (%) · Thành tiền · Tiền VAT · Thành tiền thanh toán · NOTE (in đậm = bắt buộc). File mẫu "Mẫu File tổng xe".
+- Mỗi dòng đã ghép sẵn APT ↔ hệ thống, nên ERP bỏ bước tự ghép; mọi kiểm tra sau giữ nguyên: biên 2–4% / chặn / giá đề xuất, sale và username, hàng dệt may chờ hợp quy (theo Mã HS), xuất thẳng (NOTE hoặc ô MD xuất thẳng), Lanchi, thuế NK file xe ≠ APT, tờ khai nháp (nếu nạp kèm).
+- Kiểm riêng file tổng: **Số lượng hệ thống ≠ Lượng** → cảnh báo lệch SL · mã khai báo sai dạng / trùng · mã đơn khác tiền tố mã khai báo · Thành tiền ≠ Lượng × Đơn giá APT · tổng cột Thành tiền ≠ tổng các dòng · STT lặp.
+- Ô trống Sale / Username / Đơn hàng / Mã hàng APT = như dòng trên, **chỉ khi cùng mã đơn**. Dòng để trống STT và Đơn giá APT = hàng có trên hệ thống nhưng không lên xe (luồng E).
+- Mã nguồn: `parseTong`, `applyTongChecks` trong `src/lib/doisoat.ts`; `reconcile(..., pairs)` nhận cặp ghép sẵn. Kiểm thử: `tests/tong.test.ts`. Không đổi cơ sở dữ liệu.
+
 ## Bản 52 — Đề xuất giá gửi APT: lọc theo xe + 2 file Excel giá 3% (16/11/2026)
 
 - Đối soát xe của tôi → tab **Đề xuất giá gửi APT**: ô **🚚 Xe đang đối soát** (xe mới nhất đứng đầu, nhớ trong phiên). Danh sách, Copy tất cả, Xuất Excel cũ, Đã gửi APT tất cả đều chỉ áp cho xe đang chọn.

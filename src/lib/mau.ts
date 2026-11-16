@@ -28,7 +28,16 @@ export const TPL_HD: any[][] = [
   [2478, 'HH00056-2080-2026', 'Túi xách bỉm sữa (túi mẹ và bé), vải polyester, mới 100%', 'Cái', 0.08, 110, 94232, 10365520, 829241.6, 2080, 'C26TYT', '30/10/2026', 'ALPHATIC'],
 ];
 
-export type MauKind = 'apt' | 'xe' | 'hd' | 'buyers' | 'orders' | 'ton';
+export type MauKind = 'apt' | 'xe' | 'hd' | 'buyers' | 'orders' | 'ton' | 'tong';
+/** Bản 53: FILE TỔNG = nháp APT + file xe gộp sẵn (1 dòng = 1 dòng APT). Bắt buộc: STT, Sale, Mã khai báo, Username khách, Tên hàng, Lượng, Đơn giá bán (APT), Giá xuất khách.
+ *  Nên có: Mã HS (TKN) để nhận hàng chờ hợp quy, Số lượng hệ thống để so SL, NOTE (XUẤT THẲNG / giá APT sửa). Dòng trống STT + giá APT = hàng có trên hệ thống nhưng không lên xe. */
+export const TPL_TONG: any[][] = [
+  ['STT', 'Mã hàng APT (kiện)', 'Đơn hàng', 'Sale', 'Mã đơn (MD)', 'Mã khai báo', 'Username khách', 'Mã hàng HH', 'Tên hàng (mô tả chi tiết)', 'Lượng', 'ĐVT', 'TS NK(%)', 'TS MT',
+    'Đơn giá bán (APT)', 'Giá xuất khách', 'Mã HS (TKN)', 'Số lượng hệ thống', 'Thuế NK Khaibao', 'Thuế VAT (%)', 'Thành tiền', 'Tiền VAT', 'Thành tiền thanh toán', 'NOTE'],
+  [1, 'APT102348-22HN', 'DH5818', 'khoile', 'MD2415', 'MD2415-2', 'thuyvuvu', 'HH10015', 'Giá đỡ cắm hoa bằng nhựa, 2 đầu vuông, KT: (7.5*7.5*16)cm, mới 100%', 1500, 'Cái', 0, '', 1746, 1800, '39264000', 1500, 0, 0.08, 2619000, 209520, 2828520, ''],
+  [2, 'APT102348-22HN', 'DH5818', 'khoile', 'MD2415', 'MD2415-3', 'thuyvuvu', 'HH10016', 'Đồ trang trí cắm hoa (cốt cắm hoa) bằng nhựa, cao 31cm, mới 100%', 760, 'Cái', 0, '', 5820, 6000, '39264000', 760, 0, 0.08, 4423200, 353856, 4777056, ''],
+  [3, 'APT102430-1HN', 'DH5814', 'trungdv22', 'MD2411', 'MD2411-1', 'duongtra', 'HH10039', 'Túi xách bỉm sữa (túi mẹ và bé), vải polyester, mới 100%', 110, 'Cái', 0, '', 94232, 97000, '42029290', 110, 0, 0.08, 10365520, 829242, 11194762, ''],
+];
 /** Bản 51: HĐ tồn = cột HĐ chính thức APT + Mã đơn hàng, Username, Tên sale */
 export const TPL_HD_TON: any[][] = [
   [...TPL_HD[0], 'Mã đơn hàng', 'Username', 'Tên sale'],
@@ -41,6 +50,7 @@ export const MAU: Record<MauKind, { name: string; file: string; rows: any[][]; s
   hd: { name: 'HĐ chính thức APT', file: 'Mau_3_HD_chinh_thuc_APT', rows: TPL_HD, sheet: 'HD APT', note: 'Cột bắt buộc: Mã hàng (HH…-số HĐ-năm), Tên hàng hoá, Số lượng nhập, Đơn giá nhập, Số hóa đơn' },
   buyers: { name: 'Pháp nhân nhận HĐ', file: 'Mau_4_Phap_nhan_nhan_HD', rows: TPL_BUYERS, sheet: 'Thong tin KH', note: '18 cột như file Xuất Excel (sheet Hướng dẫn). Ô trống = giữ nguyên, "-" = xóa trắng', extra: [{ sheet: 'Huong dan', rows: TPL_BUYERS_GUIDE }] },
   ton: { name: 'HĐ tồn', file: 'Mau_6_HD_ton', rows: TPL_HD_TON, sheet: 'HD ton', note: 'Cột HĐ chính thức APT + Mã đơn hàng, Username, Tên sale. Không có sale → không nạp; giá xuất = đơn giá nhập × 1,03' },
+  tong: { name: 'File tổng xe (APT + xe)', file: 'Mau_0_File_tong_xe', rows: TPL_TONG, sheet: 'File tong', note: 'Bắt buộc: STT, Sale, Mã khai báo, Username khách, Tên hàng, Lượng, Đơn giá bán (APT), Giá xuất khách. Nên có: Mã HS (TKN), Số lượng hệ thống, NOTE' },
   orders: { name: 'Đơn hàng', file: 'Mau_5_Don_hang', rows: TPL_ORDERS, sheet: 'Don hang', note: 'Cột: Mã đơn hàng, Username, Sale, Tên hàng, Số lượng, Đơn giá xuất' },
 };
 export const downloadMau = (k: MauKind) => writeXlsx(MAU[k].file, MAU[k].rows, MAU[k].sheet, true, { extra: MAU[k].extra, fmt: k === 'buyers' ? { 0: 'plain', 17: 'plain' } : undefined });
