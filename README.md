@@ -293,3 +293,10 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - **Không có sale** hoặc tên sale không khớp ai trên ERP → không nạp. **Không có username** → vẫn nạp, sale điền sau (Sẵn sàng xuất → Điền đơn / khách). Mã hàng đã có → bỏ qua.
 - Xem trước từng dòng trước khi nạp. Dòng HĐ tồn (`match_src = 'ton'`) không ghép vào nháp APT / file xe.
 - Hàm `out_items_import_ton`; `app.out_item_match` / `app.out_item_price` bỏ qua dòng tồn. Nâng cấp: `supabase/migrations/0059_v51.sql`. Kiểm thử: `supabase/tests/99zc_v51.sql`.
+
+## Bản 52 — Đề xuất giá gửi APT: lọc theo xe + 2 file Excel giá 3% (16/11/2026)
+
+- Đối soát xe của tôi → tab **Đề xuất giá gửi APT**: ô **🚚 Xe đang đối soát** (xe mới nhất đứng đầu, nhớ trong phiên). Danh sách, Copy tất cả, Xuất Excel cũ, Đã gửi APT tất cả đều chỉ áp cho xe đang chọn.
+- **⬇ Excel toàn bộ dòng giá 3%**: mọi dòng của xe thuộc luồng A (qua Nam Trung) + B (chờ hợp quy), mọi trạng thái. Giá đề xuất APT xuất = giá khách ÷ (1 + biên mục tiêu, mặc định 3%), làm tròn đồng, số liền. Dòng thiếu giá khách vẫn liệt kê, cột giá trống + ghi chú. Không gồm luồng C (APT xuất thẳng), D (Lanchi).
+- **⬇ Excel Mã hàng + Giá đề xuất**: đúng 2 cột *Mã hàng APT · Giá đề xuất APT xuất*, cùng bộ dòng trên, bỏ dòng thiếu mã hàng / giá khách.
+- Chỉ sửa giao diện (`src/pages/acc/Mine.tsx`), không đổi database. Kiểm thử: `tests/e2e/v52.cjs`.

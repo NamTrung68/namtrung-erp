@@ -12,7 +12,7 @@ import { canFixPrice, ClaimForm, ReplyForm } from './forms';
 import { aptPriceMsg, INV_RESULT, InvResult } from '../../lib/doisoat';
 import { writeXlsx } from '../../lib/xlsx';
 
-const SEL = 'id,reply_sub,gia_nhap_goc,released_from,customer_id,ma_kh,claim_md,claim_gia,claimed_by,claimed_at,inv_qty,tt_khach,sl_tk,gia_von,bien_apt,apt_stt,truck_id,line_key,ma_dong,md,sale_id,sale_name,hh,dh,ten_apt,ten_ht,ten_tk,sl_apt,sl_ht,dvt_apt,dvt_ht,gia_khach,gia_nhap,gia_note,gia_de_xuat,gia_ap_dung,bien_nt,nk_ht,nk_tk,luong,status,issues,notes,phan_hoi,due_at,reply,reply_price,reply_note,replied_by,replied_at,approved_by,approved_at,approve_note,inv_no,inv_result,acc_trucks(name)';
+const SEL = 'id,reply_sub,gia_nhap_goc,released_from,customer_id,ma_kh,claim_md,claim_gia,claimed_by,claimed_at,inv_qty,tt_khach,sl_tk,gia_von,bien_apt,apt_stt,truck_id,line_key,ma_dong,md,sale_id,sale_name,hh,dh,ten_apt,ten_ht,ten_tk,sl_apt,sl_ht,dvt_apt,dvt_ht,gia_khach,gia_nhap,gia_note,gia_de_xuat,gia_ap_dung,bien_nt,nk_ht,nk_tk,luong,status,issues,notes,phan_hoi,due_at,reply,reply_price,reply_note,replied_by,replied_at,approved_by,approved_at,approve_note,inv_no,inv_result,acc_trucks(name,truck_date)';
 
 function LineCard({ l, children, onOpen }: { l: any; children?: React.ReactNode; onOpen: () => void }) {
   const a = useApp(); const cfg = useAccCfg(); const [dt, dc] = dueTxt(l.status === 'blocked' ? l.due_at : null);
@@ -36,13 +36,22 @@ export function AccMine() {
   const a = useApp(); const cfg = useAccCfg(); const [tab, setTab] = useState<MTab>(() => { const t = sessionStorage.getItem('nt_accmine') as MTab; return ['todo', 'all', 'price', 'free'].includes(t) ? t : 'todo'; });
   const [st, setSt] = useState(''); const [sel, setSel] = useState<any>(null); const [hd, setHd] = useState(''); const [q, setQ] = useState('');
   const go2 = (t: MTab) => { setTab(t); sessionStorage.setItem('nt_accmine', t); };
+  // Bản 52: lọc theo XE đang đối soát (tab Đề xuất giá gửi APT) — nhớ trong phiên
+  const [xe0, setXeS] = useState(() => sessionStorage.getItem('nt_accmine_xe') || '');
+  const setXe = (v: string) => { setXeS(v); sessionStorage.setItem('nt_accmine_xe', v); };
   const { data, loading, reload } = useLoad(() => fetchAll<any>(() => db.from('acc_lines').select(SEL).eq('is_test', false).order('updated_at', { asc: false }), 20000), []);
   const all = data || [];
   const mine = all.filter(l => l.sale_id && (l.sale_id === a.me.id || a.seesTeam));
   const free = all.filter(l => !l.sale_id && ['A', 'B'].includes(l.luong) && ['blocked', 'replied'].includes(l.status));
   const todo = mine.filter(l => ['blocked', 'replied', 'pending_approval'].includes(l.status));
   // Bản 23: biên ngoài khung chỉ cảnh báo (không chặn) — vẫn liệt kê để sale copy giá đề xuất gửi APT
-  const price = mine.filter(l => l.apt_stt && l.gia_de_xuat && !l.gia_note && ['A', 'B'].includes(l.luong) && !['approved'].includes(l.status));
+  const xeOpts: [string, string][] = [...new Map<string, any>(mine.filter(l => l.apt_stt && l.truck_id).map(l => [l.truck_id, l.acc_trucks] as [string, any])).entries()]
+    .sort((x, y) => String(y[1]?.truck_date || '').localeCompare(String(x[1]?.truck_date || '')) || String(x[1]?.name || '').localeCompare(String(y[1]?.name || '')))
+    .map(([id, t]) => [id, `${t?.name || 'Xe'}${t?.truck_date ? ' · ' + String(t.truck_date).split('-').reverse().join('/') : ''} (${mine.filter(l => l.truck_id === id && l.apt_stt).length} dòng)`]);
+  const xe = xeOpts.some(o => o[0] === xe0) ? xe0 : ''; // xe đã nhớ nhưng không còn dòng → về Tất cả xe
+  const onXe = (l: any) => !xe || l.truck_id === xe;
+  const xeName = xe ? (mine.find(l => l.truck_id === xe)?.acc_trucks?.name || '') : '';
+  const price = mine.filter(l => onXe(l) && l.apt_stt && l.gia_de_xuat && !l.gia_note && ['A', 'B'].includes(l.luong) && !['approved'].includes(l.status));
   const { busy, run } = useAction();
   const sentAll = () => run(async () => { if (!(await ask({ title: `Xác nhận đã gửi APT ${price.length} dòng?`, message: 'Giá nháp APT các dòng đổi theo giá đề xuất, dòng chốt ngay. HĐ chính thức lệch giá sẽ báo đỏ.', ok: 'Đã gửi APT' }))) return;
     for (const l of price) await db.rpc('acc_line_reply', { p_id: l.id, p_reply: 'da_gui_gia', p_note: 'Gửi APT hàng loạt' }); reload(); }, 'Đã chốt các dòng theo giá đề xuất');
@@ -50,12 +59,12 @@ export function AccMine() {
   const match = (l: any) => !q || stripVN([l.md, l.hh, l.ten_apt, l.ten_ht, l.inv_no, l.acc_trucks?.name].join(' ')).toLowerCase().includes(stripVN(q).toLowerCase());
   const view = (tab === 'todo' ? todo.filter(l => !st || l.status === st) : tab === 'price' ? price : tab === 'free' ? free
     : mine.filter(l => !hd || (hd === 'co' ? !!l.inv_no : hd === 'mot' ? l.inv_result === 'mot_phan' : !l.inv_no))).filter(match);
-  const pg = usePager('acc_mine', [tab, st, hd, q]);
+  const pg = usePager('acc_mine', [tab, st, hd, q, xe]);
   const copyAll = () => { const t = ['Nam Trung đề nghị APT xuất giá các dòng sau:', ...price.slice().sort((x, y) => (x.apt_stt || 0) - (y.apt_stt || 0)).map(l => `• ${l.acc_trucks?.name || ''} | STT ${l.apt_stt} | ${l.hh || ''} | ${String(lineName(l)).slice(0, 60)} | giá nháp ${Math.round(l.gia_nhap)} → Đề nghị APT xuất giá ${Math.round(l.gia_de_xuat)}`), `(${price.length} dòng)`].join('\n'); if (!price.length) return toast.info('Không có dòng'); navigator.clipboard.writeText(t).then(() => toast.ok('Đã sao chép — dán vào Zalo gửi APT')); };
   // Excel gửi APT (bản 27b): dòng đề xuất giá + dòng sale / kế toán xác nhận APT xuất thẳng.
   // Cột A = Mã HH (khóa VLOOKUP sang file APT), B = Phản hồi APT, C = Giá đề nghị (số liền, định dạng 0 — không dấu chấm / phẩy)
   const xtSet = (l: any) => l.luong === 'C' && l.apt_stt && !l.inv_no && (l.reply === 'xuat_thang' || (l.notes || []).some((x: string) => x.startsWith('Kế toán đánh dấu APT xuất thẳng')));
-  const xt = mine.filter(xtSet);
+  const xt = mine.filter(l => onXe(l) && xtSet(l));
   const exportPrice = () => {
     const rows = [...price.map(l => ({ l, xt: false })), ...xt.map(l => ({ l, xt: true }))]
       .sort((x, y) => String(x.l.acc_trucks?.name || '').localeCompare(String(y.l.acc_trucks?.name || '')) || (x.l.apt_stt || 0) - (y.l.apt_stt || 0));
@@ -68,6 +77,34 @@ export function AccMine() {
         isXt ? (l.reply === 'xuat_thang' ? 'Sale xác nhận xuất thẳng' : 'Kế toán đánh dấu xuất thẳng') : l.reply === 'da_gui_gia' ? 'Sale đã gửi giá' : 'Hệ thống đề xuất']),
     ], 'Gui APT', true, { fmt: { 2: 'plain', 9: 'int', 10: 'int', 11: 'pct' } });
   };
+  // Bản 52: xuất TOÀN BỘ dòng của xe theo giá biên mục tiêu (3%) — luồng A (qua Nam Trung) + B (chờ hợp quy), mọi trạng thái.
+  // Giá đề xuất APT xuất = giá khách ÷ (1 + biên mục tiêu), làm tròn đồng, số liền. Dòng thiếu giá khách vẫn liệt kê, cột giá để trống.
+  const tgt = Number(cfg.bien_muc_tieu) || 0.03; const tgtTxt = pctTxt(tgt).replace(',00', '');
+  const all3 = mine.filter(l => onXe(l) && l.apt_stt && ['A', 'B'].includes(l.luong))
+    .sort((x, y) => String(x.acc_trucks?.name || '').localeCompare(String(y.acc_trucks?.name || '')) || (x.apt_stt || 0) - (y.apt_stt || 0));
+  const gia3 = (l: any) => { const gk = Number(l.gia_khach || l.claim_gia || 0); return gk > 0 ? Math.round(gk / (1 + tgt)) : null; };
+  const fileTag = () => `${xeName ? stripVN(xeName).replace(/[^A-Za-z0-9_-]+/g, '-') + '_' : ''}${new Date().toISOString().slice(0, 10)}`;
+  const export3 = () => {
+    if (!all3.length) return toast.info('Không có dòng');
+    const thieu = all3.filter(l => gia3(l) === null).length;
+    writeXlsx(`gia-${tgtTxt.replace('%', 'pct')}_APT_${fileTag()}`, [
+      ['Mã hàng APT', `Giá đề xuất APT xuất (biên ${tgtTxt})`, 'Xe', 'STT APT', 'MD', 'Tên hàng', 'SL', 'ĐVT', 'Giá khách', 'Giá nháp APT', 'Biên NT hiện tại', 'Biên NT theo giá đề xuất', 'Luồng', 'Trạng thái', 'Sale', 'Ghi chú'],
+      ...all3.map(l => { const g = gia3(l); const gk = Number(l.gia_khach || l.claim_gia || 0);
+        return [l.hh || '', g ?? '', l.acc_trucks?.name || '', l.apt_stt ?? '', l.ma_dong || l.md || '', String(lineName(l)), Number(l.sl_apt ?? l.sl_ht) || '', l.dvt_apt || l.dvt_ht || '',
+          gk || '', Math.round(Number(l.gia_nhap) || 0) || '', l.bien_nt === null || l.bien_nt === undefined ? '' : Number(l.bien_nt), g ? gk / g - 1 : '',
+          `${l.luong}. ${l.luong === 'B' ? 'Chờ hợp quy' : 'Qua Nam Trung'}`, ST[l.status]?.[0] || l.status || '', a.personName(l.sale_id) || l.sale_name || '',
+          g === null ? 'Thiếu giá khách — sale nhập giá khách' : !l.hh ? 'Thiếu mã hàng APT' : ''];
+      }),
+    ], `Gia ${tgtTxt}`, true, { fmt: { 1: 'plain', 8: 'int', 9: 'int', 10: 'pct', 11: 'pct' } });
+    if (thieu) toast.info(`${thieu} dòng thiếu giá khách — cột giá để trống`);
+  };
+  // File gọn 2 cột gửi APT: Mã hàng APT · Giá đề xuất APT xuất (cùng bộ dòng file trên, bỏ dòng thiếu giá khách / mã hàng)
+  const export2 = () => {
+    const rows = all3.filter(l => l.hh && gia3(l) !== null);
+    if (!rows.length) return toast.info('Không có dòng đủ mã hàng + giá khách');
+    writeXlsx(`ma-hang-gia-APT_${fileTag()}`, [['Mã hàng APT', 'Giá đề xuất APT xuất'], ...rows.map(l => [l.hh, gia3(l)])], 'Gui APT', true, { fmt: { 1: 'plain' } });
+    if (rows.length < all3.length) toast.info(`Bỏ ${all3.length - rows.length} dòng thiếu mã hàng / giá khách`);
+  };
   return <Layout title="Việc HĐ của tôi">
     <Tabs value={tab} onChange={v => go2(v as MTab)} tabs={[['todo', <>Cần xử lý {todo.length > 0 && <Badge color="red">{todo.length}</Badge>}</>], ['all', `Tất cả dòng của tôi (${mine.length})`],
       ['price', <>Đề xuất giá gửi APT {price.length > 0 && <Badge color="purple">{price.length}</Badge>}</>], ['free', <>Dòng chưa có chủ {free.length > 0 && <Badge color="amber">{free.length}</Badge>}</>]]} />
@@ -76,6 +113,12 @@ export function AccMine() {
     {tab === 'todo' && <><p className="mb-3 text-sm text-ink-600">Dòng hàng trên HĐ APT <b>chưa đủ điều kiện tự chốt</b>. Chọn 1 cách xử lý trong {cfg.han_sale_gio}h. Sửa trên NamtrungLog trước rồi mới bấm “Đã sửa hệ thống”.</p>
       <StatusChips value={st} onChange={setSt} items={[['', 'Tất cả', todo.length, 'dark'], ['blocked', ST.blocked[0], c('blocked'), 'red'], ['replied', ST.replied[0], c('replied'), 'amber'], ['pending_approval', ST.pending_approval[0], c('pending_approval'), 'purple']]} /></>}
     {tab === 'free' && <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Hàng đã lên xe nhưng <b>không tìm thấy đơn / sale trên hệ thống</b>. Nếu là hàng khách của bạn: tạo đơn trên NamtrungLog → bấm “Nhận dòng này”, nhập MD + giá khách. Kế toán kiểm rồi chốt.</p>}
+    {tab === 'price' && <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm">
+      <span className="font-semibold text-ink-700">🚚 Xe đang đối soát:</span>
+      <Select className="w-72" placeholder={`Tất cả xe (${xeOpts.length})`} options={xeOpts} value={xe} onChange={setXe} />
+      <Button size="sm" onClick={export3}>⬇ Excel toàn bộ dòng giá {tgtTxt} ({all3.length})</Button>
+      <Button size="sm" onClick={export2}>⬇ Excel Mã hàng + Giá đề xuất</Button>
+      <span className="text-xs text-ink-500">Giá {tgtTxt} = giá khách ÷ {String(1 + tgt).replace('.', ',')} · gồm cả dòng chờ hợp quy, mọi trạng thái</span></div>}
     {tab === 'price' && (price.length > 0 || xt.length > 0) && <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm">Biên NT ngoài khung — hệ thống tính giá để biên NT về {pctTxt(cfg.bien_muc_tieu)}. Copy gửi APT, gửi xong bấm xác nhận. <b>Giá khách sai</b> thì bấm “Sửa giá khách” ngay trên dòng.
       <Button size="sm" variant="primary" onClick={copyAll}>📋 Copy tất cả gửi APT</Button><Button size="sm" onClick={exportPrice}>⬇ Xuất Excel{xt.length ? ` (+${xt.length} xuất thẳng)` : ''}</Button><Button size="sm" variant="success" loading={busy} onClick={sentAll}>✓ Đã gửi APT tất cả</Button></div>}
     <div className="mb-3 flex flex-wrap items-center gap-2"><Input className="max-w-xs" placeholder="🔎 MD, mã HH, tên hàng, số HĐ, xe…" value={q} onChange={e => setQ(e.target.value)} />
