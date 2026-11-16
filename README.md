@@ -294,6 +294,10 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Xem trước từng dòng trước khi nạp. Dòng HĐ tồn (`match_src = 'ton'`) không ghép vào nháp APT / file xe.
 - Hàm `out_items_import_ton`; `app.out_item_match` / `app.out_item_price` bỏ qua dòng tồn. Nâng cấp: `supabase/migrations/0059_v51.sql`. Kiểm thử: `supabase/tests/99zc_v51.sql`.
 
+### Bản 51b — Dòng HĐ tồn không còn hiện ở "Dòng HĐ cần kế toán xử lý"
+- Lỗi: dòng HĐ tồn cố ý không ghép nháp APT nên bị bộ lọc "Chưa ghép nháp" bắt nhầm (hiện nút Ghép tay, đếm vào "Dòng HĐ chưa ghép nháp") dù đã đủ đơn / sale / khách.
+- Sửa: bộ lọc và số đếm `chua_ghep` (`out_items_page`, `out_items_stats`) bỏ qua dòng `match_src = 'ton'`. Nâng cấp: `supabase/migrations/0060_v51b.sql`.
+
 ## Bản 52 — Đề xuất giá gửi APT: lọc theo xe + 2 file Excel giá 3% (16/11/2026)
 
 - Đối soát xe của tôi → tab **Đề xuất giá gửi APT**: ô **🚚 Xe đang đối soát** (xe mới nhất đứng đầu, nhớ trong phiên). Danh sách, Copy tất cả, Xuất Excel cũ, Đã gửi APT tất cả đều chỉ áp cho xe đang chọn.
