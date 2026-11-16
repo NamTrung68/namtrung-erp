@@ -98,11 +98,11 @@ export function AccMine() {
     ], `Gia ${tgtTxt}`, true, { fmt: { 1: 'plain', 8: 'int', 9: 'int', 10: 'pct', 11: 'pct' } });
     if (thieu) toast.info(`${thieu} dòng thiếu giá khách — cột giá để trống`);
   };
-  // File gọn 2 cột gửi APT: Mã hàng APT · Giá đề xuất APT xuất (cùng bộ dòng file trên, bỏ dòng thiếu giá khách / mã hàng)
+  // File gọn gửi APT: A Mã hàng APT · B Giá đề xuất APT xuất · C Xe (bản 52b) (cùng bộ dòng file trên, bỏ dòng thiếu giá khách / mã hàng)
   const export2 = () => {
     const rows = all3.filter(l => l.hh && gia3(l) !== null);
     if (!rows.length) return toast.info('Không có dòng đủ mã hàng + giá khách');
-    writeXlsx(`ma-hang-gia-APT_${fileTag()}`, [['Mã hàng APT', 'Giá đề xuất APT xuất'], ...rows.map(l => [l.hh, gia3(l)])], 'Gui APT', true, { fmt: { 1: 'plain' } });
+    writeXlsx(`ma-hang-gia-APT_${fileTag()}`, [['Mã hàng APT', 'Giá đề xuất APT xuất', 'Xe'], ...rows.map(l => [l.hh, gia3(l), l.acc_trucks?.name || ''])], 'Gui APT', true, { fmt: { 1: 'plain' } });
     if (rows.length < all3.length) toast.info(`Bỏ ${all3.length - rows.length} dòng thiếu mã hàng / giá khách`);
   };
   return <Layout title="Việc HĐ của tôi">
