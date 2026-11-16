@@ -37,7 +37,7 @@ require('fs').mkdirSync(SHOTS, { recursive: true });
   ok(r1.some(r => r.startsWith('HH5203|2200|')), 'dòng chờ hợp quy giá 2266/1,03 = 2200');
   ok(r1.some(r => r.startsWith('HH5202|1019|')), 'dòng A: 1050/1,03 = 1019');
   ok(r1.some(r => r.startsWith('HH5204|Xe 52 Mot')), 'dòng thiếu giá khách: cột giá trống');
-  ok(r2[0] === 'Mã hàng APT|Giá đề xuất APT xuất' && r2.length === 4 && r2.includes('HH5201|1000'), 'file 2 cột: 3 dòng đủ giá');
+  ok(r2[0] === 'Mã hàng APT|Giá đề xuất APT xuất|Xe' && r2.length === 4 && r2.includes('HH5201|1000|Xe 52 Mot'), 'file gọn: A mã hàng, B giá, C xe — 3 dòng đủ giá');
   await browser.close();
   if (errors.length) { console.log(errors.join('\n')); process.exit(1); } console.log('v52 OK');
 })();
