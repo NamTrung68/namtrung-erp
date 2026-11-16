@@ -310,5 +310,5 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 
 - Đối soát xe của tôi → tab **Đề xuất giá gửi APT**: ô **🚚 Xe đang đối soát** (xe mới nhất đứng đầu, nhớ trong phiên). Danh sách, Copy tất cả, Xuất Excel cũ, Đã gửi APT tất cả đều chỉ áp cho xe đang chọn.
 - **⬇ Excel toàn bộ dòng giá 3%**: mọi dòng của xe thuộc luồng A (qua Nam Trung) + B (chờ hợp quy), mọi trạng thái. Giá đề xuất APT xuất = giá khách ÷ (1 + biên mục tiêu, mặc định 3%), làm tròn đồng, số liền. Dòng thiếu giá khách vẫn liệt kê, cột giá trống + ghi chú. Không gồm luồng C (APT xuất thẳng), D (Lanchi).
-- **⬇ Excel Mã hàng + Giá đề xuất**: 3 cột *Mã hàng APT · Giá đề xuất APT xuất · Xe* (cột C = tên xe, bản 52b), cùng bộ dòng trên, bỏ dòng thiếu mã hàng / giá khách.
+- **⬇ Excel Mã hàng + Giá đề xuất**: 5 cột *Mã hàng APT · Giá đề xuất APT xuất · Xe · Mã đơn · Mã khai báo* (C xe — bản 52b; D mã đơn, E mã khai báo theo file xe, thiếu thì lấy mã APT ghi trên nháp — bản 52c), cùng bộ dòng trên, bỏ dòng thiếu mã hàng / giá khách.
 - Chỉ sửa giao diện (`src/pages/acc/Mine.tsx`), không đổi database. Kiểm thử: `tests/e2e/v52.cjs`.

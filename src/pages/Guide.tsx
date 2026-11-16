@@ -154,7 +154,7 @@ Các mức lấy theo **Cấu hình → Kế toán – Hóa đơn** (mặc đị
 - **Đã gửi APT giá đề xuất**: giá đề xuất = **giá khách ÷ (1 + mục tiêu)**. Copy gửi APT, bấm xác nhận là chốt.
 - **Xin duyệt ngoại lệ**: trường hợp đặc biệt, ghi lý do.
 
-> Giá đề xuất hiện **số liền, không dấu chấm phẩy** để dán thẳng. Tab **Đề xuất giá gửi APT** có ô chọn **🚚 Xe đang đối soát**, nút **📋 Copy tất cả gửi APT** và **⬇ Xuất Excel** — cột cuối file Excel chỉ có giá đề nghị, số liền. Thêm **⬇ Excel toàn bộ dòng giá 3%** (mọi dòng của xe, kể cả chờ hợp quy) và **⬇ Excel Mã hàng + Giá đề xuất** (cột Mã hàng APT · Giá đề xuất · Xe).
+> Giá đề xuất hiện **số liền, không dấu chấm phẩy** để dán thẳng. Tab **Đề xuất giá gửi APT** có ô chọn **🚚 Xe đang đối soát**, nút **📋 Copy tất cả gửi APT** và **⬇ Xuất Excel** — cột cuối file Excel chỉ có giá đề nghị, số liền. Thêm **⬇ Excel toàn bộ dòng giá 3%** (mọi dòng của xe, kể cả chờ hợp quy) và **⬇ Excel Mã hàng + Giá đề xuất** (cột Mã hàng APT · Giá đề xuất · Xe · Mã đơn · Mã khai báo).
 !> Đề xuất hạ giá chỉ hợp lệ khi vẫn **≥ giá vốn tờ khai**. Dòng bị chặn chưa xử lý thì quá hạn sẽ bị nhắc.
 
 ### Sale làm — [Đối soát xe của tôi](#/acc/mine)

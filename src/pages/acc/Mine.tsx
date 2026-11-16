@@ -12,7 +12,7 @@ import { canFixPrice, ClaimForm, ReplyForm } from './forms';
 import { aptPriceMsg, INV_RESULT, InvResult } from '../../lib/doisoat';
 import { writeXlsx } from '../../lib/xlsx';
 
-const SEL = 'id,reply_sub,gia_nhap_goc,released_from,customer_id,ma_kh,claim_md,claim_gia,claimed_by,claimed_at,inv_qty,tt_khach,sl_tk,gia_von,bien_apt,apt_stt,truck_id,line_key,ma_dong,md,sale_id,sale_name,hh,dh,ten_apt,ten_ht,ten_tk,sl_apt,sl_ht,dvt_apt,dvt_ht,gia_khach,gia_nhap,gia_note,gia_de_xuat,gia_ap_dung,bien_nt,nk_ht,nk_tk,luong,status,issues,notes,phan_hoi,due_at,reply,reply_price,reply_note,replied_by,replied_at,approved_by,approved_at,approve_note,inv_no,inv_result,acc_trucks(name,truck_date)';
+const SEL = 'id,reply_sub,gia_nhap_goc,released_from,customer_id,ma_kh,claim_md,claim_gia,claimed_by,claimed_at,inv_qty,tt_khach,sl_tk,gia_von,bien_apt,apt_stt,truck_id,line_key,ma_dong,md,sale_id,sale_name,hh,dh,ten_apt,ten_ht,ten_tk,sl_apt,sl_ht,dvt_apt,dvt_ht,gia_khach,gia_nhap,gia_note,gia_de_xuat,gia_ap_dung,bien_nt,nk_ht,nk_tk,luong,status,issues,notes,phan_hoi,due_at,reply,reply_price,reply_note,replied_by,replied_at,approved_by,approved_at,approve_note,inv_no,inv_result,ma_kb_apt,acc_trucks(name,truck_date)';
 
 function LineCard({ l, children, onOpen }: { l: any; children?: React.ReactNode; onOpen: () => void }) {
   const a = useApp(); const cfg = useAccCfg(); const [dt, dc] = dueTxt(l.status === 'blocked' ? l.due_at : null);
@@ -98,11 +98,13 @@ export function AccMine() {
     ], `Gia ${tgtTxt}`, true, { fmt: { 1: 'plain', 8: 'int', 9: 'int', 10: 'pct', 11: 'pct' } });
     if (thieu) toast.info(`${thieu} dòng thiếu giá khách — cột giá để trống`);
   };
-  // File gọn gửi APT: A Mã hàng APT · B Giá đề xuất APT xuất · C Xe (bản 52b) (cùng bộ dòng file trên, bỏ dòng thiếu giá khách / mã hàng)
+  // File gọn gửi APT: A Mã hàng APT · B Giá đề xuất APT xuất · C Xe (52b) · D Mã đơn · E Mã khai báo (52c)
+  // (cùng bộ dòng file trên, bỏ dòng thiếu giá khách / mã hàng). Mã khai báo = mã trên file xe, thiếu thì lấy mã APT ghi trên nháp
   const export2 = () => {
     const rows = all3.filter(l => l.hh && gia3(l) !== null);
     if (!rows.length) return toast.info('Không có dòng đủ mã hàng + giá khách');
-    writeXlsx(`ma-hang-gia-APT_${fileTag()}`, [['Mã hàng APT', 'Giá đề xuất APT xuất', 'Xe'], ...rows.map(l => [l.hh, gia3(l), l.acc_trucks?.name || ''])], 'Gui APT', true, { fmt: { 1: 'plain' } });
+    writeXlsx(`ma-hang-gia-APT_${fileTag()}`, [['Mã hàng APT', 'Giá đề xuất APT xuất', 'Xe', 'Mã đơn', 'Mã khai báo'],
+      ...rows.map(l => [l.hh, gia3(l), l.acc_trucks?.name || '', l.md || l.claim_md || '', l.ma_dong || l.ma_kb_apt || ''])], 'Gui APT', true, { fmt: { 1: 'plain' } });
     if (rows.length < all3.length) toast.info(`Bỏ ${all3.length - rows.length} dòng thiếu mã hàng / giá khách`);
   };
   return <Layout title="Việc HĐ của tôi">
