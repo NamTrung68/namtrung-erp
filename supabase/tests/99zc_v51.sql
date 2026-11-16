@@ -33,6 +33,8 @@ do $$ declare r jsonb; v jsonb := '[{"ma_hang":"HH00001-5101-2026","ten":"Hàng 
   perform public.out_items_fix_kh(array(select id from public.out_items where ma_hang = 'HH00002-5101-2026'), null, 'khv51');
   select * into t from public.out_items where ma_hang = 'HH00002-5101-2026';
   perform pg_temp.check(t.customer_id = '00000000-0000-0000-0051-0000000000c1' and t.gia_khach = 1798 and t.acc_line_id is null, 'điền username sau: gắn khách, giữ giá, không ghép nháp');
+  -- bản 51b: dòng tồn không rơi vào "chưa ghép nháp"
+  perform pg_temp.check(not exists(select 1 from jsonb_array_elements(public.out_items_page('{"mode":"acc","f":"chua_ghep","limit":500}')->'rows') x where x->>'ma_hang' like 'HH0000%-5101-2026'), 'dòng tồn không nằm trong chưa ghép');
 end $$;
 reset role;
 select 'V51 TESTS PASSED' as result;

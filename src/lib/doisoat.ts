@@ -259,11 +259,12 @@ export function matchAptSys(apt: AptRow[], sys: SysRow[]): Map<number, [number, 
 export interface ReconcileResult { lines: AccLine[]; stats: Record<string, any>; warnings: string[] }
 
 /** saleAcc: tên sale (họ tên/tài khoản) → tài khoản chuẩn; trả null nếu chưa biết */
-export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg = DEFAULT_ACC_CFG, saleAcc: (s: string) => string | null = s => s || null): ReconcileResult {
+/** pairs (bản 53): ghép sẵn dòng APT ↔ dòng xe (file tổng) — bỏ qua bước tự ghép */
+export function reconcile(apt: AptRow[], sys: SysRow[], tk: TkRow[], cfg: AccCfg = DEFAULT_ACC_CFG, saleAcc: (s: string) => string | null = s => s || null, pairs?: Map<number, [number, MatchKind]>): ReconcileResult {
   const warnings: string[] = [];
   const acc = (s: string | null | undefined) => (s ? saleAcc(s) ?? null : null);
   // 1) file APT ↔ hệ thống: mã khai báo → mã đơn + SL (bản 23, không ghép theo tên)
-  const mSys = matchAptSys(apt, sys);
+  const mSys = pairs || matchAptSys(apt, sys);
   // 2) file APT ↔ tờ khai: thường 1:1 cùng thứ tự; lệch thì ghép theo tên + SL
   const tmap = new Map<number, TkRow>(); const sorted = [...apt].sort((a, b) => a.apt_stt - b.apt_stt);
   if (tk.length && sorted.length === tk.length && sorted.every((a, i) => sim(a.ten, tk[i].ten) >= 0.9)) sorted.forEach((a, i) => tmap.set(a.apt_stt, tk[i]));
@@ -424,4 +425,75 @@ export function aptPriceMsg(lines: any[], cfg: Pick<AccCfg, 'bien_muc_tieu' | 'b
   return [`Nam Trung đề nghị APT xuất giá các dòng sau${title ? ' — ' + title : ''}:`,
     ...out.sort((a, b) => a.l.apt_stt - b.l.apt_stt).map(({ l, target, cur }) => `• STT ${l.apt_stt} | ${l.hh || ''} | ${String(l.ten_apt || l.ten_ht || '').slice(0, 60)} | SL ${f(Number(l.sl_apt || 0))} | giá nháp ${f(cur)} → Đề nghị APT xuất giá ${target}`),
     `(${out.length} dòng)`].join('\n');
+}
+
+// ---------------- Bản 53: FILE TỔNG (nháp APT + file xe gộp sẵn, 1 dòng = 1 dòng APT) ----------------
+/** Cột file tổng: STT · Mã hàng APT (kiện) · Đơn hàng · Sale · Mã đơn (MD) · Mã khai báo · Username khách · Mã hàng HH · Tên hàng · Lượng · ĐVT · TS NK(%) · TS MT ·
+ *  Đơn giá bán (APT) · Giá xuất khách · Mã HS (TKN) · Số lượng hệ thống · Thuế NK Khaibao · Thuế VAT (%) · Thành tiền · Tiền VAT · Thành tiền thanh toán · NOTE.
+ *  Dòng để trống STT + Đơn giá APT = hàng có trên hệ thống nhưng không lên xe (luồng E). */
+export interface TongParse { apt: AptRow[]; sys: SysRow[]; pairs: Map<number, [number, MatchKind]>; extra: Map<number, string[]>; warnings: string[]; tt_file: number | null }
+export const isTongHeader = (r: any[]) => { const h = (r || []).map(HD); return h.includes('MA KHAI BAO') && h.some(x => /^(GIA XUAT KHACH|GIA KHACH)/.test(x)) && h.some(x => x.startsWith('DON GIA BAN')); };
+export function parseTong(rows: any[][]): TongParse {
+  const hi = rows.slice(0, 15).findIndex(isTongHeader);
+  if (hi < 0) throw new Error('File tổng: không thấy dòng tiêu đề có các cột "Mã khai báo", "Đơn giá bán (APT)", "Giá xuất khách"');
+  const H = (rows[hi] || []).map(HD);
+  const f = (p: (h: string) => boolean) => H.findIndex(h => !!h && p(h));
+  const c = {
+    stt: f(h => h === 'STT'), kien: f(h => h.startsWith('MA HANG APT')), don: f(h => h.startsWith('DON HANG')), sale: f(h => h === 'SALE' || h.startsWith('TEN SALE')),
+    md: f(h => h.startsWith('MA DON') || h === 'MD' || h === 'ID DON'), kb: f(h => h === 'MA KHAI BAO'), user: f(h => h.startsWith('USERNAME')),
+    hh: f(h => h === 'MA HANG HH' || h === 'MA HANG' || h === 'MA HH'), ten: f(h => h.startsWith('TEN HANG')),
+    sl: f(h => h === 'LUONG' || ((h.startsWith('SO LUONG') || h === 'SL') && !h.includes('HE THONG'))), dvt: f(h => h === 'DVT' || h.startsWith('DON VI TINH')),
+    nk: f(h => h.startsWith('TS NK')), gia: f(h => h.startsWith('DON GIA BAN')), gk: f(h => /^(GIA XUAT KHACH|GIA KHACH|GIA TREN TO KHAI)/.test(h)),
+    hs: f(h => h.startsWith('MA HS') || h.startsWith('HS CODE')), slht: f(h => h.startsWith('SO LUONG HE THONG') || h.startsWith('SL HE THONG')),
+    nkkb: f(h => h.startsWith('THUE NK')), vat: f(h => h.startsWith('THUE VAT') || h.startsWith('THUE SUAT VAT')), tt: f(h => h === 'THANH TIEN'), note: f(h => h.startsWith('NOTE')),
+  };
+  const req: [keyof typeof c, string][] = [['stt', 'STT'], ['kb', 'Mã khai báo'], ['ten', 'Tên hàng'], ['sl', 'Lượng'], ['gia', 'Đơn giá bán (APT)'], ['gk', 'Giá xuất khách'], ['sale', 'Sale'], ['user', 'Username khách']];
+  for (const [k, n] of req) if (c[k] < 0) throw new Error(`File tổng: thiếu cột "${n}"`);
+  const warnings: string[] = [];
+  if (c.hs < 0) warnings.push('File tổng không có cột "Mã HS (TKN)" → không nhận được hàng dệt may chờ hợp quy (nạp kèm tờ khai nháp để bù).');
+  if (c.slht < 0) warnings.push('File tổng không có cột "Số lượng hệ thống" → không so được SL hệ thống với SL APT.');
+  const g = (r: any[], i: number) => (i >= 0 ? r[i] : null);
+  const apt: AptRow[] = [], sys: SysRow[] = []; const pairs = new Map<number, [number, MatchKind]>(); const extra = new Map<number, string[]>();
+  const push = (stt: number, x: string) => extra.set(stt, [...(extra.get(stt) || []), x]);
+  let cur = { kien: '', don: '', sale: '', md: '', user: '' }; const cnt: Record<string, number> = {}; const kbSeen = new Map<string, number>(); const sttSeen = new Set<number>();
+  let ttFile = 0, coTt = false, thieuSlht = 0;
+  rows.slice(hi + 1).forEach((r, k) => {
+    const ten = clean(g(r, c.ten)); if (!r || !ten) return;
+    const rowNo = hi + 2 + k; const sttS = clean(g(r, c.stt)).replace(/\.0+$/, ''); const gia = vnNum(g(r, c.gia));
+    const kb = normKb(g(r, c.kb)); const mdCol = normMd(g(r, c.md)); const flags: SysFlag[] = [];
+    const md = kb ? kbMd(kb) : mdCol || cur.md;
+    if (kb && mdCol && mdCol !== kbMd(kb)) flags.push('md_lech');
+    const moiDon = md !== cur.md;
+    // ô trống được hiểu là "như dòng trên" — chỉ khi còn cùng mã đơn
+    const pick = (i: number, prev: string) => clean(g(r, i)) || (moiDon ? '' : prev);
+    cur = { kien: pick(c.kien, cur.kien), don: pick(c.don, cur.don), sale: clean(g(r, c.sale)) || (moiDon ? '' : cur.sale), md, user: pick(c.user, cur.user) };
+    let user = cur.user; if (user && khLaDon(user, md)) { user = ''; flags.push('user_la_don'); } else if (!user) flags.push('thieu_user');
+    cnt[md] = (cnt[md] || 0) + 1;
+    const sl = vnNum(g(r, c.sl)); const slht = c.slht >= 0 ? vnNum(g(r, c.slht)) : null;
+    const s: SysRow = { sys_row: rowNo, ten, sale: cur.sale, md, ma_dong: kb || `${md}-${cnt[md]}`, ma_dong_file: kb || clean(g(r, c.kb)), sl: slht ?? sl, dvt: clean(g(r, c.dvt)),
+      gia_khach: vnNum(g(r, c.gk)), nk: c.nkkb >= 0 ? pct(g(r, c.nkkb)) : c.nk >= 0 ? pct(g(r, c.nk)) : 0, hs: c.hs >= 0 ? clean(g(r, c.hs)).replace(/\.0+$/, '') : '', ma_kh: user, flags };
+    const j = sys.push(s) - 1;
+    if (!/^\d+$/.test(sttS) && !gia) return; // dòng chỉ có trên hệ thống — không lên xe
+    const stt = /^\d+$/.test(sttS) ? Number(sttS) : 100000 + k;
+    if (sttSeen.has(stt)) warnings.push(`STT ${stt} lặp lại (dòng ${rowNo}).`); sttSeen.add(stt);
+    const note = c.note >= 0 ? clean(g(r, c.note)) : '';
+    const a: AptRow = { apt_stt: stt, apt_mahang: cur.kien, don: cur.don, sale_apt: cur.sale, md_apt: md, dau_khoi: moiDon, ma_kb: kb, hh: clean(g(r, c.hh)), ten, sl, dvt: clean(g(r, c.dvt)),
+      nk: c.nk >= 0 ? pct(g(r, c.nk)) : 0, gia_nhap: gia, vat: c.vat >= 0 ? pct(g(r, c.vat)) : 0, note, kt: '', note2: '',
+      gia_note: ((x, gn) => (x && gn && Math.abs(x - gn) <= 0.5 ? null : x))(notePrice(note), gia), gia_khach_sale_ghi: null };
+    const i = apt.push(a) - 1;
+    pairs.set(i, [j, slht === null || eqSl(slht, sl) ? 'ma' : 'ma_lech_sl']);
+    if (!kb) push(stt, `Thiếu / sai dạng mã khai báo ("${clean(g(r, c.kb)) || 'trống'}") — dạng đúng MD2943-1.`);
+    else if (kbSeen.has(kb)) push(stt, `Mã khai báo ${kb} trùng với STT ${kbSeen.get(kb)} — kiểm lại ghép dòng.`); else kbSeen.set(kb, stt);
+    if (c.slht >= 0 && slht === null) { thieuSlht++; push(stt, 'Trống "Số lượng hệ thống" — không so được với SL APT.'); }
+    const tt = vnNum(g(r, c.tt));
+    if (tt !== null) { coTt = true; ttFile += tt; if (sl && gia && Math.abs(sl * gia - tt) > Math.max(2, sl * 0.5)) push(stt, `Thành tiền ${Math.round(tt).toLocaleString('vi-VN')} ≠ Lượng × Đơn giá APT ${Math.round(sl * gia).toLocaleString('vi-VN')}.`); }
+  });
+  if (!sys.length) throw new Error('File tổng: không có dòng hàng nào');
+  if (thieuSlht) warnings.push(`${thieuSlht} dòng trống "Số lượng hệ thống" (VLOOKUP không ra?) — kiểm lại.`);
+  const xeOnly = sys.length - apt.length; if (xeOnly > 0) warnings.push(`${xeOnly} dòng không có STT / giá APT → coi là hàng có trên hệ thống nhưng không lên xe.`);
+  return { apt, sys, pairs, extra, warnings, tt_file: coTt ? ttFile : null };
+}
+/** Gắn kiểm tra riêng của file tổng vào từng dòng (cảnh báo mức 2, không đổi trạng thái) */
+export function applyTongChecks(r: ReconcileResult, extra: Map<number, string[]>) {
+  r.lines.forEach(l => { const x = l.apt_stt != null ? extra.get(l.apt_stt) : null; if (x?.length) { l.issues.push(...x); if (l.level > 2) l.level = 2; } });
 }

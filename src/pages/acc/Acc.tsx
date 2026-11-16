@@ -7,7 +7,7 @@ import { db, fetchAll } from '../../lib/sb';
 import { go, useApp, useRoute } from '../../state';
 import { readTable, writeXlsx } from '../../lib/xlsx';
 import { fmtDate, fmtDateTime, money, num, stripVN, today } from '../../lib/format';
-import { aptPriceList, aptPriceMsg, MATCH_KIND, type MatchKind, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, normMd, parseApt, SYS_FLAG, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile } from '../../lib/doisoat';
+import { aptPriceList, aptPriceMsg, MATCH_KIND, type MatchKind, INV_RESULT, InvResult, judgeInvoiceLine, LUONG, norm, normMd, parseApt, SYS_FLAG, parseInvoiceXml, parseKhaiBao, parseTkn, reconcile, parseTong, applyTongChecks } from '../../lib/doisoat';
 import { driveReady, saveToDrive } from '../../lib/drive';
 import { bienTone, deXuat, dueTxt, GiaApt, lineName, LuongBadge, Money, pctTxt, REPLY, REPLY_SUB, ST, StatusBadge, useAccCfg } from './common';
 import { downloadMau, type MauKind } from '../../lib/mau';
@@ -66,7 +66,11 @@ export function useSaleMatcher() {
 export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: () => void; onDone: (id: string) => void }) {
   const a = useApp(); const cfg = useAccCfg(); const sm = useSaleMatcher(); const { busy, run } = useAction();
   const [name, setName] = useState(truck?.name || ''); const [date, setDate] = useState(truck?.truck_date || today());
-  const [files, setFiles] = useState<Record<string, File | null>>({ kb: null, apt: null, tkn: null });
+  const [files, setFiles] = useState<Record<string, File | null>>({ kb: null, apt: null, tkn: null, tong: null });
+  // Bản 53: 1 file tổng (nháp APT + file xe gộp sẵn) hoặc 2 file như cũ — nhớ lựa chọn lần trước
+  const [mode, setModeS] = useState<'tong' | '2file'>(() => { try { return localStorage.getItem('acc_nap_mode') === '2file' ? '2file' : 'tong'; } catch { return 'tong'; } });
+  const setMode = (m: 'tong' | '2file') => { setModeS(m); setRes(null); setErr(''); try { localStorage.setItem('acc_nap_mode', m); } catch { /* bỏ qua */ } };
+  const mainFile = mode === 'tong' ? files.tong : files.kb;
   const [res, setRes] = useState<any>(null); const [err, setErr] = useState('');
   const [xt, setXt] = useState<string>((truck?.md_xuat_thang || []).join(', ')); const [test, setTest] = useState(false);
   const [target, setTarget] = useState<any>(truck || null); // nạp lại vào xe cũ khi phát hiện trùng
@@ -75,25 +79,33 @@ export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: 
   const analyze = async () => {
     setErr(''); setRes(null); setKhFill({});
     try {
-      if (!files.kb || !files.apt) throw new Error('Chọn đủ file khai báo hệ thống và file check APT');
-      const [kbRows, aptRows, tkRows] = await Promise.all([readTable(files.kb), readTable(files.apt), files.tkn ? readTable(files.tkn) : Promise.resolve(null)]);
-      const sys = parseKhaiBao(kbRows); const apt = parseApt(aptRows); const tk = tkRows ? parseTkn(tkRows) : [];
-      const r = reconcile(apt.rows, sys, tk, { ...cfg, md_xuat_thang: xtList() }, s => sm.find(s)?.id || null);
+      let aptRows: any[], sys: any[], aptTotal: number | null = null, tong: ReturnType<typeof parseTong> | null = null;
+      const tkRows = files.tkn ? await readTable(files.tkn) : null; const tk = tkRows ? parseTkn(tkRows) : [];
+      if (mode === 'tong') {
+        if (!files.tong) throw new Error('Chọn file tổng (nháp APT + file xe đã gộp)');
+        tong = parseTong(await readTable(files.tong)); aptRows = tong.apt; sys = tong.sys; aptTotal = tong.tt_file;
+      } else {
+        if (!files.kb || !files.apt) throw new Error('Chọn đủ file khai báo hệ thống và file check APT');
+        const [kbRows, aRows] = await Promise.all([readTable(files.kb), readTable(files.apt)]);
+        sys = parseKhaiBao(kbRows); const apt = parseApt(aRows); aptRows = apt.rows; aptTotal = apt.total;
+      }
+      const r = reconcile(aptRows, sys, tk, { ...cfg, md_xuat_thang: xtList() }, s => sm.find(s)?.id || null, tong?.pairs);
+      if (tong) { applyTongChecks(r, tong.extra); r.warnings.unshift(...tong.warnings); }
       // dòng kế toán đã đánh dấu xuất thẳng ở lần nạp trước
       const keys = new Set<string>(target?.xt_keys || []);
       r.lines.forEach(l => { if (keys.has(l.line_key)) Object.assign(l, { luong: 'C', status: 'info', level: 3, issues: [], phan_hoi: l.apt_stt ? 'XUẤT THẲNG' : '', notes: ['Kế toán đánh dấu APT xuất thẳng.', ...l.notes] }); });
       r.stats.ok = r.lines.filter(l => l.status === 'ok').length; r.stats.blocked = r.lines.filter(l => l.status === 'blocked').length; r.stats.info = r.lines.filter(l => l.status === 'info').length;
       // chống trùng: mã HH / file khai báo đã có ở xe khác
-      const hhs = Array.from(new Set(apt.rows.map(x => x.hh).filter(Boolean))).slice(0, 150);
+      const hhs = Array.from(new Set(aptRows.map((x: any) => x.hh).filter(Boolean))).slice(0, 150);
       const dupL: any[] = hhs.length ? await db.from<any[]>('acc_lines').select('truck_id,acc_trucks(id,name,truck_date,is_test,md_xuat_thang,xt_keys)').in('hh', hhs).limit(2000) : [];
-      const dupF: any[] = await db.from<any[]>('acc_trucks').select('id,name,truck_date,is_test,md_xuat_thang,xt_keys').eq('files->>kb', files.kb.name).limit(5);
+      const dupF: any[] = await db.from<any[]>('acc_trucks').select('id,name,truck_date,is_test,md_xuat_thang,xt_keys').eq(mode === 'tong' ? 'files->>tong' : 'files->>kb', mainFile!.name).limit(5);
       const dups = new Map<string, any>(); dupL.forEach(x => x.acc_trucks && dups.set(x.truck_id, x.acc_trucks)); dupF.forEach(x => dups.set(x.id, x));
       if (target) dups.delete(target.id);
-      r.stats.apt_header_total = apt.total;
+      r.stats.apt_header_total = aptTotal; if (tong) r.stats.nguon = 'file_tong';
       if (!tkRows) r.warnings.push('Chưa có tờ khai nháp: chưa so được thuế NK theo tờ khai.');
-      if (apt.total && Math.abs(apt.total - r.stats.tt_apt) > 1000) r.warnings.push(`Tổng tiền dòng đầu file APT ${money(apt.total)} khác tổng cộng các dòng ${money(r.stats.tt_apt)} (do giá NOTE/đề xuất).`);
+      if (aptTotal && Math.abs(aptTotal - r.stats.tt_apt) > 1000) r.warnings.push(`${tong ? 'Tổng cột Thành tiền' : 'Tổng tiền dòng đầu file APT'} ${money(aptTotal)} khác tổng cộng các dòng ${money(r.stats.tt_apt)} (do giá NOTE/đề xuất).`);
       const unmapped = Array.from(new Set(r.lines.filter(l => l.sale_name && !sm.find(l.sale_name) && (l.md || l.luong === 'A')).map(l => l.sale_name!)));
-      setRes({ ...r, unmapped, sysCount: sys.length, dups: Array.from(dups.values()) });
+      setRes({ ...r, unmapped, sysCount: sys.length, dups: Array.from(dups.values()), tong: !!tong });
       if (!name) setName('Xe ' + (date ? fmtDate(date).slice(0, 5) : ''));
     } catch (e: any) { setErr(e.message || String(e)); }
   };
@@ -105,11 +117,11 @@ export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: 
     const nm = name || 'Xe ' + fmtDate(date);
     const id = await db.rpc<string>('acc_truck_save', { p_truck: target?.id || null, p_info: { name: nm, truck_date: date, stats: res.stats, warnings: res.warnings,
       is_test: target ? undefined : test, md_xuat_thang: xtList(),
-      files: { kb: files.kb?.name, apt: files.apt?.name, tkn: files.tkn?.name, by: a.me.full_name } }, p_lines: lines });
+      files: mode === 'tong' ? { tong: files.tong?.name, tkn: files.tkn?.name, by: a.me.full_name } : { kb: files.kb?.name, apt: files.apt?.name, tkn: files.tkn?.name, by: a.me.full_name } }, p_lines: lines });
     // lưu 3 file gốc lên Drive theo từng xe
     if (driveReady(a.settings.drive)) {
       const links: Record<string, string> = {}; const folder = `Ke toan/Doi soat xe/${(date || today()).slice(0, 7)}/${stripVN(nm).replace(/[^A-Za-z0-9 _-]+/g, '-')}`;
-      for (const k of ['kb', 'apt', 'tkn']) { const f = files[k]; if (f) { try { links[k] = await saveToDrive(a.settings.drive, f, f.name, folder); } catch (e: any) { toast.err('Lưu Drive: ' + e.message); break; } } }
+      for (const k of ['tong', 'kb', 'apt', 'tkn']) { const f = files[k]; if (f) { try { links[k] = await saveToDrive(a.settings.drive, f, f.name, folder); } catch (e: any) { toast.err('Lưu Drive: ' + e.message); break; } } }
       if (Object.keys(links).length) await db.from('acc_trucks').update({ file_links: links }).eq('id', id);
     }
     const n = await db.rpc<number>('acc_relink_truck', { p_truck: id }).catch(() => 0); if (n) toast.info(`${n} dòng HĐ APT đã về trước được ghép vào xe này`);
@@ -123,9 +135,15 @@ export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: 
     footer={<>{res && <Button variant="primary" loading={busy} disabled={!sm.ready} onClick={save}>{target && !truck ? `Nạp lại vào “${target.name}”` : test && !target ? 'Lưu xe nạp thử' : `Lưu & báo sale (${res.stats.blocked} dòng chặn)`}</Button>}{!res && <Button variant="dark" disabled={!sm.ready} onClick={analyze}>Phân tích</Button>}</>}>
     <div className="grid gap-3 sm:grid-cols-2"><Field label="Tên xe"><Input value={name} placeholder="VD: Xe 25/10" onChange={e => setName(e.target.value)} /></Field>
       <Field label="Ngày xe"><Input type="date" value={date} onChange={e => setDate(e.target.value)} /></Field></div>
-    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-sm"><span className="text-xs text-ink-500">Cách nạp:</span>
+      {([['tong', '1 file tổng (nháp APT + file xe đã gộp)'], ['2file', '2 file riêng (file xe + nháp APT)']] as const).map(([k, l]) =>
+        <button key={k} type="button" onClick={() => setMode(k)} className={cx('rounded-lg border px-3 py-1.5 text-xs font-semibold', mode === k ? 'border-brand-600 bg-brand-600 text-white' : 'border-ink-200 bg-white text-ink-600 hover:border-brand-400')}>{l}</button>)}</div>
+    {mode === 'tong' ? <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <F k="tong" l="1. File tổng *" hint="Mỗi dòng = 1 dòng APT, có thêm Giá xuất khách, Username, Mã HS, Số lượng hệ thống, NOTE. Dòng để trống STT + giá APT = hàng có trên hệ thống nhưng không lên xe." mau="tong" />
+      <F k="tkn" l="2. Tờ khai nháp TKN" hint="Không bắt buộc — có thì thêm biên APT theo giá vốn" /></div>
+    : <div className="mt-3 grid gap-3 sm:grid-cols-3">
       <F k="kb" l="1. File xe hệ thống *" hint="Xuất từ NamtrungLog (KhaiBao_XH…) — ID ĐƠN, USERNAME KHÁCH, SALE, MÃ KHAI BÁO, giá khách" mau="xe" /><F k="apt" l="2. Nháp HĐ APT *" hint="APT gửi (Google Sheet tải .xlsx) — có cột MÃ KHAI BÁO" mau="apt" />
-      <F k="tkn" l="3. Tờ khai nháp TKN" hint="Không bắt buộc — có thì thêm biên APT theo giá vốn" /></div>
+      <F k="tkn" l="3. Tờ khai nháp TKN" hint="Không bắt buộc — có thì thêm biên APT theo giá vốn" /></div>}
     <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
       <Field label="MD APT xuất thẳng của xe này" hint="Gõ hoặc dán danh sách, cách nhau dấu phẩy/xuống dòng. 2411 hay MD2411 đều được. Dòng có NOTE “XUẤT THẲNG” trên file APT tự nhận.">
         <Textarea rows={2} value={xt} onChange={e => { setXt(e.target.value); setRes(null); }} placeholder="VD: MD2744, MD2784" /></Field>
@@ -138,7 +156,7 @@ export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: 
           onClick={() => { setTarget(target?.id === d.id ? null : d); setXt((d.md_xuat_thang || []).join(', ')); setRes(null); }}>{target?.id === d.id ? '✓ Sẽ nạp lại vào xe này — bấm Phân tích lại' : 'Nạp lại vào xe này'}</button></span>)}
         <div className="mt-1 text-xs">Nạp lại giữ nguyên trả lời của sale và kết quả HĐ đã ghép. Nếu đúng là xe mới thì cứ lưu bình thường.</div></div>}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Stat label="Dòng file APT" value={res.stats.apt} sub={`xe ${res.sysCount} · khớp mã ${res.stats.khop_ma ?? 0} · ghép theo đơn ${res.stats.ghep_don ?? 0}${res.stats.lech_sl ? ` · lệch SL ${res.stats.lech_sl}` : ''}`} />
+        <Stat label={res.tong ? 'Dòng file tổng' : 'Dòng file APT'} value={res.stats.apt} sub={res.tong ? `SL khớp hệ thống ${res.stats.khop_ma ?? 0}${res.stats.lech_sl ? ` · lệch SL ${res.stats.lech_sl}` : ''}${res.sysCount > res.stats.apt ? ` · không lên xe ${res.sysCount - res.stats.apt}` : ''}` : `xe ${res.sysCount} · khớp mã ${res.stats.khop_ma ?? 0} · ghép theo đơn ${res.stats.ghep_don ?? 0}${res.stats.lech_sl ? ` · lệch SL ${res.stats.lech_sl}` : ''}`} />
         <Stat label="Ghép xong" value={res.stats.ok} tone="green" sub={`${Math.round(res.stats.ok / Math.max(1, res.stats.apt) * 100)}% dòng · ${res.lines.filter((l: any) => l.gia_de_xuat).length} dòng biên ngoài khung (cảnh báo + giá đề xuất)`} />
         <Stat label="Bị chặn → sale" value={res.stats.blocked} tone={res.stats.blocked ? 'red' : undefined} sub={`hạn ${cfg.han_sale_gio}h`} />
         <Stat label="Theo dõi riêng" value={res.stats.info} sub="hợp quy · xuất thẳng · Lanchi" />
