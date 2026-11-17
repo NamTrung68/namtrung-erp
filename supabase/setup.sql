@@ -14029,3 +14029,10 @@ begin
       or (b.customer_id is null and b.username is not null and lower(b.username) = any(select lower(app.norm_username(x)) from unnest(coalesce(p_usernames, '{}')) x)));
 end $$;
 grant execute on function public.out_buyers_for(uuid[], text[]) to authenticated;
+
+
+-- >>>>> supabase/migrations/0063_v54b.sql
+-- Bản 54b — so tên pháp nhân bỏ qua cả dấu gạch nối ("ĐIỆN-TỰ ĐỘNG" = "Điện - Tự Động")
+create or replace function app.ten_norm(t text) returns text language sql immutable as $$
+  select nullif(btrim(regexp_replace(regexp_replace(lower(coalesce(app.pn_ten_sach(t), '')), '[,.;:–-]+', ' ', 'g'), '\s+', ' ', 'g')), '')
+$$;

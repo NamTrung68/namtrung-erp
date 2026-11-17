@@ -8,6 +8,7 @@ grant execute on all functions in schema pg_temp to authenticated;
 select pg_temp.check(app.pn_ten_sach('HỘ KINH DOANH SHOP HOÀI VŨ Đại diện: Ông Châu Nguyễn Hoài Vũ') = 'HỘ KINH DOANH SHOP HOÀI VŨ', 'bỏ "Đại diện:"');
 select pg_temp.check(app.pn_ten_sach('CÔNG TY TNHH ĐẠI DIỆN THƯƠNG MẠI') = 'CÔNG TY TNHH ĐẠI DIỆN THƯƠNG MẠI', 'không cắt chữ "đại diện" trong tên');
 select pg_temp.check(app.pn_dc_sach('ĐIA CHI : 49 ĐƯỜNG SỐ 7') = '49 ĐƯỜNG SỐ 7' and app.pn_dc_sach('Địa chỉ: Số 49') = 'Số 49', 'bỏ "Địa chỉ:"');
+select pg_temp.check(app.ten_norm('CÔNG TY TNHH THIẾT BỊ ĐIỆN-TỰ ĐỘNG HÓA') = app.ten_norm('Công Ty TNHH Thiết Bị Điện - Tự Động Hóa'), 'tên bỏ qua dấu gạch');
 select pg_temp.check(app.dc_norm('Địa chỉ: Số 49, Đường số 7, TP Hồ Chí Minh') = app.dc_norm('Số 49 Đường số 7 Thành phố Hồ Chí Minh, Việt Nam'), 'so địa chỉ bỏ nhãn');
 insert into public.customers(id, code, contact_name, phone, customer_type, source, owner_id, sys_username)
   select '00000000-0000-0000-0054-0000000000c1', 'KHV54', 'Khách V54', '+84 912 540 054', 'nha_buon', 'tu_tim_zalo', id, 'khv54' from public.profiles where email = 'a@nt.vn';

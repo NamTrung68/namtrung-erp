@@ -329,4 +329,4 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - **Lưu phiếu** làm sạch nhãn trong tên / địa chỉ; so pháp nhân với HĐ đã ký bỏ qua nhãn → hết báo "khác HĐ đã ký" oan. Còn lệch thật thì màn Pháp nhân ghi rõ **HĐ số…, tên / địa chỉ trên HĐ** để kế toán xử lý.
 - Chọn pháp nhân khi lập phiếu (lẻ và hàng loạt) hiện **HĐNT dd/mm/yyyy / chưa HĐNT** của từng pháp nhân.
 - **Đối soát xe → ⬇ Danh mục VTHH (AMIS)** (trong xe và ở danh sách xe): đúng mẫu *Mau_danh_muc_vat_tu_hang_hoa* — Mã = mã HH APT, Tên, Hàng hóa, ĐVT, HH, thuế suất; *% thuế suất KHAC* và *Đơn giá bán* để trống; mỗi mã 1 dòng, bỏ luồng C (APT xuất thẳng).
-- Nâng cấp: `supabase/migrations/0062_v54.sql`. Kiểm thử: `supabase/tests/99ze_v54.sql`, `tests/hd54.test.ts`.
+- Nâng cấp: `supabase/migrations/0062_v54.sql`, `0063_v54b.sql` (so tên bỏ qua dấu gạch). Kiểm thử: `supabase/tests/99ze_v54.sql`, `tests/hd54.test.ts`.
