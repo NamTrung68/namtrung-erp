@@ -28,25 +28,9 @@ export default function Acc() {
   );
 }
 
-/** Bản 54: danh mục vật tư hàng hóa theo mẫu nhập AMIS (file mẫu Mau_danh_muc_vat_tu_hang_hoa) — mỗi mã HH 1 dòng, bỏ luồng C (APT xuất thẳng cho khách).
- *  Cột "% thuế suất KHAC" và "Đơn giá bán" để trống */
-export async function exportVthh(t: { name?: string } | null, lines: any[]) {
-  const seen = new Set<string>();
-  const ls = lines.filter(l => l.apt_stt && l.hh && l.luong !== 'C').sort((x, y) => x.apt_stt - y.apt_stt)
-    .filter(l => { const k = String(l.hh).trim().toUpperCase(); if (seen.has(k)) return false; seen.add(k); return true; });
-  if (!ls.length) { toast.info('Xe chưa có dòng APT nào có mã HH'); return; }
-  const rows = [['FILE MẪU DANH SÁCH VẬT TƯ HÀNG HÓA ĐỂ NHẬP VÀO PHẦN MỀM AMIS ACCOUNTING'], ['Hướng dẫn:'], ['- Điền dữ liệu vào các cột tương ứng trên file này'], ['- Các cột có dấu (*) là những cột bắt buộc'],
-    ['- Nếu muốn nhập nhiều thông tin hơn người dùng có thể tải mẫu đầy đủ hoặc thêm cột trên mẫu cơ bản'], ['- Các dòng dữ liệu phía dưới chỉ là ví dụ minh họa'], [],
-    ['Mã (*)', 'Tên (*)', 'Tính chất', 'Đơn vị tính chính', 'Mã nhóm VTHH', 'Thuế suất GTGT (%)', '% thuế suất KHAC', 'Đơn giá bán '],
-    ...ls.map(l => [String(l.hh).trim(), String(l.ten_apt || l.ten_tk || l.ten_ht || '').trim(), 'Hàng hóa', l.dvt_apt || l.dvt_tk || l.dvt_ht || '', 'HH',
-      l.vat === null || l.vat === undefined || l.vat === '' ? '' : String(Math.round(Number(l.vat) * 10000) / 100), '', ''])];
-  await writeXlsx(`Danh_muc_VTHH_${stripVN(t?.name || 'xe').replace(/[^A-Za-z0-9]+/g, '-')}`, rows, 'Mẫu cơ bản', true, { headerRow: 7, fmt: { 0: 'plain' } });
-  toast.ok(`Đã xuất ${ls.length} mã hàng — danh mục VTHH`);
-}
-
 // ============ Danh sách xe ============
 function Trucks() {
-  const [imp, setImp] = useState(false); const [vt, setVt] = useState('');
+  const [imp, setImp] = useState(false);
   const { data, loading, reload } = useLoad(() => db.from<any[]>('acc_trucks').select('id,name,truck_date,stats,status,created_at,files,is_test').order('created_at', { asc: false }).limit(200), []);
   const { data: open } = useLoad(() => db.from<any[]>('acc_lines').select('truck_id,status').in('status', ['blocked', 'replied', 'pending_approval']).limit(5000), []);
   const cnt = useMemo(() => { const m = new Map<string, Record<string, number>>(); (open || []).forEach(l => { const x = m.get(l.truck_id) || {}; x[l.status] = (x[l.status] || 0) + 1; m.set(l.truck_id, x); }); return m; }, [open]);
@@ -55,17 +39,14 @@ function Trucks() {
     <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant="primary" onClick={() => setImp(true)}>+ Nạp xe mới (3 file)</Button>
       <span className="text-xs text-ink-500">File khai báo hệ thống + file check APT + tờ khai nháp TKN → hệ thống tự chấm từng dòng, sale chỉ xử lý dòng bị chặn.</span></div>
     <Card bodyClass="p-0">{loading ? <Loading /> : !rows.length ? <Empty>Chưa nạp xe nào</Empty> :
-      <Table head={['Xe', 'Ngày', 'Dòng APT', 'Tự chốt', 'Còn chặn', 'Sale đã trả lời', 'Chờ duyệt', 'Tiền hàng APT', 'Nạp lúc', '', '']}>{pg.slice(rows).map(t => { const c = cnt.get(t.id) || {}; const s = t.stats || {};
+      <Table head={['Xe', 'Ngày', 'Dòng APT', 'Tự chốt', 'Còn chặn', 'Sale đã trả lời', 'Chờ duyệt', 'Tiền hàng APT', 'Nạp lúc', '']}>{pg.slice(rows).map(t => { const c = cnt.get(t.id) || {}; const s = t.stats || {};
         return <tr key={t.id} className="cursor-pointer hover:bg-ink-50" onClick={() => go(`/acc?truck=${t.id}`)}>
           <Td className="font-semibold text-ink-900">{t.name}</Td><Td>{fmtDate(t.truck_date)}</Td><Td className="text-right">{s.apt ?? ''}</Td>
           <Td className="text-right text-emerald-700">{s.ok ?? ''}{s.apt ? <span className="ml-1 text-[11px] text-ink-400">{Math.round((s.ok || 0) / (s.apt || 1) * 100)}%</span> : ''}</Td>
           <Td className="text-right">{c.blocked ? <b className="text-red-600">{c.blocked}</b> : <span className="text-ink-300">0</span>}</Td>
           <Td className="text-right">{c.replied || ''}</Td><Td className="text-right">{c.pending_approval || ''}</Td>
           <Td className="text-right"><Money v={s.tt_apt} /></Td><Td className="text-xs text-ink-500">{fmtDateTime(t.created_at)}</Td>
-          <Td>{t.is_test ? <Badge color="amber">Nạp thử</Badge> : t.status === 'closed' ? <Badge>Đã đóng</Badge> : <Badge color="blue">Đang xử lý</Badge>}</Td>
-          <Td><button className="whitespace-nowrap rounded-lg border border-ink-200 px-2 py-1 text-xs font-semibold text-ink-700 hover:border-brand-400 disabled:opacity-50" disabled={vt === t.id} title="Danh mục vật tư hàng hóa nhập AMIS (mẫu Mau_danh_muc_vat_tu_hang_hoa)"
-            onClick={e => { e.stopPropagation(); setVt(t.id); fetchAll<any>(() => db.from('acc_lines').select('apt_stt,hh,ten_apt,ten_tk,ten_ht,dvt_apt,dvt_tk,dvt_ht,vat,luong').eq('truck_id', t.id))
-              .then(ls => exportVthh(t, ls)).catch(err => toast.err(err)).finally(() => setVt('')); }}>{vt === t.id ? '⏳' : '⬇'} VTHH</button></Td></tr>; })}</Table>}
+          <Td>{t.is_test ? <Badge color="amber">Nạp thử</Badge> : t.status === 'closed' ? <Badge>Đã đóng</Badge> : <Badge color="blue">Đang xử lý</Badge>}</Td></tr>; })}</Table>}
       <Pager p={pg} total={rows.length} /></Card>
     {imp && <ImportTruck onClose={() => setImp(false)} onDone={id => { setImp(false); reload(); go(`/acc?truck=${id}`); }} />}
   </>;
@@ -231,7 +212,6 @@ function TruckDetail({ id }: { id: string }) {
       Number(l.gia_nhap) || '', Number(l.gia_note) || '', Number(l.gia_de_xuat) || '', Number(l.gia_khach) || '', l.bien_nt === null ? '' : Number(l.bien_nt), l.nk_ht === null ? '' : Number(l.nk_ht), l.nk_tk === null ? '' : Number(l.nk_tk),
       l.phan_hoi, (l.issues || []).join('; '), (l.notes || []).join('; '), REPLY[l.reply] || '', Number(l.reply_price) || '', l.reply_note, l.inv_no, l.inv_result ? INV_RESULT[l.inv_result as InvResult]?.[0] : ''])];
   const fname = (k: string) => `${k}_${stripVN(t?.name || 'xe').replace(/[^A-Za-z0-9]+/g, '-')}`;
-  const expVthh = () => run(async () => { await exportVthh(t, all); });
   const exp = (k: 'fb' | 'full', drive = false) => run(async () => {
     const blob = await writeXlsx(fname(k === 'fb' ? 'Phan_hoi_APT' : 'Doi_soat'), k === 'fb' ? fbRows() : fullRows(), k === 'fb' ? 'Phản hồi APT' : 'Đối soát', !drive);
     if (drive) { const url = await saveToDrive(a.settings.drive, blob, fname(k === 'fb' ? 'Phan_hoi_APT' : 'Doi_soat') + '.xlsx', `Ke toan/Doi soat xe/${(t?.truck_date || today()).slice(0, 7)}`); window.open(url, '_blank'); }
@@ -247,7 +227,7 @@ function TruckDetail({ id }: { id: string }) {
     <Layout title={<span>Đối soát · {t.name} <button className="ml-1 rounded-lg px-1.5 text-sm text-ink-400 hover:bg-ink-100 hover:text-ink-700" title="Đổi tên xe" onClick={() => run(async () => {
         const n = await ask({ title: 'Đổi tên xe', input: { label: 'Tên xe', required: true, value: t.name } }); if (n === null || n.trim() === t.name) return;
         await db.rpc('acc_truck_rename', { p_id: t.id, p_name: n }); rt(); }, 'Đã đổi tên xe')}>✎</button></span>} actions={<Button onClick={() => go('/acc')}>← Danh sách xe</Button>}>
-      <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant="dark" loading={busy} onClick={() => exp('fb')}>⬇ Phản hồi gửi APT</Button><Button loading={busy} onClick={() => exp('full')}>⬇ Đối soát đầy đủ</Button><Button loading={busy} onClick={expVthh} title="Danh mục vật tư hàng hóa nhập AMIS — đúng mẫu Mau_danh_muc_vat_tu_hang_hoa">⬇ Danh mục VTHH (AMIS)</Button>
+      <div className="mb-3 flex flex-wrap items-center gap-2"><Button variant="dark" loading={busy} onClick={() => exp('fb')}>⬇ Phản hồi gửi APT</Button><Button loading={busy} onClick={() => exp('full')}>⬇ Đối soát đầy đủ</Button>
         {driveReady(a.settings.drive) && <Button loading={busy} onClick={() => exp('full', true)}>☁ Lưu Drive</Button>}<Button onClick={() => setRe(true)}>⇪ Nạp lại file</Button>
         <Button onClick={() => copyApt(view.length !== all.length ? view : all)}>📋 Copy đề xuất giá gửi APT{view.length !== all.length ? ' (đang lọc)' : ''}</Button>
         <Button onClick={() => { const t2 = aptPriceList(view.length !== all.length ? view : all); if (!t2) { toast.info('Không có dòng nào có giá đề xuất'); return; } navigator.clipboard.writeText(t2).then(() => toast.ok('Đã copy cột STT + giá (số liền) — dán vào Google Sheet APT')); }}>📋 Copy STT + giá (số liền)</Button>

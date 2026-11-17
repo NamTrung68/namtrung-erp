@@ -67,3 +67,20 @@ export async function exportHdChinhThuc(hds: string[] | null, personName: (id: s
     { fmt: { 9: 'pct', 37: 'pct', ...Object.fromEntries(money.map(j => [j, 'int'])) } as any });
   return items.length;
 }
+
+/** Bản 56: danh mục vật tư hàng hóa nhập AMIS theo HĐ vào đã nạp (mẫu Mau_danh_muc_vat_tu_hang_hoa).
+ *  Mã = mã hàng hệ thống tự sinh khi nạp XML (VD MD2767-2-2270) — mỗi mã 1 dòng; "% thuế suất KHAC" và "Đơn giá bán" để trống */
+export async function exportVthhHd(hds: string[] | null): Promise<number> {
+  const items = await fetchAll<any>(() => { let q = db.from('out_items').select('ma_hang,part,ten,dvt,vat,so_hd_vao,stt_hd,stt_so').order('so_hd_vao').order('stt_hd').order('stt_so'); if (hds && hds.length) q = q.in('so_hd_vao', hds); return q; }, 100000);
+  const seen = new Set<string>();
+  const ls = items.filter(t => { const k = String(t.ma_hang || '').trim().toUpperCase(); if (!k || seen.has(k)) return false; seen.add(k); return true; });
+  if (!ls.length) throw new Error('HĐ đã chọn chưa có mã hàng nào');
+  const pct = (v: any) => (v === null || v === undefined || v === '' ? '' : String(Math.round(Number(v) * 10000) / 100));
+  const rows = [['FILE MẪU DANH SÁCH VẬT TƯ HÀNG HÓA ĐỂ NHẬP VÀO PHẦN MỀM AMIS ACCOUNTING'], ['Hướng dẫn:'], ['- Điền dữ liệu vào các cột tương ứng trên file này'], ['- Các cột có dấu (*) là những cột bắt buộc'],
+    ['- Nếu muốn nhập nhiều thông tin hơn người dùng có thể tải mẫu đầy đủ hoặc thêm cột trên mẫu cơ bản'], ['- Các dòng dữ liệu phía dưới chỉ là ví dụ minh họa'], [],
+    ['Mã (*)', 'Tên (*)', 'Tính chất', 'Đơn vị tính chính', 'Mã nhóm VTHH', 'Thuế suất GTGT (%)', '% thuế suất KHAC', 'Đơn giá bán '],
+    ...ls.map(t => [String(t.ma_hang).trim(), String(t.ten || '').trim(), 'Hàng hóa', t.dvt || '', 'HH', pct(t.vat), '', ''])];
+  const so = hds && hds.length ? hds.slice(0, 5).join('-') + (hds.length > 5 ? `-va-${hds.length - 5}-HD` : '') : 'tat-ca';
+  await writeXlsx(`Danh_muc_VTHH_HD_${so}`, rows, 'Mẫu cơ bản', true, { headerRow: 7, fmt: { 0: 'plain' } });
+  return ls.length;
+}
