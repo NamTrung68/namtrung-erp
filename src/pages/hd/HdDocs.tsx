@@ -138,7 +138,8 @@ export function DocBtns({ v, st, onChanged, compact }: { v: { id: string; buyer_
   const pr = (k: PrintKind) => d.start([v.id], async ([x]) => { setInfo(x); printDocs([x], [k]); log([k]); }, k === 'bbgn');
   const prHd = async () => { setPrBusy('hd'); try { printPdf(await kyPdf(a.settings.drive, v.id)); } catch (e: any) { toast.err('Chưa lấy được HĐ đã ký: ' + (e?.message || String(e)) + ' — bấm mã tra cứu để tải tay'); } finally { setPrBusy(''); } };
   const prAll = async () => { setPrBusy('all'); let pdf: Blob | null = null; try { pdf = await kyPdf(a.settings.drive, v.id); } catch { /* in ĐĐH + BBGN trước */ } finally { setPrBusy(''); }
-    d.start([v.id], async ([x]) => { setInfo(x); printDocs([x], ['ddh', 'bbgn']); log(['ddh', 'bbgn']); if (pdf) setTimeout(() => printPdf(pdf!), 1500); else toast.info('Chưa lấy được PDF HĐ đã ký — đã in ĐĐH + BBGN'); }, true); };
+    // Bản 58: in lần lượt từng cái — ĐĐH → (đóng hộp thoại) BBGN → HĐ đã ký
+    d.start([v.id], async ([x]) => { setInfo(x); log(['ddh', 'bbgn']); await printDocs([x], ['ddh', 'bbgn']); if (pdf) await printPdf(pdf); else toast.info('Chưa lấy được PDF HĐ đã ký — đã in ĐĐH, BBGN'); }, true); };
   const acc = useIsAcc(); const [hoSo, setHoSo] = useState(false); const [scanUp, setScanUp] = useState(false);
   const act = async (x: string, url: string | null = null) => { setMenu(false); try { await mark([v.id], x, [], url); toast.ok(x === 'gui' ? 'Đã đánh dấu: đã gửi khách' : x === 'ky' ? 'Đã lưu: hồ sơ có bản ký' : 'Đã bỏ đánh dấu'); refresh(); } catch (e: any) { toast.err(e); } };
   const s = own || null; const hs = hsOf(s); const isNt = info ? hasHdnt(info) : null;
@@ -154,7 +155,7 @@ export function DocBtns({ v, st, onChanged, compact }: { v: { id: string; buyer_
       {([['ddh', 'ĐĐH'], ['bbgn', 'BBGN']] as [PrintKind, string][]).map(([k, l]) => <button key={k} type="button" disabled={!!d.busy} onClick={() => pr(k)} title={`In ${DOC_NAME[k]} ngay (hộp thoại in)`}
         className="rounded-md border border-ink-200 bg-white px-1.5 py-0.5 font-semibold text-ink-700 hover:border-brand-400 hover:text-brand-700 disabled:opacity-50">{l}</button>)}
       <button type="button" disabled={!!prBusy} onClick={prHd} title="In HĐ đã ký (PDF)" className="rounded-md border border-ink-200 bg-white px-1.5 py-0.5 font-semibold text-ink-700 hover:border-brand-400 hover:text-brand-700 disabled:opacity-50">{prBusy === 'hd' ? '⏳' : 'HĐ'}</button>
-      <button type="button" disabled={!!prBusy || !!d.busy} onClick={prAll} title="In cả bộ: ĐĐH + BBGN + HĐ đã ký" className="rounded-md border border-brand-300 bg-brand-50 px-1.5 py-0.5 font-bold text-brand-800 hover:border-brand-500 disabled:opacity-50">{prBusy === 'all' ? '⏳' : 'Cả bộ'}</button>
+      <button type="button" disabled={!!prBusy || !!d.busy} onClick={prAll} title="In cả bộ, lần lượt từng cái: ĐĐH → BBGN → HĐ đã ký (in xong cái trước mới mở cái sau)" className="rounded-md border border-brand-300 bg-brand-50 px-1.5 py-0.5 font-bold text-brand-800 hover:border-brand-500 disabled:opacity-50">{prBusy === 'all' ? '⏳' : 'Cả bộ'}</button>
     </div>
     <div className="relative flex items-center gap-1">
       <span className={cx('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold', HS[hs][2])} title={s ? [s.gui_at && 'Gửi: ' + new Date(s.gui_at).toLocaleString('vi-VN') + ' · ' + a.personName(s.gui_by || ''), s.ky_at && 'Bản ký: ' + new Date(s.ky_at).toLocaleString('vi-VN') + ' · ' + a.personName(s.ky_by || '')].filter(Boolean).join('\n') : ''}>
@@ -204,8 +205,8 @@ export function DocsBar({ rows, sel, setSel, onChanged, onShip }: { rows: any[];
         const n = await db.rpc<number>('out_doc_cung', { p_ids: ids, p_vi_tri: vt, p_undo: false }); toast.ok(`Đã ghi ${n} HĐ: cất bản cứng tại ${vt}`); onChanged?.(); })}>🗄 Cất bản cứng</Button>}
       {onShip && <Button size="sm" variant="dark" disabled={!ids.length} onClick={() => onShip(ids)} title="Tạo phiếu chuyển phát (gom theo khách) — theo dõi ngày khách nhận và thu về bản ký">📦 Gửi chuyển phát{ids.length ? ` (${ids.length})` : ''}</Button>}
       <Button size="sm" disabled={!ids.length} loading={busy} onClick={() => run(async () => { await mark(ids, 'gui'); onChanged?.(); }, `Đã đánh dấu ${ids.length} HĐ: đã gửi khách`)}>✉ Đã gửi khách</Button>
-      <Button size="sm" loading={!!d.busy} disabled={!ids.length || !kinds.some(k => k === 'ddh' || k === 'bbgn')} title="In ĐĐH / BBGN (theo loại đang chọn) của các HĐ đã tick — mỗi chứng từ 1 trang"
-        onClick={() => { const pk = kinds.filter(k => k === 'ddh' || k === 'bbgn') as PrintKind[]; d.start(ids, async invs => { printDocs(invs, pk);
+      <Button size="sm" loading={!!d.busy} disabled={!ids.length || !kinds.some(k => k === 'ddh' || k === 'bbgn')} title="In ĐĐH / BBGN (theo loại đang chọn) của các HĐ đã tick — in hết ĐĐH xong mới mở in BBGN"
+        onClick={() => { const pk = kinds.filter(k => k === 'ddh' || k === 'bbgn') as PrintKind[]; d.start(ids, async invs => { await printDocs(invs, pk);
           for (const v of invs) await mark([v.id], 'tai', pk).catch(() => null); onChanged?.(); }, pk.includes('bbgn')); }}>🖨 In {ids.length || ''} HĐ (ĐĐH/BBGN)</Button>
       <Button size="sm" variant="primary" loading={!!d.busy} disabled={!ids.length} onClick={go}>⬇ Xuất {ids.length || ''} HĐ (.zip)</Button></div>
     {d.busy && <span className="w-full text-brand-700">{d.busy}</span>}{d.modal}</Card>;
