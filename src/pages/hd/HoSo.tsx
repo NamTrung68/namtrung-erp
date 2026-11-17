@@ -117,7 +117,7 @@ function useScanView() {
   };
   return { open, busy };
 }
-function ScanRows({ rows, onDel, showHd }: { rows: any[]; onDel?: (s: any) => void; showHd?: boolean }) {
+function ScanRows({ rows, onDel, showHd, canDel }: { rows: any[]; onDel?: (s: any) => void; showHd?: boolean; canDel?: (s: any) => boolean }) {
   const a = useApp(); const v = useScanView();
   if (!rows.length) return <div className="px-3 py-3 text-xs text-ink-400">Chưa có bản scan.</div>;
   return <div className="divide-y divide-ink-100">{rows.map(s => <div key={s.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
@@ -129,7 +129,7 @@ function ScanRows({ rows, onDel, showHd }: { rows: any[]; onDel?: (s: any) => vo
       <Button size="sm" loading={v.busy === s.id} onClick={() => v.open(s)}>👁 Xem</Button>
       <Button size="sm" variant="ghost" disabled={!!v.busy} onClick={() => v.open(s, true)}>⬇</Button>
       {s.url && <a className="px-1 text-xs text-brand-700 hover:underline" href={s.url} target="_blank" rel="noreferrer" title="Mở trong Google Drive (chỉ tài khoản có quyền Drive)">Drive ↗</a>}
-      {onDel && <button className="px-1 text-xs text-red-600 hover:underline" onClick={() => onDel(s)}>Gỡ</button>}</div>
+      {onDel && (!canDel || canDel(s)) && <button className="px-1 text-xs text-red-600 hover:underline" onClick={() => onDel(s)}>Gỡ</button>}</div>
   </div>)}</div>;
 }
 
@@ -169,8 +169,10 @@ export function HoSoModal({ inv, onClose, onChanged }: { inv: { id: string; so_h
 }
 
 // ---------------- Hồ sơ pháp nhân (HĐ nguyên tắc / mua bán) ----------------
-export function BuyerHoSo({ buyer, onClose, onChanged }: { buyer: { id: string; name: string; tax_code: string; ma_hdnt?: string | null; ngay_hdnt?: string | null }; onClose: () => void; onChanged?: () => void }) {
-  const acc = useIsAcc(); const { run } = useAction(); const [rev, setRev] = useState(0); const [up, setUp] = useState(false);
+// Bản 55: canUp = Sale / CSKH đang được mở cập nhật pháp nhân → tải scan hồ sơ pháp nhân, gỡ bản do mình tải
+export function BuyerHoSo({ buyer, onClose, onChanged, canUp }: { buyer: { id: string; name: string; tax_code: string; ma_hdnt?: string | null; ngay_hdnt?: string | null }; onClose: () => void; onChanged?: () => void; canUp?: boolean }) {
+  const acc = useIsAcc(); const a = useApp(); const up0 = acc || !!canUp;
+  const delOk = (s: any) => acc || (!!canUp && s.uploaded_by === a.me.id && s.cap === 'phap_nhan'); const { run } = useAction(); const [rev, setRev] = useState(0); const [up, setUp] = useState(false);
   const { data, loading } = useLoad(() => db.rpc<any[]>('ho_so_list', { p: { buyer_id: buyer.id } }), [buyer.id, rev]);
   const rows = data || []; const hopDong = rows.filter(s => s.cap === 'phap_nhan' || s.kinds.includes('hdmb') || s.kinds.includes('hdnt')); const hd = rows.filter(s => !hopDong.includes(s));
   const changed = () => { setRev(x => x + 1); onChanged?.(); };
@@ -180,10 +182,10 @@ export function BuyerHoSo({ buyer, onClose, onChanged }: { buyer: { id: string; 
   return <Modal open size="lg" onClose={onClose} title={`🗂 Hồ sơ pháp nhân · ${buyer.name}`}>
     <div className="mb-3 flex flex-wrap items-center gap-2 text-sm"><span className="font-mono">{buyer.tax_code}</span>
       {buyer.ma_hdnt ? <Badge color={coNt ? 'green' : 'amber'}>HĐNT {buyer.ma_hdnt}{coNt ? ' · đã có scan' : ' · chưa có bản scan'}</Badge> : <Badge>Chưa ký HĐ nguyên tắc — mỗi HĐ cần HĐ mua bán</Badge>}
-      {acc && <Button size="sm" variant="primary" className="ml-auto" onClick={() => setUp(true)}>📎 Tải scan {buyer.ma_hdnt ? 'HĐ nguyên tắc' : 'HĐ mua bán / hợp đồng'}</Button>}</div>
+      {up0 && <Button size="sm" variant="primary" className="ml-auto" onClick={() => setUp(true)}>📎 Tải scan {buyer.ma_hdnt ? 'HĐ nguyên tắc' : 'HĐ mua bán / hợp đồng'}</Button>}</div>
     {loading && !data ? <Loading /> : <>
       <div className="mb-1 text-xs font-semibold text-ink-600">Hợp đồng nguyên tắc / mua bán ({hopDong.length})</div>
-      <div className="mb-3 overflow-hidden rounded-2xl border border-ink-200"><ScanRows rows={hopDong} onDel={acc ? del : undefined} showHd /></div>
+      <div className="mb-3 overflow-hidden rounded-2xl border border-ink-200"><ScanRows rows={hopDong} onDel={up0 ? del : undefined} canDel={delOk} showHd /></div>
       <div className="mb-1 text-xs font-semibold text-ink-600">Bộ chứng từ theo HĐ ({hd.length})</div>
       <div className="overflow-hidden rounded-2xl border border-ink-200"><ScanRows rows={hd} onDel={acc ? del : undefined} showHd /></div></>}
     {up && <ScanUpload target={{ buyer }} onClose={() => setUp(false)} onDone={() => { setUp(false); changed(); }} />}

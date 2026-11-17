@@ -21,6 +21,8 @@ const lc = (s: any) => String(s || '').trim().toLowerCase();
 const MAIN: [string, string, string, string][] = [
   ['', 'Tất cả', 'ink', ''], ['hdnt', '✓ Đã ký HĐ nguyên tắc', 'green', 'Có mã HĐ nguyên tắc'], ['chua_hdnt', 'Chưa có HĐ nguyên tắc', 'amber', 'Chưa có mã HĐ nguyên tắc'], ['da_xuat', '✓ Đã từng xuất HĐ', 'green', 'MST đã có HĐ đã ký'],
   ['chua_xuat', 'Chưa xuất HĐ', 'ink', 'MST chưa có HĐ đã ký nào'],
+  // Bản 55: hồ sơ pháp nhân đã nhập đủ / còn thiếu
+  ['du_hs', '✓ Đã nhập đủ hồ sơ', 'green', 'Đủ tên, MST, địa chỉ, email, đại diện, chức vụ, người nhận'], ['thieu_hs', 'Chưa nhập đủ hồ sơ', 'amber', 'Còn thiếu ít nhất 1 mục'],
 ];
 const FIX: [string, string][] = [
   ['lech_ky', 'Tên / địa chỉ khác HĐ đã ký'], ['mst_sai', 'MST sai dạng'], ['trung_mst', 'Cùng MST khác tên'], ['thieu_dc', 'Thiếu địa chỉ'],
@@ -31,7 +33,7 @@ interface Row { id: string; customer_id: string | null; username: string | null;
   is_default: boolean; kh_name: string | null; kh_code: string | null; sale_id: string | null; mst_sai: boolean; thieu_dc: boolean; trung_mst: boolean; khong_md: boolean; so_phieu: number; updated_at: string | null;
   dai_dien: string | null; chuc_vu: string | null; dia_chi_giao: string | null; ma_hdnt: string | null; ngay_hdnt: string | null; nguoi_nhan: string | null; sdt_nhan: string | null;
   hdnt?: boolean; da_xuat?: number; khop_ky?: number; xuat_cuoi?: string | null;
-  lech_mau?: { so: string; ngay: string | null; ten: string | null; dia_chi: string | null; ten_khac: boolean; dc_khac: boolean } | null }
+  lech_mau?: { so: string; ngay: string | null; ten: string | null; dia_chi: string | null; ten_khac: boolean; dc_khac: boolean } | null; thieu_hs?: string[] }
 type Draft = { username: string; name: string; tax_code: string; address: string; email: string; note: string; dai_dien: string; chuc_vu: string; dia_chi_giao: string; ma_hdnt: string; ngay_hdnt: string; nguoi_nhan: string; sdt_nhan: string };
 const toDraft = (r: Partial<Row>): Draft => ({ username: r.username || '', name: r.name || '', tax_code: r.tax_code || '', address: r.address || '', email: r.email || '', note: r.note || '',
   dai_dien: r.dai_dien || '', chuc_vu: r.chuc_vu || '', dia_chi_giao: r.dia_chi_giao || '', ma_hdnt: r.ma_hdnt || '', ngay_hdnt: r.ngay_hdnt || '', nguoi_nhan: r.nguoi_nhan || '', sdt_nhan: r.sdt_nhan || '' });
@@ -52,7 +54,7 @@ export default function PhapNhan() {
   const toggleMo = () => run(async () => {
     const open = !pnMo;
     if (!(await ask({ title: open ? 'Mở cho Sale / CSKH cập nhật pháp nhân?' : 'Khóa cập nhật pháp nhân?', ok: open ? '🔓 Mở' : '🔒 Khóa',
-      message: open ? 'Sale / CSKH / Trưởng nhóm được thêm, sửa pháp nhân của khách mình phụ trách (mã HĐ nguyên tắc vẫn chỉ kế toán). ERP gửi thông báo cho Sale / CSKH.'
+      message: open ? 'Sale / CSKH / Trưởng nhóm được thêm, sửa đầy đủ hồ sơ pháp nhân của khách mình phụ trách: tên, MST, địa chỉ, email, đại diện, mã + ngày HĐ nguyên tắc, người nhận chuyển phát, tải bản scan HĐ nguyên tắc / HĐ mua bán. ERP gửi thông báo cho Sale / CSKH.'
         : 'Chỉ Kế toán / Admin được thêm, sửa, xóa pháp nhân. Sale / CSKH vẫn xem được, chọn được pháp nhân khi lập phiếu.' }))) return;
     await db.rpc('out_pn_lock_set', { p_open: open }); rlCfg(); toast.ok(open ? 'Đã mở — đã báo Sale / CSKH' : 'Đã khóa — chỉ Kế toán / Admin sửa');
   });
@@ -106,11 +108,11 @@ export default function PhapNhan() {
     {canToggle && <Button variant={pnMo ? 'danger' : undefined} loading={busy} onClick={toggleMo}>{pnMo ? '🔒 Khóa cập nhật' : '🔓 Mở cho Sale / CSKH cập nhật'}</Button>}
     {canEdit && <Button variant="primary" onClick={() => setAdding({ ...EMPTY })}>+ Thêm pháp nhân</Button>}</div>}>
     {accCfg && <div className={cx('mb-3 rounded-xl border px-3 py-2 text-sm', pnMo ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-ink-200 bg-ink-50 text-ink-700')}>
-      {pnMo ? <>🔓 <b>Đang mở</b> — Sale / CSKH bổ sung, sửa pháp nhân của khách mình phụ trách (tên, MST, địa chỉ, email, người đại diện, người nhận chuyển phát). Mã HĐ nguyên tắc do kế toán điền.{canToggle ? ' Xong thì bấm 🔒 Khóa cập nhật.' : ''}</>
+      {pnMo ? <>🔓 <b>Đang mở</b> — Sale / CSKH điền, sửa đầy đủ hồ sơ pháp nhân của khách mình phụ trách: tên, MST, địa chỉ, email, người đại diện, chức vụ, mã + ngày HĐ nguyên tắc, người nhận chuyển phát, tải bản scan (nút 🗂). Lọc <b>Chưa nhập đủ hồ sơ</b> để thấy pháp nhân còn thiếu.{canToggle ? ' Xong thì bấm 🔒 Khóa cập nhật.' : ''}</>
         : <>🔒 <b>Đang khóa</b> — chỉ Kế toán / Admin sửa pháp nhân.{canToggle ? '' : ' Thông tin sai hoặc thiếu: báo kế toán sửa.'}</>}</div>}
-    {!acc && <p className="mb-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-900">Bạn đang xem <b>pháp nhân của khách mình phụ trách</b>. Sửa tên / MST / địa chỉ / email / người đại diện cho chuẩn rồi bấm Lưu — bấm <b>🔍</b> cạnh MST để lấy thông tin đăng ký thuế. Mã HĐ nguyên tắc do kế toán điền.</p>}
+    {!acc && <p className="mb-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-900">Bạn đang xem <b>pháp nhân của khách mình phụ trách</b>. {canEdit ? <>Điền đủ tên / MST / địa chỉ / email / người đại diện / mã HĐ nguyên tắc / người nhận rồi bấm Lưu — bấm <b>🔍</b> cạnh MST để lấy thông tin đăng ký thuế; bản scan HĐ nguyên tắc tải ở nút 🗂.</> : 'Đang khóa — thông tin sai hoặc thiếu thì báo kế toán.'}</p>}
     <p className="mb-3 text-sm text-ink-600">Mỗi <b>username</b> khách có thể có nhiều pháp nhân nhận HĐ; <b>★</b> là pháp nhân tự điền khi sale lập phiếu. Sửa thẳng trên ô rồi bấm <b>Lưu</b>. Đổi username = chuyển pháp nhân sang khách khác (ERP tự gắn theo username). Muốn sửa hàng loạt: <b>Xuất Excel</b> → sửa → <b>Nạp Excel</b> (cùng username + MST thì cập nhật, không tạo trùng).</p>
-    <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">{MAIN.map(([k, l, c, sub]) => { const n = k ? counts[k] : counts.tat_ca;
+    <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">{MAIN.map(([k, l, c, sub]) => { const n = k ? counts[k] : counts.tat_ca;
       return <button key={k} onClick={() => setFlag(k)} className={cx('rounded-xl border px-3 py-2 text-left', flag === k ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-200' : 'border-ink-200 bg-white hover:border-brand-300')}>
         <div className={cx('text-2xl font-bold', c === 'green' ? 'text-emerald-600' : c === 'amber' ? 'text-amber-600' : 'text-ink-900')}>{n ?? '…'}</div><div className="text-sm font-semibold text-ink-800">{l}</div>
         <div className="text-[11px] text-ink-500">{k ? sub : counts.khach !== undefined ? `${counts.khach} khách / username` : ''}</div></button>; })}</div>
@@ -154,8 +156,8 @@ export default function PhapNhan() {
             <div className="grid gap-1.5 sm:grid-cols-2 lg:col-start-2 lg:col-end-8 lg:grid-cols-[1.3fr_1fr_1.7fr_130px_2fr]">
               <input readOnly={!canEdit} className={cx(inp, 'border-ink-200')} value={val(r, 'dai_dien')} onChange={e => setE(r, 'dai_dien', e.target.value)} placeholder="Người đại diện (VD: Ông Trương Văn Dương)" title="Người đại diện — in trên hợp đồng / biên bản" />
               <input readOnly={!canEdit} className={cx(inp, 'border-ink-200')} value={val(r, 'chuc_vu')} onChange={e => setE(r, 'chuc_vu', e.target.value)} placeholder="Chức vụ" title="Chức vụ người đại diện" />
-              <input disabled={!acc} className={cx(inp, 'border-ink-200 disabled:bg-ink-50 disabled:text-ink-600', val(r, 'ma_hdnt') && 'border-emerald-300 bg-emerald-50/50 font-semibold')} value={val(r, 'ma_hdnt')} onChange={e => setE(r, 'ma_hdnt', e.target.value)} placeholder={acc ? 'Mã HĐ nguyên tắc (nếu đã ký)' : 'Chưa có HĐ nguyên tắc'} title={acc ? 'Có mã HĐNT → bộ chứng từ dùng HĐNT, không cần HĐ mua bán từng HĐ' : 'Mã HĐ nguyên tắc do kế toán điền'} />
-              <input disabled={!acc} type="date" className={cx(inp, 'border-ink-200 disabled:bg-ink-50')} value={val(r, 'ngay_hdnt')} onChange={e => setE(r, 'ngay_hdnt', e.target.value)} title="Ngày ký HĐ nguyên tắc (trống: đọc từ mã dạng 28/08/2026/...)" />
+              <input disabled={!canEdit} className={cx(inp, 'border-ink-200 disabled:bg-ink-50 disabled:text-ink-600', val(r, 'ma_hdnt') && 'border-emerald-300 bg-emerald-50/50 font-semibold')} value={val(r, 'ma_hdnt')} onChange={e => setE(r, 'ma_hdnt', e.target.value)} placeholder={canEdit ? 'Mã HĐ nguyên tắc (nếu đã ký)' : 'Chưa có HĐ nguyên tắc'} title="Có mã HĐNT → bộ chứng từ dùng HĐNT, không cần HĐ mua bán từng HĐ" />
+              <input disabled={!canEdit} type="date" className={cx(inp, 'border-ink-200 disabled:bg-ink-50')} value={val(r, 'ngay_hdnt')} onChange={e => setE(r, 'ngay_hdnt', e.target.value)} title="Ngày ký HĐ nguyên tắc (trống: đọc từ mã dạng 28/08/2026/...)" />
               <input readOnly={!canEdit} className={cx(inp, 'border-ink-200')} value={val(r, 'dia_chi_giao')} onChange={e => setE(r, 'dia_chi_giao', e.target.value)} placeholder="Địa chỉ giao hàng (trống = địa chỉ ĐKKD)" /></div>
             {/* Bản 40: người nhận bản cứng HĐ đã ký (chuyển phát) — tự điền khi tạo phiếu chuyển phát */}
             <div className="grid gap-1.5 sm:grid-cols-2 lg:col-start-2 lg:col-end-8 lg:grid-cols-[1.3fr_1fr_3.7fr]">
@@ -163,6 +165,7 @@ export default function PhapNhan() {
               <input readOnly={!canEdit} className={cx(inp, val(r, 'sdt_nhan').trim() && !sdtOk(val(r, 'sdt_nhan')) ? 'border-red-300' : 'border-ink-200')} inputMode="tel" value={val(r, 'sdt_nhan')} onChange={e => setE(r, 'sdt_nhan', e.target.value)} placeholder="📞 SĐT nhận" />
               <span className="self-center text-[11px] text-ink-400">Địa chỉ nhận = địa chỉ giao hàng (trống thì dùng địa chỉ ĐKKD).</span></div>
             <div className="flex flex-wrap gap-1 text-[11px] lg:col-start-2 lg:col-end-8">
+              {r.thieu_hs && (r.thieu_hs.length ? <Badge color="amber">Hồ sơ thiếu: {r.thieu_hs.join(', ')}</Badge> : <Badge color="green">✓ Đủ hồ sơ</Badge>)}
               {r.trung_mst && <Badge color="red">Cùng MST {r.tax_code} có tên khác — chuẩn hóa</Badge>}
               {r.mst_sai && <Badge color="red">MST sai dạng</Badge>}{r.khong_md && <Badge color="amber">Khách chưa có ★</Badge>}
               {r.hdnt && <Badge color="green">✓ HĐ nguyên tắc {r.ma_hdnt}</Badge>}
@@ -190,13 +193,13 @@ export default function PhapNhan() {
         <MstCheck className="sm:col-span-2" mst={adding.tax_code} name={adding.name} address={adding.address} onApply={v => setAdding(x => x && ({ ...x, name: v.name, address: v.address }))} />
         <label className="text-xs text-ink-600">Người đại diện<Input value={adding.dai_dien} onChange={e => setAdding({ ...adding, dai_dien: e.target.value })} placeholder="VD: Ông Trương Văn Dương" /></label>
         <label className="text-xs text-ink-600">Chức vụ<Input value={adding.chuc_vu} onChange={e => setAdding({ ...adding, chuc_vu: e.target.value })} placeholder="VD: Giám đốc / Chủ hộ kinh doanh" /></label>
-        <label className="text-xs text-ink-600">Mã HĐ nguyên tắc (nếu đã ký{acc ? '' : ' — kế toán điền'})<Input disabled={!acc} value={adding.ma_hdnt} onChange={e => setAdding({ ...adding, ma_hdnt: e.target.value })} placeholder="VD: 28/08/2026/HĐNTHH/NT/JINVPP" /></label>
-        <label className="text-xs text-ink-600">Ngày ký HĐNT<Input disabled={!acc} type="date" value={adding.ngay_hdnt} onChange={e => setAdding({ ...adding, ngay_hdnt: e.target.value })} /></label>
+        <label className="text-xs text-ink-600">Mã HĐ nguyên tắc (nếu đã ký)<Input value={adding.ma_hdnt} onChange={e => setAdding({ ...adding, ma_hdnt: e.target.value })} placeholder="VD: 28/08/2026/HĐNTHH/NT/JINVPP" /></label>
+        <label className="text-xs text-ink-600">Ngày ký HĐNT<Input type="date" value={adding.ngay_hdnt} onChange={e => setAdding({ ...adding, ngay_hdnt: e.target.value })} /></label>
         <label className="text-xs text-ink-600 sm:col-span-2">Địa chỉ giao hàng (trống = địa chỉ trên)<Input value={adding.dia_chi_giao} onChange={e => setAdding({ ...adding, dia_chi_giao: e.target.value })} /></label>
         <label className="text-xs text-ink-600">Người nhận chuyển phát HĐ<Input value={adding.nguoi_nhan} onChange={e => setAdding({ ...adding, nguoi_nhan: e.target.value })} /></label>
         <label className="text-xs text-ink-600">SĐT nhận<Input inputMode="tel" value={adding.sdt_nhan} onChange={e => setAdding({ ...adding, sdt_nhan: e.target.value })} className={adding.sdt_nhan && !sdtOk(adding.sdt_nhan) ? 'border-red-300' : ''} /></label></div>
       <p className="mt-2 text-xs text-ink-500">Username khớp khách ERP thì gắn ngay; chưa có khách thì ERP tự gắn khi khách có username đó. Khách chưa có ★ → pháp nhân này thành mặc định.</p></Modal>}
-    {hoSo && <BuyerHoSo buyer={{ id: hoSo.id, name: hoSo.name, tax_code: hoSo.tax_code, ma_hdnt: hoSo.ma_hdnt, ngay_hdnt: hoSo.ngay_hdnt }} onClose={() => setHoSo(null)} onChanged={rlHs} />}
+    {hoSo && <BuyerHoSo buyer={{ id: hoSo.id, name: hoSo.name, tax_code: hoSo.tax_code, ma_hdnt: hoSo.ma_hdnt, ngay_hdnt: hoSo.ngay_hdnt }} onClose={() => setHoSo(null)} onChanged={() => { rlHs(); reload(); }} canUp={pnMo && !!hoSo.customer_id} />}
     {imp && <ImportBuyers current={rows} onClose={() => setImp(false)} onDone={() => { setImp(false); reload(); }} />}
   </Layout>;
 }

@@ -27,10 +27,11 @@ select pg_temp.as_user('a@nt.vn'); set role authenticated;
 select pg_temp.check((select bool_and(x->>'username' is not null and x->>'customer_id' is not null) and count(*) >= 1 and bool_or(x->>'name' = 'CÔNG TY V36') and not bool_or(x->>'name' = 'CÔNG TY LẠC V36')
   from jsonb_array_elements(public.out_buyers_page('{"limit":2000}')->'rows') x), 'sale chỉ thấy pháp nhân khách mình');
 select pg_temp.check(not (public.out_buyers_page('{}')->>'acc')::boolean, 'cờ không phải kế toán');
--- sửa được, nhưng không đổi được mã HĐNT
+-- sửa được; bản 55: đang mở cập nhật thì sale điền được cả mã HĐNT
 select public.out_buyer_save((select id from public.out_buyers where tax_code = '0101248141' and username = 'khv36'), '{"username":"khv36","name":"CÔNG TY CP V36","tax_code":"0101248141","address":"Hà Nội","ma_hdnt":"SALE-SUA"}');
 reset role;
-select pg_temp.check((select name = 'CÔNG TY CP V36' and ma_hdnt is null from public.out_buyers where tax_code = '0101248141' and username = 'khv36'), 'sale sửa tên, không sửa mã HĐNT');
+select pg_temp.check((select name = 'CÔNG TY CP V36' and ma_hdnt = 'SALE-SUA' from public.out_buyers where tax_code = '0101248141' and username = 'khv36'), 'sale sửa tên + mã HĐNT khi đang mở');
+update public.out_buyers set ma_hdnt = null, ngay_hdnt = null where tax_code = '0101248141' and username = 'khv36';
 select id as pnlac from public.out_buyers where username = 'khongaicoV36' \gset
 select id as pn36 from public.out_buyers where username = 'khv36' \gset
 select pg_temp.as_user('a@nt.vn'); set role authenticated;
