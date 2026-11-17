@@ -321,6 +321,11 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Dọn dữ liệu: gắn pháp nhân mồ côi vào khách theo phiếu đã dùng; gắn pháp nhân cho phiếu thiếu theo khách + MST.
 - Nâng cấp: `supabase/migrations/0061_v53.sql`. Kiểm thử: `supabase/tests/99zd_v53.sql`.
 
+## Bản 59 — Bản in ĐĐH / BBGN gọn, chuyên nghiệp (17/11/2026)
+- Cỡ chữ ngang hóa đơn điện tử: nội dung 11pt, bảng hàng 10pt, tiêu đề 15pt; lề A4 14–18mm.
+- Thông tin bên mua / bên bán thẳng cột (nhãn | giá trị); bảng kẻ mảnh, tiêu đề cột nền xám nhạt, độ rộng cột cố định; dòng cộng tiền / thuế / tổng canh phải.
+- Bảng dài sang trang: lặp lại tiêu đề cột, không cắt đôi 1 dòng, khối chữ ký không bị tách trang.
+
 ## Bản 58 — In cả bộ: lần lượt từng chứng từ (17/11/2026)
 - **🖨 Cả bộ** mở 3 lệnh in riêng, lần lượt: **ĐĐH → BBGN → HĐ đã ký** (đóng hộp thoại in cái trước mới mở cái sau) — mỗi lệnh chọn số bản riêng (VD 2 bản).
 - In hàng loạt N HĐ: in hết ĐĐH của các HĐ trong 1 lệnh, xong mới mở lệnh in BBGN.
