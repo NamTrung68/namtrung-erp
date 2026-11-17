@@ -423,7 +423,9 @@ export function InvoiceEditor({ items, inv, onClose, onDone }: { items?: any[]; 
       <div><Field label="Khách hàng (ERP)"><CustomerPicker value={c} onChange={x => setCus(x)} /></Field>
         <div className="mt-2 flex flex-wrap gap-1.5 text-xs">{c && <button className="rounded-lg border border-ink-200 px-2 py-1 hover:border-brand-400" onClick={fromCus}>Lấy thông tin khách</button>}
           {(buyers || []).map(x => <button key={x.id} className="rounded-lg border border-brand-200 bg-brand-50 px-2 py-1 font-semibold text-brand-800 hover:border-brand-500"
-            onClick={() => setB((y: any) => ({ ...y, name: x.name, mst: x.tax_code || '', addr: x.address || '', email: x.email || '' }))}>{x.is_default ? '★ ' : ''}{x.name}{x.tax_code ? ' · ' + x.tax_code : ''}</button>)}</div>
+            title={[x.address, x.ma_hdnt ? 'HĐ nguyên tắc ' + x.ma_hdnt : 'Chưa ký HĐ nguyên tắc — mỗi HĐ kèm HĐ mua bán'].filter(Boolean).join('\n')}
+            onClick={() => setB((y: any) => ({ ...y, name: x.name, mst: x.tax_code || '', addr: x.address || '', email: x.email || '' }))}>{x.is_default ? '★ ' : ''}{x.name}{x.tax_code ? ' · ' + x.tax_code : ''}
+            <span className={cx('ml-1 font-normal', x.ma_hdnt ? 'text-emerald-700' : 'text-ink-400')}>{x.ma_hdnt ? '· HĐNT ' + (String(x.ma_hdnt).match(/^\d{1,2}\/\d{1,2}\/\d{4}/)?.[0] || '✓') : '· chưa HĐNT'}</span></button>)}</div>
         {!!(buyers || []).length && <div className="mt-1 text-[11px] text-ink-500">Pháp nhân nhận HĐ của khách (★ = mặc định) — bấm để điền.
           {(() => { const cur = (buyers || []).find((x: any) => x.name === b.name && (x.tax_code || '') === (b.mst || '')); return cur && !cur.is_default && (a.isAdmin || a.has('ke_toan') || !!a.settings.accounting?.pn_mo) ? <button className="ml-1 font-semibold text-brand-700 underline" onClick={() => setDefault(cur.id)}>Đặt “{cur.name}” làm mặc định</button> : null; })()}</div>}</div>
       <div className="grid grid-cols-2 gap-2">

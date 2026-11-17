@@ -30,7 +30,8 @@ const FIX: [string, string][] = [
 interface Row { id: string; customer_id: string | null; username: string | null; own_username: string | null; name: string; tax_code: string; address: string | null; email: string | null; note: string | null;
   is_default: boolean; kh_name: string | null; kh_code: string | null; sale_id: string | null; mst_sai: boolean; thieu_dc: boolean; trung_mst: boolean; khong_md: boolean; so_phieu: number; updated_at: string | null;
   dai_dien: string | null; chuc_vu: string | null; dia_chi_giao: string | null; ma_hdnt: string | null; ngay_hdnt: string | null; nguoi_nhan: string | null; sdt_nhan: string | null;
-  hdnt?: boolean; da_xuat?: number; khop_ky?: number; xuat_cuoi?: string | null }
+  hdnt?: boolean; da_xuat?: number; khop_ky?: number; xuat_cuoi?: string | null;
+  lech_mau?: { so: string; ngay: string | null; ten: string | null; dia_chi: string | null; ten_khac: boolean; dc_khac: boolean } | null }
 type Draft = { username: string; name: string; tax_code: string; address: string; email: string; note: string; dai_dien: string; chuc_vu: string; dia_chi_giao: string; ma_hdnt: string; ngay_hdnt: string; nguoi_nhan: string; sdt_nhan: string };
 const toDraft = (r: Partial<Row>): Draft => ({ username: r.username || '', name: r.name || '', tax_code: r.tax_code || '', address: r.address || '', email: r.email || '', note: r.note || '',
   dai_dien: r.dai_dien || '', chuc_vu: r.chuc_vu || '', dia_chi_giao: r.dia_chi_giao || '', ma_hdnt: r.ma_hdnt || '', ngay_hdnt: r.ngay_hdnt || '', nguoi_nhan: r.nguoi_nhan || '', sdt_nhan: r.sdt_nhan || '' });
@@ -166,7 +167,10 @@ export default function PhapNhan() {
               {r.mst_sai && <Badge color="red">MST sai dạng</Badge>}{r.khong_md && <Badge color="amber">Khách chưa có ★</Badge>}
               {r.hdnt && <Badge color="green">✓ HĐ nguyên tắc {r.ma_hdnt}</Badge>}
               {Number(r.da_xuat) > 0 && <Badge color="green">✓ Đã xuất {r.da_xuat} HĐ{r.xuat_cuoi ? ` · gần nhất ${fmtDate(r.xuat_cuoi)}` : ''}</Badge>}
-              {Number(r.da_xuat) > 0 && !Number(r.khop_ky) && <Badge color="red">⚠ Tên / địa chỉ khác HĐ đã ký — kiểm tra</Badge>}
+              {Number(r.da_xuat) > 0 && !Number(r.khop_ky) && <Badge color="red">⚠ {r.lech_mau ? [r.lech_mau.ten_khac && 'Tên', r.lech_mau.dc_khac && 'địa chỉ'].filter(Boolean).join(' + ') || 'Tên / địa chỉ' : 'Tên / địa chỉ'} khác HĐ đã ký — kiểm tra</Badge>}
+              {r.lech_mau && <span className="basis-full rounded-lg bg-red-50 px-2 py-1 text-red-800">HĐ {r.lech_mau.so}{r.lech_mau.ngay ? ' · ' + fmtDate(r.lech_mau.ngay) : ''}:
+                {r.lech_mau.ten_khac && <> tên “<b>{r.lech_mau.ten}</b>”</>}{r.lech_mau.dc_khac && <> · địa chỉ “<b>{r.lech_mau.dia_chi}</b>”</>}
+                <span className="text-red-600"> — pháp nhân đúng thì kiểm lại HĐ trên MISA (cần điều chỉnh nếu HĐ ghi sai); HĐ đúng thì sửa pháp nhân theo HĐ.</span></span>}
               {r.so_phieu > 0 && <span className="text-ink-500">đã dùng {r.so_phieu} phiếu</span>}
               {r.note && <span className="text-ink-400">· {r.note}</span>}
               {r.updated_at && <span className="text-ink-400">· sửa {new Date(r.updated_at).toLocaleString('vi-VN')}</span>}</div>
