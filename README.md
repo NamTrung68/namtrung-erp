@@ -312,3 +312,11 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - **⬇ Excel toàn bộ dòng giá 3%**: mọi dòng của xe thuộc luồng A (qua Nam Trung) + B (chờ hợp quy), mọi trạng thái. Giá đề xuất APT xuất = giá khách ÷ (1 + biên mục tiêu, mặc định 3%), làm tròn đồng, số liền. Dòng thiếu giá khách vẫn liệt kê, cột giá trống + ghi chú. Không gồm luồng C (APT xuất thẳng), D (Lanchi).
 - **⬇ Excel Mã hàng + Giá đề xuất**: 5 cột *Mã hàng APT · Giá đề xuất APT xuất · Xe · Mã đơn · Mã khai báo* (C xe — bản 52b; D mã đơn, E mã khai báo theo file xe, thiếu thì lấy mã APT ghi trên nháp — bản 52c), cùng bộ dòng trên, bỏ dòng thiếu mã hàng / giá khách.
 - Chỉ sửa giao diện (`src/pages/acc/Mine.tsx`), không đổi database. Kiểm thử: `tests/e2e/v52.cjs`.
+
+## Bản 53 — Khách nhiều pháp nhân: lưu phiếu ghép đúng pháp nhân (17/11/2026)
+
+- **Lưu phiếu xuất HĐ** (`out_invoice_save`): phiếu chưa chọn khách thì lấy khách theo dòng hàng (trước đây bỏ trống → tự sinh pháp nhân không khách / không username, VD XHD00118). Ghép pháp nhân theo **khách + MST** (tên khác hoa thường / dấu câu không sinh pháp nhân trùng). Pháp nhân tự thêm từ phiếu có username, ghi chú "Tự thêm từ phiếu xuất HĐ".
+- Phiếu **không còn ghi đè địa chỉ / email** của pháp nhân (trước đây đè cả khi đang 🔒 khóa cập nhật) — chỉ bổ sung ô đang trống.
+- **Chuyển phát** (`out_ship_prep`): HĐ chưa gắn pháp nhân không còn mượn người nhận / địa chỉ của pháp nhân ★ khác MST.
+- Dọn dữ liệu: gắn pháp nhân mồ côi vào khách theo phiếu đã dùng; gắn pháp nhân cho phiếu thiếu theo khách + MST.
+- Nâng cấp: `supabase/migrations/0061_v53.sql`. Kiểm thử: `supabase/tests/99zd_v53.sql`.
