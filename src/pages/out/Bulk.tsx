@@ -116,7 +116,7 @@ export function BulkInvoices({ items, onClose, onDone }: { items: any[]; onClose
             <span className="text-ink-500">Pháp nhân:</span>
             {g.buyers.map(x => <button key={x.id} disabled={run} title={[x.tax_code, x.address].filter(Boolean).join(' · ')} onClick={() => set(i, y => ({ ...y, bid: x.id, src: 'pháp nhân đã chọn', b: { ...y.b, name: x.name, mst: x.tax_code || '', addr: x.address || '', email: x.email || '' } }))}
               className={cx('max-w-[340px] truncate rounded-lg border px-2 py-1', g.bid === x.id ? 'border-brand-500 bg-brand-600 font-semibold text-white' : 'border-brand-200 bg-brand-50 text-brand-800 hover:border-brand-500')}>
-              {x.is_default ? '★ ' : ''}{x.name}{x.tax_code ? ' · ' + x.tax_code : ''}</button>)}
+              {x.is_default ? '★ ' : ''}{x.name}{x.tax_code ? ' · ' + x.tax_code : ''}{x.ma_hdnt ? ' · HĐNT ' + (String(x.ma_hdnt).match(/^\d{1,2}\/\d{1,2}\/\d{4}/)?.[0] || '✓') : ' · chưa HĐNT'}</button>)}
             <button disabled={run} onClick={() => set(i, y => ({ ...y, bid: '', src: 'nhập tay', b: { ...y.b, name: '', mst: '', addr: '', email: '' } }))}
               className={cx('rounded-lg border px-2 py-1', g.bid === '' && g.src === 'nhập tay' ? 'border-ink-500 bg-ink-100 font-semibold' : 'border-ink-200 hover:border-ink-400')}>+ Pháp nhân khác (nhập tay)</button>
             {!g.buyers.length && <span className="text-amber-700">Khách chưa có pháp nhân nào trong danh sách — nhập tay; kế toán chuẩn hóa ở menu Pháp nhân nhận HĐ</span>}</div>}

@@ -10,7 +10,7 @@ export const DOC_SHORT: Record<DocKind, string> = { ddh: 'DDH', bbgn: 'BBGN', hd
 export interface DocLine { ten: string; dvt: string | null; sl: number; don_gia: number; vat: number | null }
 export interface DocInv {
   id: string; code: string; so_hd: string | null; mds?: string[]; ngay_hd: string | null; buyer_name: string | null; tax_code: string | null; address: string | null; payment: string | null;
-  buyer?: { id?: string; dai_dien?: string | null; chuc_vu?: string | null; dia_chi_giao?: string | null; ma_hdnt?: string | null; ngay_hdnt?: string | null } | null; lines: DocLine[];
+  buyer?: { id?: string; name?: string | null; tax_code?: string | null; address?: string | null; dai_dien?: string | null; chuc_vu?: string | null; dia_chi_giao?: string | null; ma_hdnt?: string | null; ngay_hdnt?: string | null } | null; lines: DocLine[];
 }
 
 const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c]);
@@ -24,6 +24,14 @@ export const maDon = (v: DocInv) => { const m = Array.from(new Set((v.mds || [])
   .sort((a, b) => a.localeCompare(b, 'en', { numeric: true })); return m.length ? m.join(', ') : soDon(v); };
 export const soDon = (v: DocInv) => String(v.so_hd || '').replace(/\D/g, '').replace(/^0+(?=\d)/, '') || v.code;
 const CHAM = '…………………………';
+// Bản 54: bỏ nhãn dán nhầm vào tên ("… Đại diện: Ông …") / địa chỉ ("Địa chỉ: …") — giống app.pn_ten_sach / app.pn_dc_sach trên máy chủ
+export const tenSach = (t?: string | null) => String(t || '').replace(/\s*[-–,;.]?\s*(đại diện|đai diện|đại diên|đai diên|dai dien|người đại diện|đ\/d)\s*:.*$/iu, '')
+  .replace(/^\s*(tên (công ty|đơn vị|khách hàng)[^:]*|tên)\s*:\s*/iu, '').trim();
+export const dcSach = (t?: string | null) => String(t || '').replace(/^\s*(địa chỉ|đia chỉ|địa chi|đia chi|dia chi|đ\/c|đc)\s*:\s*/iu, '').trim();
+const mstN = (t?: string | null) => String(t || '').replace(/\s/g, '');
+/** Bên mua in trên chứng từ: pháp nhân cùng MST với HĐ (đúng tên đăng ký, đúng HĐ nguyên tắc của pháp nhân đó); không có thì thông tin trên HĐ đã làm sạch */
+export const benMua = (v: DocInv) => { const b = v.buyer && v.buyer.name && mstN(v.buyer.tax_code) && mstN(v.buyer.tax_code) === mstN(v.tax_code) ? v.buyer : null;
+  return { ten: tenSach(b?.name) || tenSach(v.buyer_name), dia_chi: dcSach(b?.address) || dcSach(v.address), mst: v.tax_code || b?.tax_code || '' }; };
 /** Ngày HĐNT: điền tay, không thì đọc từ đầu mã dạng 28/08/2026/HĐNTHH/... */
 export function ngayHdnt(ma?: string | null, ngay?: string | null): string | null {
   if (ngay) return ngay.slice(0, 10);
@@ -43,8 +51,9 @@ export function docVars(v: DocInv, kind: DocKind) {
   const sub = v.lines.reduce((s, l) => s + Math.round(Number(l.sl) * Number(l.don_gia)), 0);
   const thue = v.lines.reduce((s, l) => s + Math.round(Math.round(Number(l.sl) * Number(l.don_gia)) * Number(l.vat ?? 0)), 0);
   const chu = docTien(sub + thue).replace(/\.$/, ''); const bangChu = chu.charAt(0).toLowerCase() + chu.slice(1);
+  const bm = benMua(v);
   const base: Record<string, string> = {
-    so_don: maDon(v), ten_mua: v.buyer_name || '', dia_chi: v.address || '', dia_chi_giao: v.buyer?.dia_chi_giao || v.address || '', mst: v.tax_code || '',
+    so_don: maDon(v), ten_mua: bm.ten, dia_chi: bm.dia_chi, dia_chi_giao: v.buyer?.dia_chi_giao || bm.dia_chi, mst: bm.mst,
     dai_dien: v.buyer?.dai_dien || CHAM, chuc_vu: v.buyer?.chuc_vu || CHAM, ngay: dmy(ngay), ngay_giao: dmy(ngay), ngay_chu: ngayChu(ngay),
     thanh_toan: TT[v.payment || 'TM/CK'] || v.payment || TT['TM/CK'], cong_tien: vnd(sub), tong: vnd(sub + thue), bang_chu: bangChu,
     can_cu: hasHdnt(v) ? `${v.buyer!.ma_hdnt!.trim()}${nt ? ' ký ngày ' + ngayChu(nt) : ''}` : `${soHdmb(v)} ký ngày ${ngayChu(ngay)}`,

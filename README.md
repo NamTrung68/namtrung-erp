@@ -320,3 +320,13 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - **Chuyển phát** (`out_ship_prep`): HĐ chưa gắn pháp nhân không còn mượn người nhận / địa chỉ của pháp nhân ★ khác MST.
 - Dọn dữ liệu: gắn pháp nhân mồ côi vào khách theo phiếu đã dùng; gắn pháp nhân cho phiếu thiếu theo khách + MST.
 - Nâng cấp: `supabase/migrations/0061_v53.sql`. Kiểm thử: `supabase/tests/99zd_v53.sql`.
+
+## Bản 54 — Chứng từ HĐ: mẫu HĐNT mới, bên mua đúng pháp nhân, in nhanh; danh mục VTHH (17/11/2026)
+
+- **HĐ nguyên tắc mua bán**: thay mẫu `public/mau-hd/hdnt.docx` bằng mẫu mới của anh (Số HĐNT, ngày ký, tên / địa chỉ / MST / đại diện / chức vụ bên mua điền theo pháp nhân).
+- **ĐĐH / BBGN / HĐNT**: bên mua lấy theo **pháp nhân cùng MST với HĐ** (tên đăng ký, địa chỉ, đại diện, đúng HĐNT của pháp nhân đó — 1 username nhiều pháp nhân, mỗi pháp nhân 1 HĐNT riêng). Bỏ nhãn dán nhầm "… Đại diện: Ông …" / "Địa chỉ: …".
+- **In nhanh**: dưới mỗi HĐ đã ký có 🖨 *ĐĐH · BBGN · HĐ · Cả bộ* — bấm là mở hộp thoại in (ĐĐH / BBGN dựng đúng nội dung mẫu, HĐ in thẳng PDF đã ký). Thanh hàng loạt: **🖨 In N HĐ (ĐĐH/BBGN)**.
+- **Lưu phiếu** làm sạch nhãn trong tên / địa chỉ; so pháp nhân với HĐ đã ký bỏ qua nhãn → hết báo "khác HĐ đã ký" oan. Còn lệch thật thì màn Pháp nhân ghi rõ **HĐ số…, tên / địa chỉ trên HĐ** để kế toán xử lý.
+- Chọn pháp nhân khi lập phiếu (lẻ và hàng loạt) hiện **HĐNT dd/mm/yyyy / chưa HĐNT** của từng pháp nhân.
+- **Đối soát xe → ⬇ Danh mục VTHH (AMIS)** (trong xe và ở danh sách xe): đúng mẫu *Mau_danh_muc_vat_tu_hang_hoa* — Mã = mã HH APT, Tên, Hàng hóa, ĐVT, HH, thuế suất; *% thuế suất KHAC* và *Đơn giá bán* để trống; mỗi mã 1 dòng, bỏ luồng C (APT xuất thẳng).
+- Nâng cấp: `supabase/migrations/0062_v54.sql`, `0063_v54b.sql` (so tên bỏ qua dấu gạch). Kiểm thử: `supabase/tests/99ze_v54.sql`, `tests/hd54.test.ts`.
