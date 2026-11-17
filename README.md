@@ -321,6 +321,12 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Dọn dữ liệu: gắn pháp nhân mồ côi vào khách theo phiếu đã dùng; gắn pháp nhân cho phiếu thiếu theo khách + MST.
 - Nâng cấp: `supabase/migrations/0061_v53.sql`. Kiểm thử: `supabase/tests/99zd_v53.sql`.
 
+## Bản 55 — Pháp nhân nhận HĐ: mở cập nhật thì Sale / CSKH điền đủ hồ sơ; lọc đủ / thiếu hồ sơ (17/11/2026)
+- Kế toán bấm **🔓 Mở cho Sale / CSKH cập nhật** → Sale / CSKH / TN / TP điền, sửa **toàn bộ** hồ sơ pháp nhân của khách mình: tên, MST, địa chỉ, email, đại diện, chức vụ, **mã + ngày HĐ nguyên tắc**, địa chỉ giao, người nhận + SĐT nhận, **tải bản scan HĐNT / HĐMB** (nút 🗂; chỉ gỡ được bản do mình tải). Khóa lại thì như cũ: chỉ Kế toán / Admin.
+- Sale chỉ xin được vé tải lên thư mục `Ho so khach hang/…` trên Drive, không tải được chỗ khác.
+- Thẻ lọc mới **✓ Đã nhập đủ hồ sơ** / **Chưa nhập đủ hồ sơ**; mỗi pháp nhân có nhãn "Hồ sơ thiếu: …". Đủ hồ sơ = tên, MST đúng dạng, địa chỉ, email, người đại diện, chức vụ, người nhận, SĐT nhận; có mã HĐNT thì phải có bản scan HĐNT.
+- Migration: `0064_v55.sql`. Test: `supabase/tests/99zf_v55.sql`.
+
 ## Bản 54 — Chứng từ HĐ: mẫu HĐNT mới, bên mua đúng pháp nhân, in nhanh; danh mục VTHH (17/11/2026)
 
 - **HĐ nguyên tắc mua bán**: thay mẫu `public/mau-hd/hdnt.docx` bằng mẫu mới của anh (Số HĐNT, ngày ký, tên / địa chỉ / MST / đại diện / chức vụ bên mua điền theo pháp nhân).
