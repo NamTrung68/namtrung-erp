@@ -51,26 +51,36 @@ table.hd{width:100%;border-collapse:collapse}table.hd td{width:50%;vertical-alig
 table.ky{width:100%;margin-top:18px}table.ky td{width:50%;text-align:center;vertical-align:top;height:110px}table.ky .i{font-size:11pt}
 ol.kv{margin:8px 0;padding-left:22px}ol.kv li{margin:3px 0}`;
 
-/** In trong khung ẩn — mở hộp thoại in, không mở tab mới */
-function printFrame(setup: (f: HTMLIFrameElement) => void) {
-  const f = document.createElement('iframe');
-  f.style.cssText = 'position:fixed;left:-12000px;top:0;width:210mm;height:297mm;border:0;opacity:0;pointer-events:none';
-  document.body.appendChild(f);
-  const done = () => setTimeout(() => f.remove(), 60000);
-  f.onload = () => { setTimeout(() => { try { f.contentWindow!.focus(); f.contentWindow!.print(); } catch { /* trình duyệt chặn → mở tab */ if (f.src) window.open(f.src, '_blank'); } done(); }, 250); };
-  setup(f);
+/** In trong khung ẩn — mở hộp thoại in, không mở tab mới. Xong (đóng hộp thoại in) mới resolve để in tiếp chứng từ sau */
+function printFrame(setup: (f: HTMLIFrameElement) => void): Promise<void> {
+  return new Promise(res => {
+    const f = document.createElement('iframe');
+    f.style.cssText = 'position:fixed;left:-12000px;top:0;width:210mm;height:297mm;border:0;opacity:0;pointer-events:none';
+    document.body.appendChild(f);
+    let done = false; const fin = () => { if (done) return; done = true; setTimeout(() => f.remove(), 60000); setTimeout(res, 300); };
+    f.onload = () => { setTimeout(() => {
+      const w = f.contentWindow;
+      try { w?.addEventListener('afterprint', fin); } catch { /* PDF viewer */ }
+      try { w!.focus(); w!.print(); } catch { if (f.src) window.open(f.src, '_blank'); fin(); return; }
+      // Chrome / Edge / Firefox: print() dừng tới khi đóng hộp thoại in → chạy tới đây là đã in xong (hoặc bấm Hủy)
+      fin();
+    }, 250); };
+    setup(f);
+  });
 }
 
-/** In ĐĐH / BBGN của nhiều HĐ trong 1 lần (mỗi chứng từ 1 trang mới) */
-export function printDocs(invs: DocInv[], kinds: PrintKind[]) {
-  const body = invs.flatMap(v => kinds.map(k => (k === 'ddh' ? ddhHtml(v) : bbgnHtml(v)))).join('');
-  const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>In chứng từ</title><style>${CSS}</style></head><body>${body}</body></html>`;
-  printFrame(f => { f.srcdoc = html; });
+/** Bản 58: in từng loại chứng từ thành từng lệnh in riêng (in ĐĐH xong mới mở in BBGN) — mỗi lệnh chọn được số bản */
+export async function printDocs(invs: DocInv[], kinds: PrintKind[]) {
+  for (const k of kinds) {
+    const body = invs.map(v => (k === 'ddh' ? ddhHtml(v) : bbgnHtml(v))).join('');
+    const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>${k === 'ddh' ? 'Đơn đặt hàng' : 'Biên bản giao nhận'}</title><style>${CSS}</style></head><body>${body}</body></html>`;
+    await printFrame(f => { f.srcdoc = html; });
+  }
 }
 
 /** In HĐ đã ký (PDF) */
-export function printPdf(pdf: Blob) {
+export async function printPdf(pdf: Blob) {
   const url = URL.createObjectURL(pdf.type === 'application/pdf' ? pdf : new Blob([pdf], { type: 'application/pdf' }));
-  printFrame(f => { f.src = url; });
-  setTimeout(() => URL.revokeObjectURL(url), 120000);
+  setTimeout(() => URL.revokeObjectURL(url), 600000);
+  await printFrame(f => { f.src = url; });
 }

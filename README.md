@@ -321,6 +321,10 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Dọn dữ liệu: gắn pháp nhân mồ côi vào khách theo phiếu đã dùng; gắn pháp nhân cho phiếu thiếu theo khách + MST.
 - Nâng cấp: `supabase/migrations/0061_v53.sql`. Kiểm thử: `supabase/tests/99zd_v53.sql`.
 
+## Bản 58 — In cả bộ: lần lượt từng chứng từ (17/11/2026)
+- **🖨 Cả bộ** mở 3 lệnh in riêng, lần lượt: **ĐĐH → BBGN → HĐ đã ký** (đóng hộp thoại in cái trước mới mở cái sau) — mỗi lệnh chọn số bản riêng (VD 2 bản).
+- In hàng loạt N HĐ: in hết ĐĐH của các HĐ trong 1 lệnh, xong mới mở lệnh in BBGN.
+
 ## Bản 57 — "Đủ hồ sơ pháp nhân" bắt buộc có HĐ nguyên tắc (17/11/2026)
 - Đủ hồ sơ = gắn khách ERP, tên, MST đúng dạng, địa chỉ, email, người đại diện, chức vụ, **mã HĐNT, ngày ký HĐNT, bản scan HĐNT**, người nhận, SĐT nhận. Địa chỉ giao hàng trống = dùng địa chỉ ĐKKD, không tính thiếu.
 - Migration: `0065_v57.sql`.
