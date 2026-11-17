@@ -17,7 +17,7 @@ select pg_temp.as_user('kt@nt.vn'); set role authenticated; select public.out_pn
 select pg_temp.as_user('a@nt.vn'); set role authenticated;
 do $$ declare r jsonb; begin
   r := public.out_buyers_page('{"q":"0105500001"}');
-  perform pg_temp.check((r->'rows'->0->'thieu_hs') ?& array['Email', 'Người đại diện', 'Chức vụ', 'Người nhận', 'SĐT nhận'], 'liệt kê mục thiếu: ' || (r->'rows'->0->'thieu_hs')::text);
+  perform pg_temp.check((r->'rows'->0->'thieu_hs') ?& array['Email', 'Người đại diện', 'Chức vụ', 'Người nhận', 'SĐT nhận', 'Mã HĐNT', 'Ngày HĐNT', 'Scan HĐNT'], 'liệt kê mục thiếu: ' || (r->'rows'->0->'thieu_hs')::text);
   perform pg_temp.check(jsonb_array_length(public.out_buyers_page('{"q":"0105500001","flag":"thieu_hs"}')->'rows') = 1, 'lọc chưa nhập đủ');
   perform pg_temp.check(jsonb_array_length(public.out_buyers_page('{"q":"0105500001","flag":"du_hs"}')->'rows') = 0, 'chưa đủ thì không ở lọc đủ');
   -- đang mở: sale điền mã + ngày HĐNT và đủ thông tin
@@ -25,7 +25,7 @@ do $$ declare r jsonb; begin
   perform public.out_buyer_doc_info('00000000-0000-0000-0055-0000000000b1', '{"nguoi_nhan":"Chị B","sdt_nhan":"0912550055"}');
   perform pg_temp.check((select ma_hdnt = '05/05/2026/HĐNT/NT/V55' and ngay_hdnt = '2026-05-05' from public.out_buyers where id = '00000000-0000-0000-0055-0000000000b1'), 'sale lưu được mã HĐNT khi mở');
   r := public.out_buyers_page('{"q":"0105500001"}');
-  perform pg_temp.check(r->'rows'->0->'thieu_hs' = '["Scan HĐNT"]', 'có HĐNT thì cần scan: ' || (r->'rows'->0->'thieu_hs')::text);
+  perform pg_temp.check(r->'rows'->0->'thieu_hs' = '["Scan HĐNT"]', 'có mã + ngày HĐNT, còn thiếu scan: ' || (r->'rows'->0->'thieu_hs')::text);
   -- sale tải scan HĐNT của pháp nhân khách mình
   r := public.ho_so_scan_add('{"buyer_id":"00000000-0000-0000-0055-0000000000b1","kinds":["hdnt"],"drive_id":"drv55","file_name":"hdnt.pdf"}');
   perform pg_temp.check(jsonb_array_length(public.out_buyers_page('{"q":"0105500001","flag":"du_hs"}')->'rows') = 1, 'đủ hồ sơ sau khi tải scan');

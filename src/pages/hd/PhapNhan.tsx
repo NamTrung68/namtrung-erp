@@ -22,7 +22,7 @@ const MAIN: [string, string, string, string][] = [
   ['', 'Tất cả', 'ink', ''], ['hdnt', '✓ Đã ký HĐ nguyên tắc', 'green', 'Có mã HĐ nguyên tắc'], ['chua_hdnt', 'Chưa có HĐ nguyên tắc', 'amber', 'Chưa có mã HĐ nguyên tắc'], ['da_xuat', '✓ Đã từng xuất HĐ', 'green', 'MST đã có HĐ đã ký'],
   ['chua_xuat', 'Chưa xuất HĐ', 'ink', 'MST chưa có HĐ đã ký nào'],
   // Bản 55: hồ sơ pháp nhân đã nhập đủ / còn thiếu
-  ['du_hs', '✓ Đã nhập đủ hồ sơ', 'green', 'Đủ tên, MST, địa chỉ, email, đại diện, chức vụ, người nhận'], ['thieu_hs', 'Chưa nhập đủ hồ sơ', 'amber', 'Còn thiếu ít nhất 1 mục'],
+  ['du_hs', '✓ Đã nhập đủ hồ sơ', 'green', 'Đủ thông tin + đã ký HĐ nguyên tắc (mã, ngày, bản scan)'], ['thieu_hs', 'Chưa nhập đủ hồ sơ', 'amber', 'Còn thiếu ít nhất 1 mục'],
 ];
 const FIX: [string, string][] = [
   ['lech_ky', 'Tên / địa chỉ khác HĐ đã ký'], ['mst_sai', 'MST sai dạng'], ['trung_mst', 'Cùng MST khác tên'], ['thieu_dc', 'Thiếu địa chỉ'],
@@ -108,7 +108,7 @@ export default function PhapNhan() {
     {canToggle && <Button variant={pnMo ? 'danger' : undefined} loading={busy} onClick={toggleMo}>{pnMo ? '🔒 Khóa cập nhật' : '🔓 Mở cho Sale / CSKH cập nhật'}</Button>}
     {canEdit && <Button variant="primary" onClick={() => setAdding({ ...EMPTY })}>+ Thêm pháp nhân</Button>}</div>}>
     {accCfg && <div className={cx('mb-3 rounded-xl border px-3 py-2 text-sm', pnMo ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-ink-200 bg-ink-50 text-ink-700')}>
-      {pnMo ? <>🔓 <b>Đang mở</b> — Sale / CSKH điền, sửa đầy đủ hồ sơ pháp nhân của khách mình phụ trách: tên, MST, địa chỉ, email, người đại diện, chức vụ, mã + ngày HĐ nguyên tắc, người nhận chuyển phát, tải bản scan (nút 🗂). Lọc <b>Chưa nhập đủ hồ sơ</b> để thấy pháp nhân còn thiếu.{canToggle ? ' Xong thì bấm 🔒 Khóa cập nhật.' : ''}</>
+      {pnMo ? <>🔓 <b>Đang mở</b> — Sale / CSKH điền, sửa đầy đủ hồ sơ pháp nhân của khách mình phụ trách: tên, MST, địa chỉ, email, người đại diện, chức vụ, mã + ngày HĐ nguyên tắc, người nhận chuyển phát, tải bản scan (nút 🗂). Lọc <b>Chưa nhập đủ hồ sơ</b> để thấy pháp nhân còn thiếu — đủ hồ sơ = đủ thông tin + mã, ngày ký và bản scan HĐ nguyên tắc.{canToggle ? ' Xong thì bấm 🔒 Khóa cập nhật.' : ''}</>
         : <>🔒 <b>Đang khóa</b> — chỉ Kế toán / Admin sửa pháp nhân.{canToggle ? '' : ' Thông tin sai hoặc thiếu: báo kế toán sửa.'}</>}</div>}
     {!acc && <p className="mb-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-900">Bạn đang xem <b>pháp nhân của khách mình phụ trách</b>. {canEdit ? <>Điền đủ tên / MST / địa chỉ / email / người đại diện / mã HĐ nguyên tắc / người nhận rồi bấm Lưu — bấm <b>🔍</b> cạnh MST để lấy thông tin đăng ký thuế; bản scan HĐ nguyên tắc tải ở nút 🗂.</> : 'Đang khóa — thông tin sai hoặc thiếu thì báo kế toán.'}</p>}
     <p className="mb-3 text-sm text-ink-600">Mỗi <b>username</b> khách có thể có nhiều pháp nhân nhận HĐ; <b>★</b> là pháp nhân tự điền khi sale lập phiếu. Sửa thẳng trên ô rồi bấm <b>Lưu</b>. Đổi username = chuyển pháp nhân sang khách khác (ERP tự gắn theo username). Muốn sửa hàng loạt: <b>Xuất Excel</b> → sửa → <b>Nạp Excel</b> (cùng username + MST thì cập nhật, không tạo trùng).</p>

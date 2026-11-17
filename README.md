@@ -321,6 +321,10 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Dọn dữ liệu: gắn pháp nhân mồ côi vào khách theo phiếu đã dùng; gắn pháp nhân cho phiếu thiếu theo khách + MST.
 - Nâng cấp: `supabase/migrations/0061_v53.sql`. Kiểm thử: `supabase/tests/99zd_v53.sql`.
 
+## Bản 57 — "Đủ hồ sơ pháp nhân" bắt buộc có HĐ nguyên tắc (17/11/2026)
+- Đủ hồ sơ = gắn khách ERP, tên, MST đúng dạng, địa chỉ, email, người đại diện, chức vụ, **mã HĐNT, ngày ký HĐNT, bản scan HĐNT**, người nhận, SĐT nhận. Địa chỉ giao hàng trống = dùng địa chỉ ĐKKD, không tính thiếu.
+- Migration: `0065_v57.sql`.
+
 ## Bản 56 — Danh mục VTHH (AMIS) theo HĐ vào, mã hàng hệ thống tự sinh (17/11/2026)
 - Bàn làm việc kế toán → khối ① có nút **⬇ Danh mục VTHH (AMIS)**: chọn HĐ vào đã nạp (1 hoặc nhiều HĐ) → file đúng mẫu Mau_danh_muc_vat_tu_hang_hoa.
 - **Mã = mã hàng hệ thống tự sinh khi nạp XML** (VD `MD2767-2-2270`), tên / ĐVT / thuế suất theo HĐ vào; "% thuế suất KHAC", "Đơn giá bán" để trống; mỗi mã 1 dòng.
