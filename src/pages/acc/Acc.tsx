@@ -12,6 +12,7 @@ import { driveReady, saveToDrive } from '../../lib/drive';
 import { bienTone, deXuat, dueTxt, GiaApt, lineName, LuongBadge, Money, pctTxt, REPLY, REPLY_SUB, ST, StatusBadge, useAccCfg } from './common';
 import { downloadMau, type MauKind } from '../../lib/mau';
 import { AssignModal, canFixPrice, ChotModal, ClaimForm, ReplyForm } from './forms';
+import { EditLineModal, editLog, FIELD_LBL, ManualBox } from './edit';
 export { useAccCfg, ReplyForm };
 
 const isAcc = (a: ReturnType<typeof useApp>) => a.isAdmin || a.has('ke_toan');
@@ -75,6 +76,7 @@ export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: 
   const [xt, setXt] = useState<string>((truck?.md_xuat_thang || []).join(', ')); const [test, setTest] = useState(false);
   const [target, setTarget] = useState<any>(truck || null); // nạp lại vào xe cũ khi phát hiện trùng
   const [khFill, setKhFill] = useState<Record<string, string>>({}); // bản 32: username điền tay theo mã đơn trước khi lưu
+  const [manual, setManual] = useState<{ key: string; label: string; fields: string[]; diff: string[] }[]>([]); // bản 60: dòng Admin đã sửa tay
   const xtList = () => Array.from(new Set(xt.split(/[^A-Za-z0-9]+/).map(normMd).filter(Boolean)));
   const analyze = async () => {
     setErr(''); setRes(null); setKhFill({});
@@ -105,6 +107,16 @@ export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: 
       if (!tkRows) r.warnings.push('Chưa có tờ khai nháp: chưa so được thuế NK theo tờ khai.');
       if (aptTotal && Math.abs(aptTotal - r.stats.tt_apt) > 1000) r.warnings.push(`${tong ? 'Tổng cột Thành tiền' : 'Tổng tiền dòng đầu file APT'} ${money(aptTotal)} khác tổng cộng các dòng ${money(r.stats.tt_apt)} (do giá NOTE/đề xuất).`);
       const unmapped = Array.from(new Set(r.lines.filter(l => l.sale_name && !sm.find(l.sale_name) && (l.md || l.luong === 'A')).map(l => l.sale_name!)));
+      // bản 60: nạp lại → dòng Admin đã sửa tay được giữ; báo trường nào file mới khác
+      let man: typeof manual = [];
+      if (target) { try {
+        const ml: any[] = await db.from<any[]>('acc_lines').select('line_key,apt_stt,md,manual').eq('truck_id', target.id).neq('manual', '{}').limit(2000);
+        const byKey = new Map(r.lines.map((l: any) => [l.line_key, l]));
+        man = (ml || []).map(x => { const nl: any = byKey.get(x.line_key); const fs = Object.keys(x.manual || {});
+          const diff = nl ? fs.filter(k => k !== 'sale_id' && nl[k] !== undefined && String(nl[k] ?? '') !== String(x.manual[k].goc ?? '') && String(nl[k] ?? '') !== String(x.manual[k].moi ?? '')) : [];
+          return { key: x.line_key, label: `${x.apt_stt ? 'STT ' + x.apt_stt : x.line_key}${x.md ? ' · ' + x.md : ''}${nl ? '' : ' (không còn trong file mới — sẽ bị xóa)'}`, fields: fs, diff }; });
+      } catch { man = []; } }
+      setManual(man);
       setRes({ ...r, unmapped, sysCount: sys.length, dups: Array.from(dups.values()), tong: !!tong });
       if (!name) setName('Xe ' + (date ? fmtDate(date).slice(0, 5) : ''));
     } catch (e: any) { setErr(e.message || String(e)); }
@@ -163,6 +175,8 @@ export function ImportTruck({ truck, onClose, onDone }: { truck?: any; onClose: 
       </div>
       {res.unmapped.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Tên sale chưa ghép nhân sự: <b>{res.unmapped.join(', ')}</b>. Dòng của các tên này chỉ kế toán thấy — vào tab “Ghép tên sale” rồi nạp lại.</div>}
       {res.warnings.map((w: string, i: number) => <div key={i} className={cx('rounded-lg p-2 text-xs', w.startsWith('File xe lệch cột') ? 'bg-amber-50 font-semibold text-amber-900' : 'bg-ink-50 text-ink-600')}>• {w}</div>)}
+      {manual.length > 0 && <div className="rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm"><b>✎ {manual.length} dòng Admin đã sửa tay — nạp lại vẫn giữ phần đã sửa</b>
+        <div className="mt-1 max-h-32 space-y-0.5 overflow-auto text-xs">{manual.map(m => <div key={m.key} className={cx((m.diff.length || m.label.includes('xóa')) && 'font-semibold text-red-700')}>{m.label}: {m.fields.map(k => FIELD_LBL[k] || k).join(', ')}{m.diff.length ? ` — file mới khác ở ${m.diff.map(k => FIELD_LBL[k] || k).join(', ')}` : ''}</div>)}</div></div>}
       <ThieuUser lines={res.lines} fill={khFill} setFill={setKhFill} saleName={(l: any) => sm.find(l.sale_name)?.name || l.sale_name} />
       <div className="max-h-[40vh] overflow-auto rounded-xl border border-ink-200"><Table head={['STT', 'Sale', 'MD', 'Tên hàng', 'Giá TK → APT', 'Biên APT', 'Biên NT', 'Luồng', 'Trạng thái', 'Vấn đề']}>
         {res.lines.filter((l: any) => l.status !== 'ok' || l.gia_de_xuat).map((l: any) => <tr key={l.line_key}><Td>{l.apt_stt}</Td><Td className="whitespace-nowrap">{sm.find(l.sale_name)?.name || l.sale_name}</Td><Td>{l.md}</Td>
@@ -253,7 +267,7 @@ function TruckDetail({ id }: { id: string }) {
           <thead><tr className="border-b border-ink-200 bg-ink-50 text-left text-xs text-ink-500">{['STT', 'Sale · MD', 'Tên hàng', 'SL', 'Giá tờ khai', 'Giá APT (nháp)', 'Biên APT', 'Giá khách', 'Biên NT', 'Phản hồi APT', 'Trạng thái', 'Vấn đề / ghi chú', 'HĐ'].map(h => <th key={h} className="whitespace-nowrap px-2 py-2.5 font-medium">{h}</th>)}</tr></thead>
           <tbody className="divide-y divide-ink-100">{pg.slice(view).map(l => { const [dt, dc] = dueTxt(l.status === 'blocked' ? l.due_at : null);
             return <tr key={l.id} className="cursor-pointer hover:bg-ink-50" onClick={() => setSel(l)}>
-              <td className="text-ink-400">{l.apt_stt ?? '—'}<div className="text-[11px]">{l.hh}</div></td>
+              <td className="text-ink-400">{l.apt_stt ?? '—'}<div className="text-[11px]">{l.hh}</div>{l.manual && Object.keys(l.manual).length > 0 && <div className="text-[10px] font-semibold text-brand-700" title={'Admin đã sửa: ' + Object.keys(l.manual).map(k => FIELD_LBL[k] || k).join(', ')}>✎ đã sửa</div>}</td>
               <td className="whitespace-nowrap"><div className="font-medium text-ink-900">{a.personName(l.sale_id) || <span className="text-amber-700">{l.sale_name || '—'}</span>}</div><div className="text-[11px] text-ink-500">{l.ma_dong || l.md || (l.claim_md ? <span className="text-amber-700">{l.claim_md} (sale nhập)</span> : <span className="text-red-600">không có đơn</span>)}{l.dh ? ' · ' + l.dh : ''}</div>
                 {l.match_kind && <div className={cx('text-[10px]', l.match_kind === 'ma' ? 'text-emerald-700' : 'font-semibold text-amber-700')} title={l.ma_kb_apt ? `Mã trên nháp APT: ${l.ma_kb_apt}` : ''}>{MATCH_KIND[l.match_kind as MatchKind]}{l.match_kind !== 'ma' && l.ma_kb_apt ? ` (APT ${l.ma_kb_apt})` : ''}</div>}</td>
               <td className="min-w-[220px] max-w-[340px]"><div className="line-clamp-2">{lineName(l)}</div><div className="mt-0.5"><LuongBadge l={l.luong} /></div></td>
@@ -281,13 +295,14 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
   const { data: ev } = useLoad(() => db.from<any[]>('acc_events').select('*').eq('line_id', l.id).order('at', { asc: false }), [l.id]);
   const acc = isAcc(a);
   const R = ({ k, v, tone }: { k: string; v: React.ReactNode; tone?: string }) => <div className="flex justify-between gap-3 border-b border-ink-100 py-1.5 text-sm"><span className="text-ink-500">{k}</span><span className={cx('text-right', tone)}>{v}</span></div>;
-  const [chot, setChot] = useState(false); const [asg, setAsg] = useState(false);
+  const [chot, setChot] = useState(false); const [asg, setAsg] = useState(false); const [edit, setEdit] = useState(false);
   const { data: cus } = useLoad(() => l.customer_id ? db.from<any>('customers').select('code,sys_code,sys_username,company_name,contact_name').eq('id', l.customer_id).maybeSingle() : Promise.resolve(null), [l.customer_id]);
   const { data: outs } = useLoad(() => db.from<any[]>('out_items_v').select('ma_hang,sl_nhap,ton,phieu').eq('acc_line_id', l.id), [l.id]);
   const back = () => run(async () => { const note = await ask({ title: 'Trả lại cho sale', input: { label: 'Ghi chú', required: true } }); if (note === null) return; await db.rpc('acc_line_set', { p_id: l.id, p_status: 'blocked', p_note: note }); onChanged(); }, 'Đã trả lại sale');
   const mine = l.sale_id === a.me.id || (a.seesTeam && !!l.sale_id); const dx = l.status === 'blocked' && l.gia_de_xuat && !l.gia_note ? Math.round(l.gia_de_xuat) : deXuat(l, cfg);
   return <Modal open onClose={onClose} size="lg" title={<span>{l.ma_dong || l.md || 'Dòng không có đơn'} · STT APT {l.apt_stt ?? '—'}</span>}
-    footer={acc ? <>{l.status !== 'ok' && l.status !== 'approved' && <Button variant="success" loading={busy} onClick={() => setChot(true)}>✓ Chốt dòng</Button>}
+    footer={acc ? <>{a.isAdmin && <Button variant="dark" loading={busy} onClick={() => setEdit(true)}>✎ Sửa thông tin dòng</Button>}
+      {l.status !== 'ok' && l.status !== 'approved' && <Button variant="success" loading={busy} onClick={() => setChot(true)}>✓ Chốt dòng</Button>}
       {['A', 'B'].includes(l.luong) && <Button loading={busy} onClick={() => setAsg(true)}>Gán sale / đơn</Button>}
       {l.status !== 'blocked' && l.sale_id && l.luong !== 'C' && l.luong !== 'D' && <Button variant="danger" loading={busy} onClick={back}>Trả lại sale</Button>}
       <Button loading={busy} onClick={() => run(async () => { await db.rpc('acc_line_xuat_thang', { p_id: l.id, p_on: l.luong !== 'C' }); onChanged(); }, 'Đã cập nhật')}>{l.luong === 'C' ? 'Bỏ đánh dấu xuất thẳng' : 'Đánh dấu APT xuất thẳng'}</Button></> : undefined}>
@@ -304,7 +319,8 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
         <R k="Biên NT" v={pctTxt(l.bien_nt)} tone={bienTone(l.bien_nt, cfg.bien_nt_min, cfg.bien_nt_max, cfg.bien_chan_max)} /><R k="Thuế NK tờ khai" v={pctTxt(l.nk_tk)} />
         <R k="Giá vốn tờ khai (giá NH + NK/đv)" v={<Money v={l.gia_von} />} /><R k="Biên APT" v={pctTxt(l.bien_apt)} /></div>
     </div>
-    <div className="mt-3 text-xs text-ink-500">Tên trên file APT: {l.ten_apt || '—'}</div>
+    <div className="mt-3 text-xs text-ink-500">Tên trên file APT: {l.ten_apt || '—'}{l.vat != null ? ` · VAT ${pctTxt(l.vat)}` : ''}</div>
+    <ManualBox l={l} />
     {dx && <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50 p-3 text-sm"><span>Đề nghị APT xuất giá <b>{dx}</b> <span className="text-xs text-ink-500">(biên NT về {pctTxt(cfg.bien_muc_tieu)})</span></span>
       <Button size="sm" variant="primary" onClick={() => navigator.clipboard.writeText(aptPriceMsg([l], cfg) || `STT ${l.apt_stt} | ${l.hh} — Đề nghị APT xuất giá ${dx}`).then(() => toast.ok('Đã sao chép'))}>📋 Copy gửi APT</Button></div>}
     {l.claimed_at && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm"><b>{l.claimed_by === l.sale_id ? 'Sale nhận dòng' : 'Kế toán gán'}:</b> {a.personName(l.sale_id)} · MD {l.claim_md || l.md || '—'}{l.claim_gia ? ` · giá khách ${money(l.claim_gia)}` : ''}
@@ -320,7 +336,8 @@ export function LineModal({ line: l, onClose, onChanged }: { line: any; onClose:
     {!acc && mine && (['blocked', 'replied'].includes(l.status) || canFixPrice(l)) && <ReplyForm line={l} onDone={onChanged} />}
     {chot && <ChotModal line={l} onClose={() => setChot(false)} onDone={onChanged} />}
     {asg && <AssignModal line={l} onClose={() => setAsg(false)} onDone={onChanged} />}
-    {(ev || []).length > 0 && <div className="mt-4"><div className="mb-1 text-xs font-bold uppercase text-ink-400">Nhật ký</div>{(ev || []).map(e => <div key={e.id} className="text-xs text-ink-600">{fmtDateTime(e.at)} · {a.personName(e.actor)} · {e.action}{e.note ? ' — ' + e.note : ''}</div>)}</div>}
+    {edit && <EditLineModal line={l} onClose={() => setEdit(false)} onDone={onChanged} />}
+    {(ev || []).length > 0 && <div className="mt-4"><div className="mb-1 text-xs font-bold uppercase text-ink-400">Nhật ký</div>{(ev || []).map(e => <div key={e.id} className="text-xs text-ink-600">{fmtDateTime(e.at)} · {a.personName(e.actor)} · {editLog(e, a.personName) || e.action}{e.note ? ' — ' + e.note : ''}</div>)}</div>}
   </Modal>;
 }
 

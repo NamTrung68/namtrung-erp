@@ -354,3 +354,13 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Chọn pháp nhân khi lập phiếu (lẻ và hàng loạt) hiện **HĐNT dd/mm/yyyy / chưa HĐNT** của từng pháp nhân.
 - **Đối soát xe → ⬇ Danh mục VTHH (AMIS)** (trong xe và ở danh sách xe): đúng mẫu *Mau_danh_muc_vat_tu_hang_hoa* — Mã = mã HH APT, Tên, Hàng hóa, ĐVT, HH, thuế suất; *% thuế suất KHAC* và *Đơn giá bán* để trống; mỗi mã 1 dòng, bỏ luồng C (APT xuất thẳng).
 - Nâng cấp: `supabase/migrations/0062_v54.sql`, `0063_v54b.sql` (so tên bỏ qua dấu gạch). Kiểm thử: `supabase/tests/99ze_v54.sql`, `tests/hd54.test.ts`.
+
+## Bản 60 — Admin sửa trực tiếp dòng đối soát xe APT (25/11/2026)
+
+- **Danh sách xe đối soát → mở xe → bấm dòng → ✎ Sửa thông tin dòng** (chỉ Admin / BGĐ). Sửa được: Sale, Mã đơn MD, Khách (username), Mã khai báo, Tên hàng APT, SL APT / tờ khai, Giá APT (nháp), Giá NOTE, Giá xuất khách, Thuế VAT, Thuế NK. Bắt buộc ghi lý do; nhật ký dòng ghi cũ → mới, người sửa.
+- Nhóm A (Tên APT, SL, Giá nháp, VAT) là khóa ghép HĐ chính thức: sửa đúng theo HĐ thật → HĐ về tự ghép, không khóa lệch. HĐ đã về đang khóa lệch → sửa khớp là tự mở khóa; dòng HĐ chưa ghép được mà nay trùng tên → tự ghép, nhận mã khai báo / sale / giá khách.
+- Sửa giá → tính lại biên NT, tiền APT / khách, giá đề xuất, phản hồi APT. Dòng đang Chốt mà biên mới < khung / > mức chặn / giá khách 0 → **trả lại sale** (có báo). Sửa Sale / Khách / MD không đụng số tiền.
+- **Sửa theo cả đơn**: Sale / Khách / MD áp cho mọi dòng cùng MD trong xe (các trường khác chỉ áp dòng đang mở).
+- Đồng bộ dòng sổ HĐ đầu vào (MD, khách, sale, giá khách, mã khai báo → mã hàng ERP). Dòng nằm trong phiếu xuất HĐ **đã gửi kế toán / xuất nháp / xác nhận ký / đã ký → chặn sửa**; phiếu đang soạn → sửa được, có cảnh báo kiểm lại phiếu.
+- **Nạp lại file** giữ phần Admin sửa tay (cột `acc_lines.manual` lưu giá trị gốc của file); màn phân tích liệt kê dòng đã sửa tay và trường nào file mới khác. Bảng xe có dấu "✎ đã sửa".
+- Chỉ thêm cột + hàm, không đổi dữ liệu đang có; migration tự sao lưu trước. Nâng cấp: `supabase/migrations/0066_v60.sql`. Kiểm thử: `supabase/tests/99zg_v60.sql`.
