@@ -364,3 +364,11 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - Đồng bộ dòng sổ HĐ đầu vào (MD, khách, sale, giá khách, mã khai báo → mã hàng ERP). Dòng nằm trong phiếu xuất HĐ **đã gửi kế toán / xuất nháp / xác nhận ký / đã ký → chặn sửa**; phiếu đang soạn → sửa được, có cảnh báo kiểm lại phiếu.
 - **Nạp lại file** giữ phần Admin sửa tay (cột `acc_lines.manual` lưu giá trị gốc của file); màn phân tích liệt kê dòng đã sửa tay và trường nào file mới khác. Bảng xe có dấu "✎ đã sửa".
 - Chỉ thêm cột + hàm, không đổi dữ liệu đang có; migration tự sao lưu trước. Nâng cấp: `supabase/migrations/0066_v60.sql`. Kiểm thử: `supabase/tests/99zg_v60.sql`.
+
+## Bản 61 — Nạp bù dòng thiếu vào xe đã nạp (25/11/2026)
+
+- **Mở xe → ➕ Nạp bù dòng thiếu**: chọn file (cùng mẫu lúc nạp xe) chỉ chứa mấy dòng thiếu → Phân tích → *Nạp bù N dòng*. **Chỉ thêm dòng mới**, dòng cũ (trả lời sale, chốt, Admin sửa, HĐ đã ghép) giữ nguyên từng byte. Khác *Nạp lại file*: nạp lại coi file là toàn bộ xe, dòng không có trong file bị xóa.
+- Dòng đã có trong xe tự bỏ qua (cùng mã khai báo APT + SL, cùng mã HH, hoặc cùng tên APT + SL) và liệt kê trên màn phân tích; nạp bù 2 lần cùng file không sinh trùng.
+- STT tự sinh (dòng không có STT) / mã dòng trùng dòng cũ → tự đánh số mới. Dòng "có trên hệ thống nhưng không lên xe" cùng mã khai báo với dòng bù → bỏ (đã lên xe).
+- Dòng bù được chấm như lúc nạp xe (biên, sale, khách); dòng chặn báo sale. HĐ chính thức về sau ghép vào dòng bù như mọi dòng của xe; HĐ về trước được ghép lại ngay.
+- Nâng cấp: `supabase/migrations/0067_v61.sql` (chỉ thêm hàm `acc_truck_append`). Kiểm thử: `supabase/tests/99zi_v61.sql`.
