@@ -9,7 +9,9 @@ begin execute p_sql; raise exception 'FAIL: phải báo lỗi "%"', p_like;
 exception when others then if sqlerrm like 'FAIL:%' or sqlerrm not like '%' || p_like || '%' then raise exception 'FAIL: % (lỗi nhận được: %)', p_like, sqlerrm; end if; end $$;
 grant execute on all functions in schema pg_temp to authenticated;
 -- a@ (cấp dưới lead@) gửi "Việc riêng có lương" buổi chiều, ngày làm việc sắp tới
-create temp table d45 as select x::date d from generate_series(app.vn_today() + 7, app.vn_today() + 20, interval '1 day') x where extract(isodow from x) between 1 and 5 order by x limit 1;
+-- bỏ qua ngày a@ đã có đơn (10_flows tạo đơn ngày cố định 02–07/12/2026 → trùng khi chạy test cuối tháng 11)
+create temp table d45 as select x::date d from generate_series(app.vn_today() + 7, app.vn_today() + 40, interval '1 day') x where extract(isodow from x) between 1 and 5
+  and not exists(select 1 from public.leave_requests r join public.profiles p on p.id = r.profile_id where p.email = 'a@nt.vn' and x::date between r.start_date and r.end_date) order by x limit 1;
 select d as d45 from d45 \gset
 select pg_temp.as_user('a@nt.vn'); set role authenticated;
 insert into public.leave_requests(id, leave_type, start_date, end_date, part, reason) values ('00000000-0000-0000-0045-0000000000a1', 'che_do', :'d45', :'d45', 'pm', 'Việc nhà');
