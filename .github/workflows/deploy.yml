@@ -40,12 +40,11 @@ jobs:
           PGPASSWORD: postgres
         run: bash scripts/test-db.sh
 
-  deploy:
+  # Bản 60b: tách đóng gói / triển khai (mẫu chuẩn GitHub Pages) — deploy-pages đọc artifact ở job sau,
+  # tránh lỗi "No artifacts named github-pages" khi API chưa kịp ghi nhận artifact vừa tải lên trong cùng job
+  build:
     needs: test
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -62,5 +61,13 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
