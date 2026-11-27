@@ -113,7 +113,7 @@ export function HdSale() {
   ];
   const reload = () => setRev(x => x + 1);
   return <Layout title="Hóa đơn của tôi" actions={<div className="flex flex-wrap items-center gap-2">
-    <Select className="w-56" placeholder="Tất cả số HĐ" options={((hdOpts as any[]) || []).map(x => [x.hd, `HĐ ${x.hd}${x.ngay ? ' · ' + fmtDate(x.ngay) : ''} · ${x.n} mã`] as [string, string])} value={hd} onChange={setHd} />
+    <Select className="w-72" placeholder="Tất cả số HĐ · xe hàng" options={((hdOpts as any[]) || []).map(x => [x.hd, `HĐ ${x.hd}${x.xe ? ' · ' + x.xe : ''}${x.ngay ? ' · ' + fmtDate(x.ngay) : ''} · ${x.n} mã`] as [string, string])} value={hd} onChange={setHd} />
     {a.seesTeam && (saleOpts || []).length > 1 && <Select className="w-48" placeholder={a.isCskh && !a.isLead ? 'Các sale tôi hỗ trợ' : 'Cả nhóm'} options={(saleOpts || []).map((x: any) => [x.id, x.full_name] as [string, string])} value={sale} onChange={setSale} />}
     <Button onClick={() => go('/acc/mine')}>Đối soát xe của tôi</Button></div>}>
     <Tabs value={tab} onChange={go2} tabs={tabs} />
@@ -384,7 +384,7 @@ export function HdLuuTru() {
   const { data: hdOpts } = useLoad(() => acc ? db.rpc<any[]>('out_hd_opts', { p_mode: 'acc' }).catch(() => []) : Promise.resolve([]), []);
   if (!acc) return <Layout title="Lưu trữ HĐ đã ký"><Card>Dành cho Kế toán, BGĐ. Sale xem ở Hóa đơn của tôi → Đã ký.</Card></Layout>;
   return <Layout title="Lưu trữ HĐ đã ký" actions={<div className="flex flex-wrap items-center gap-2">
-    <Select className="w-56" placeholder="Tất cả số HĐ đầu vào" options={((hdOpts as any[]) || []).map(x => [x.hd, `HĐ ${x.hd}${x.ngay ? ' · ' + fmtDate(x.ngay) : ''} · ${x.n} mã`] as [string, string])} value={hd} onChange={setHd} />
+    <Select className="w-72" placeholder="Tất cả số HĐ đầu vào · xe hàng" options={((hdOpts as any[]) || []).map(x => [x.hd, `HĐ ${x.hd}${x.xe ? ' · ' + x.xe : ''}${x.ngay ? ' · ' + fmtDate(x.ngay) : ''} · ${x.n} mã`] as [string, string])} value={hd} onChange={setHd} />
     <Select className="w-48" placeholder="Tất cả sale" options={(saleOpts || []).map((x: any) => [x.id, x.full_name] as [string, string])} value={sale} onChange={setSale} />
     <Button onClick={() => go('/hd/cp')}>📦 Chuyển phát HĐ</Button></div>}>
     <p className="mb-2 text-xs text-ink-500">Hiện 500 HĐ đã ký mới nhất theo bộ lọc — chọn sale / số HĐ đầu vào để xem HĐ cũ hơn.</p>
