@@ -372,3 +372,15 @@ Kiểm thử: `supabase/tests/99u_v41.sql`, `tests/hoso.test.ts`.
 - STT tự sinh (dòng không có STT) / mã dòng trùng dòng cũ → tự đánh số mới. Dòng "có trên hệ thống nhưng không lên xe" cùng mã khai báo với dòng bù → bỏ (đã lên xe).
 - Dòng bù được chấm như lúc nạp xe (biên, sale, khách); dòng chặn báo sale. HĐ chính thức về sau ghép vào dòng bù như mọi dòng của xe; HĐ về trước được ghép lại ngay.
 - Nâng cấp: `supabase/migrations/0067_v61.sql` (chỉ thêm hàm `acc_truck_append`). Kiểm thử: `supabase/tests/99zi_v61.sql`.
+
+## Bản 62 — Nạp HĐ chính thức: ghép được dòng APT viết tên gọn hơn nháp (27/11/2026)
+
+- Lỗi gặp ở XE1411APT: HĐ chính thức APT bỏ đoạn "NSX: …" và rút kích thước (VD `KT: 142.5*78.5mm` thay vì `142.5*103*78.5mm`) → tên chỉ giống nháp ~86%, dưới ngưỡng 92% → báo "Chưa tìm thấy dòng nháp" dù dòng đã có trên xe.
+- Thêm lượt ghép theo **đơn giá trùng khít giá nháp / NOTE (±0,5đ)** trong cùng xe: cùng SL + tên giống ≥ 60%, hoặc SL lệch + tên giống ≥ 75% (vẫn ghép, báo lệch SL → khóa chờ kế toán). Kết quả hiện "Gần đúng — kiểm lại" kèm tên nháp để đối chiếu.
+- Trùng giá + SL nhưng tên khác hẳn → không ghép bừa. Chỉ sửa phía màn hình, không đổi CSDL.
+
+## Bản 63 — Lọc số HĐ kèm tên xe hàng (27/11/2026)
+
+- **Hóa đơn của tôi** và **Bàn làm việc kế toán**: ô lọc số HĐ hiện thêm tên xe đối soát, VD `HĐ 2382 · xe0910 · 23/11/2026 · 25 mã` — nhớ xe là tìm được HĐ.
+- Tên xe lấy từ dòng nháp đã ghép; HĐ chưa ghép xe nào thì không có tên xe.
+- Nâng cấp: `supabase/migrations/0068_v63.sql` (chỉ đổi hàm `out_hd_opts`, thêm cột `xe`).

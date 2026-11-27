@@ -37,6 +37,13 @@ export function matchHd(rows: { ma_hang: string; ten: string; sl_nhap: number; d
   rows.forEach((r, i) => { if (out[i].line) return;
     let best: any = null, bs = 0; for (const l of lines) { if (used.has(l.id) || !eq(l.sl_apt, r.sl_nhap)) continue; const s = sim(r.ten, l.ten_apt); if (s > bs) { bs = s; best = l; } }
     if (best && bs >= 0.92) { used.add(best.id); out[i] = { i, line: best, kind: 'gan', score: bs, lech: null }; } });
+  // lượt 4 (bản 62): APT hay viết tên HĐ chính thức gọn hơn nháp (bỏ "NSX: …", rút KT) → tên chỉ giống ~85%.
+  //   Đơn giá HĐ trùng khít giá nháp (±0,5đ) là dấu hiệu rất mạnh trong cùng 1 xe → ghép "gần đúng" để kế toán kiểm lại.
+  //   a) cùng đơn giá + cùng SL + tên ≥ 60% · b) cùng đơn giá, SL lệch + tên ≥ 75% (vẫn ghép, báo lệch SL)
+  const giaEq = (r: any, l: any) => r.dg_nhap != null && [l.gia_nhap, l.gia_note].some(g => g != null && Math.abs(Number(r.dg_nhap) - Number(g)) <= 0.5);
+  ([[true, 0.6], [false, 0.75]] as const).forEach(([cungSl, nguong]) => rows.forEach((r, i) => { if (out[i].line) return;
+    let best: any = null, bs = 0; for (const l of lines) { if (used.has(l.id) || !giaEq(r, l) || (cungSl && !eq(l.sl_apt, r.sl_nhap))) continue; const s = sim(r.ten, l.ten_apt); if (s > bs) { bs = s; best = l; } }
+    if (best && bs >= nguong) { used.add(best.id); out[i] = { i, line: best, kind: 'gan', score: bs, lech: null }; } }));
   out.forEach(m => { if (m.line) m.lech = hdCheck(rows[m.i], m.line, lamTron); });
   return out;
 }
