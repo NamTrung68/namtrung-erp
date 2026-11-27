@@ -140,6 +140,26 @@ test('bản 25: HĐ ký → dòng nháp (mã khai báo) → đơn/khách/sale; l
   assert.equal(bestTruck(rows, new Map([['T', lines], ['X', []]])), 'T');
 });
 
+// Bản 62: XE1411APT — HĐ chính thức bỏ "NSX: …", rút KT → tên chỉ giống ~86%; đơn giá trùng khít nháp → vẫn ghép (gần đúng)
+test('bản 62: tên HĐ gọn hơn nháp nhưng cùng đơn giá → ghép gần đúng; SL lệch → báo lệch', () => {
+  const N = ', không hiệu, NSX: Zhejiang Yirui New Energy Co., Ltd, mới 100%';
+  const lines = [
+    { id: 'B2', apt_stt: 100040, ma_dong: 'MD2975-2', ten_apt: 'Bộ chuyển nguồn tự động ATS YRO 4P 125A 400V, dùng để chuyển nguồn tự động giữa 2 nguồn điện, chất liệu nhựa ABS, KT: 142.5*103*78.5mm' + N, sl_apt: 20, gia_nhap: 441748 },
+    { id: 'B3', apt_stt: 100041, ma_dong: 'MD2975-3', ten_apt: 'Thiết bị chống mất pha trung tính YRO 63A, bảo vệ quá áp, thấp áp, chất liệu nhựa ABS, KT: 81*36*45 mm' + N, sl_apt: 300, gia_nhap: 105825 },
+    { id: 'B4', apt_stt: 100042, ma_dong: 'MD2975-4', ten_apt: 'Bộ chuyển nguồn tự động ATS YRO 2CB 125A 2P 220V, dùng chuyển nguồn tự động giữa 2 nguồn điện, chất liệu nhựa ABS, KT:155*135*115mm' + N, sl_apt: 30, gia_nhap: 393204 },
+    { id: 'X', apt_stt: 9, ma_dong: 'MD1-1', ten_apt: 'Ốp lưng điện thoại', sl_apt: 300, gia_nhap: 105825 }];
+  const rows = [
+    { ma_hang: 'a', ten: 'Bộ chuyển nguồn tự động ATS YRO 4P 125A 400V, dùng để chuyển nguồn tự động giữa 2 nguồn điện, chất liệu nhựa ABS, KT: 142.5*78.5mm, không hiệu, mới 100%', sl_nhap: 20, dg_nhap: 441748, vat: null },
+    { ma_hang: 'b', ten: 'Thiết bị chống mất pha trung tính YRO 63A, bảo vệ quá áp, thấp áp, chất liệu nhựa ABS, KT: 81*36*45 mm, không hiệu, mới 100%', sl_nhap: 300, dg_nhap: 105825, vat: null },
+    { ma_hang: 'c', ten: 'Bộ chuyển nguồn tự động ATS YRO 2CB 125A 2P 220V, dùng chuyển nguồn tự động giữa 2 nguồn điện, chất liệu nhựa ABS, KT: 155*135*115mm, không hiệu, mới 100%', sl_nhap: 20, dg_nhap: 393204, vat: null },
+    { ma_hang: 'd', ten: 'Khăn tắm cotton', sl_nhap: 300, dg_nhap: 105825, vat: null }];
+  const m = matchHd(rows, lines);
+  assert.equal(m[0].line?.id, 'B2'); assert.equal(m[0].kind, 'gan'); assert.equal(m[0].lech, null);
+  assert.equal(m[1].line?.id, 'B3', 'cùng giá + SL với dòng khác nhưng tên khác hẳn → chọn đúng dòng tên gần nhất');
+  assert.equal(m[2].line?.id, 'B4'); assert.ok(m[2].lech?.includes('SL HĐ 20 ≠ nháp 30'));
+  assert.equal(m[3].line, null, 'trùng giá + SL nhưng tên khác hẳn → không ghép bừa');
+});
+
 // Bản 32: file xe đảo cột ID ĐƠN ↔ USERNAME ở vài dòng cuối (dữ liệu giả, đúng hình dạng file thật)
 test('file xe lệch cột ID ĐƠN ↔ USERNAME — lấy đơn theo mã khai báo, đảo lại username', () => {
   const H = ['HÌNH ẢNH', 'THƯƠNG HIỆU', 'ID ĐƠN', 'USERNAME KHÁCH', 'SALE', 'MÃ KHAI BÁO', 'Tên KHAI BÁO KH yêu cầu', 'HS Code', 'SỐ KIỆN', 'SỐ LƯỢNG', 'DVT', 'GIÁ TRÊN TỜ KHAI'];
